@@ -50,7 +50,27 @@ On approval, write `.claude/doc-audit.json` (create `.claude/` if needed). Then 
 user: review the impactMap, commit the config, and run `/docaudit:audit --full` to
 produce the first CONSISTENT verdict + anchor (that audit, not init, writes the anchor).
 
+## Step 5 — --scaffold (opt-in; only when invoked with --scaffold)
+Generate project-tailored layer skill skeletons so this repo owns richer checks than
+the generic baseline. Do this AFTER Step 3 approval and BEFORE the Step 4 config write:
+1. Preview then create: `python3 "$SD/scripts/scaffold.py" --repo-root "$CLAUDE_PROJECT_DIR" --prefix docaudit --dry-run`,
+   then without `--dry-run`. It writes `.claude/skills/docaudit-{format,existence,semantic}/SKILL.md`
+   skeletons and NEVER overwrites existing files. Parse `{created, skipped, skillNames}`;
+   report skipped files to the user.
+2. Set the config's `docAuditCommands` to `skillNames` (e.g.
+   `{format:"docaudit-format", existence:"docaudit-existence", semantic:"docaudit-semantic"}`)
+   so the audit delegates to the tailored skills instead of the generic fallback. Then
+   write the config (Step 4).
+3. Tailor each generated skeleton to THIS repo's real {layer} rules using the
+   `skill-creator` / `skill-creator-max` and `superpowers:writing-skills` skills: replace
+   each skeleton's "Checks (CUSTOMIZE — TODO)" section with concrete project checks,
+   optimize the `description` for triggering, and run the trigger tests. Keep every
+   generated skill report-only (propose fixes; never edit docs).
+4. Tell the user to review + commit the new skills + config, then run `/docaudit:audit --full`.
+Additive only: scaffold.py creates NEW skill files; it never edits existing docs/ADRs.
+
 ## Guardrails
 Additive only (new files). Never edit/rewrite existing docs or ADRs. MCP optional.
-`--scaffold` (project-tailored layer skills) is NOT implemented here — it is Plan 4;
-if asked, say so.
+`--scaffold` (Step 5) generates project-tailored layer skill skeletons via
+`scripts/scaffold.py` (additive; never overwrites) and tailors them with
+skill-creator-max / writing-skills.

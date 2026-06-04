@@ -21,5 +21,6 @@ a single CONSISTENT / NEEDS FIX verdict. Report-only (no edits).
     /docaudit:audit            incremental (diff since anchor)
     /docaudit:audit --full     whole-corpus deep audit / first run
     /docaudit:init             bootstrap .claude/doc-audit.json for a repo that has none
+    /docaudit:init --scaffold  also generate project-tailored layer skills (skill-creator)
 
 Design spec: test-my-nc `docs/superpowers/specs/2026-06-04-doc-audit-harness-design.md`.
