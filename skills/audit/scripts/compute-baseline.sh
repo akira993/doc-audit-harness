@@ -17,6 +17,9 @@ if ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   echo "error: not a git repository: $REPO_ROOT" >&2; exit 1
 fi
 
+TMPFILE="$(mktemp "${TMPDIR:-/tmp}/docaudit_changed.XXXXXX")"
+trap 'rm -f "$TMPFILE"' EXIT
+
 py() { python3 -c "$@"; }
 ANCHOR_PATH="$(py 'import json,sys; print(json.load(open(sys.argv[1])).get("anchorPath",""))' "$CONFIG")"
 GLOBS_JSON="$(py 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("diffGlobs",[])))' "$CONFIG")"
@@ -36,16 +39,18 @@ if [[ -n "$ANCHOR_SHA" ]]; then
   fi
 fi
 
+# In full mode the committed-diff line is skipped; 'changed' then holds only working-copy edits — consumers MUST treat mode=full as "scan the whole corpus", not "scan only changed".
 {
   if [[ "$MODE" == "incremental" ]]; then
     git -C "$REPO_ROOT" diff --name-only "${BASE}..HEAD"
   fi
   git -C "$REPO_ROOT" diff --name-only HEAD
   git -C "$REPO_ROOT" ls-files --others --exclude-standard
-} | sort -u > /tmp/.docaudit_changed.$$ || true
+} | sort -u > "$TMPFILE" || true
 
 CHANGED_JSON="$(py '
 import json,sys,re
+# g2r: '**' -> '.*' (matches across '/'); test-my-nc diffGlobs are dir-prefix (apps/**, docs/**) or exact, no mid-path '**/' — adequate here.
 def g2r(p):
     out=[];i=0;n=len(p)
     while i<n:
@@ -60,7 +65,6 @@ globs=[g2r(x) for x in json.loads(sys.argv[1])]
 paths=[l.strip() for l in open(sys.argv[2]) if l.strip()]
 keep=[p for p in paths if (not globs) or any(rx.match(p) for rx in globs)]
 print(json.dumps(sorted(set(keep))))
-' "$GLOBS_JSON" /tmp/.docaudit_changed.$$)"
-rm -f /tmp/.docaudit_changed.$$
+' "$GLOBS_JSON" "$TMPFILE")"
 
 printf '{"mode":"%s","baselineSha":%s,"changed":%s}\n' "$MODE" "$BASELINE" "$CHANGED_JSON"
