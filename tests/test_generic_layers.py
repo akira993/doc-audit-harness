@@ -114,5 +114,28 @@ class TestSemanticLayer(unittest.TestCase):
         self.assertEqual(out["counts"]["findings"], len(out["findings"]))
 
 
+class TestPlan2Fixes(unittest.TestCase):
+    def setUp(self):
+        self.repo = tempfile.mkdtemp()
+
+    def test_titled_link_not_broken(self):
+        write(self.repo, "docs/a.md", 'see [b](./b.md "My Title")\n')
+        write(self.repo, "docs/b.md", "x\n")
+        out = run(self.repo, "format")
+        self.assertEqual([f for f in out["findings"] if f["severity"] == "FAIL"], [])
+
+    def test_semantic_paths_scope_no_false_orphan(self):
+        write(self.repo, "docs/README.md", "[a](./a.md)\n")
+        write(self.repo, "docs/a.md", "linked\n")
+        out = run(self.repo, "semantic", paths=["docs/a.md"])  # README excluded from --paths scope
+        self.assertFalse(any(f["path"] == "docs/a.md" for f in out["findings"]))
+
+    def test_hyphenated_frontmatter_field_found(self):
+        write(self.repo, "docs/a.md", "---\nx-custom: y\n---\nbody\n")
+        out = run(self.repo, "format", config={"docGlobs": ["docs/**/*.md", "*.md"],
+                                               "frontMatterFields": ["x-custom"]})
+        self.assertFalse(any("x-custom" in f["message"] for f in out["findings"]))
+
+
 if __name__ == "__main__":
     unittest.main()

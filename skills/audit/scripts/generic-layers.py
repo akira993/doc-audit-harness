@@ -8,7 +8,8 @@ project's own tooling.
 Layers:
   format    — relative markdown links must resolve on disk (broken => FAIL); if
               config.frontMatterFields is set, each .md must have YAML front matter
-              containing those fields (missing => WARN).
+              containing those fields (missing => WARN). (image links and percent-encoded
+              targets are checked as-is; names with spaces or %20 may report as broken).
   existence — backtick path-like tokens that look repo-relative must resolve on disk
               (non-resolving => WARN). Conservative, to limit noise.
   semantic  — orphan: a .md linked from no index file and no other doc (=> WARN).
@@ -60,7 +61,7 @@ def parse_front_matter(text):
         return None
     fields = {}
     for line in m.group(1).splitlines():
-        mm = re.match(r"^([A-Za-z0-9_]+)\s*:", line)
+        mm = re.match(r"^([A-Za-z0-9_-]+)\s*:", line)
         if mm:
             fields[mm.group(1)] = True
     return fields
@@ -70,7 +71,9 @@ _LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 def extract_links(text):
     out = []
     for m in _LINK_RE.finditer(text):
-        out.append((m.group(1).strip(), text.count("\n", 0, m.start()) + 1))
+        target = m.group(1).strip()
+        target = re.sub(r"""\s+["'].*$""", "", target)  # strip optional Markdown link title
+        out.append((target, text.count("\n", 0, m.start()) + 1))
     return out
 
 
@@ -156,14 +159,15 @@ def check_existence(repo_root, docs, cfg):
     return findings
 
 
-def check_semantic(repo_root, docs, cfg):
+def check_semantic(repo_root, docs, cfg, all_docs=None):
     findings = []
+    scan = all_docs if all_docs is not None else docs
     index_files = cfg.get("indexFiles")
     if index_files is None:
-        index_files = [d for d in docs if os.path.basename(d).lower() == "readme.md"]
+        index_files = [d for d in scan if os.path.basename(d).lower() == "readme.md"]
     index_files = set(index_files)
     referenced = set()
-    for d in docs:
+    for d in scan:  # build 'referenced' from ALL docs so index links always count
         text = _read(repo_root, d)
         if text is None:
             continue
@@ -178,7 +182,7 @@ def check_semantic(repo_root, docs, cfg):
             else:
                 ref = os.path.normpath(os.path.join(os.path.dirname(d), t))
             referenced.add(ref)
-    for d in docs:
+    for d in docs:  # report orphans only among the (scoped) docs
         if d in index_files:
             continue
         if os.path.normpath(d) not in referenced:
@@ -205,14 +209,26 @@ def main():
         print(f"error: {e}", file=sys.stderr); sys.exit(2)
     repo = args.repo_root
     if args.paths:
-        raw = sys.stdin.read() if args.paths == "-" else open(args.paths, encoding="utf-8").read()
+        if args.paths == "-":
+            raw = sys.stdin.read()
+        else:
+            try:
+                with open(args.paths, encoding="utf-8") as f:
+                    raw = f.read()
+            except OSError as e:
+                print(f"error: {e}", file=sys.stderr); sys.exit(2)
         docs = [l.strip() for l in raw.splitlines() if l.strip()]
+        all_docs = list_doc_files(repo, cfg.get("docGlobs", ["docs/**/*.md", "*.md"]))
     else:
         docs = list_doc_files(repo, cfg.get("docGlobs", ["docs/**/*.md", "*.md"]))
+        all_docs = docs
     layers = list(LAYERS) if args.layer == "all" else [args.layer]
     findings = []
     for L in layers:
-        findings.extend(LAYERS[L](repo, docs, cfg))
+        if L == "semantic":
+            findings.extend(check_semantic(repo, docs, cfg, all_docs=all_docs))
+        else:
+            findings.extend(LAYERS[L](repo, docs, cfg))
     counts = {"docs": len(docs), "findings": len(findings),
               "fail": sum(1 for f in findings if f["severity"] == "FAIL"),
               "warn": sum(1 for f in findings if f["severity"] == "WARN")}
