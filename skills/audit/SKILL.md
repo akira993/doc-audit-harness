@@ -36,7 +36,15 @@ Collect per-doc `{path, verdict, rationale, suggestion}`. (Built-in `/code-revie
 Global gate: run this phase's delegated checks **iff** `impacted` is non-empty OR
 `ssotRecheck` is non-empty OR mode is `full`.
 1. From config `docAuditCommands`, run `existence` then `semantic` then `format`
-   (e.g. `/check-docs`, `doc-lint`, `/review-docs`) — invoke each exactly as the config value names it (a skill like `doc-lint` is invoked by name, not with a leading slash). — whole-tree (no per-file arg).
+   (e.g. `/check-docs`, `doc-lint`, `/review-docs`) — whole-tree (no per-file arg).
+   Invoke each exactly as the config value names it (a skill like `doc-lint` is
+   invoked by name, not with a leading slash). **Fallback:** if `docAuditCommands`
+   is absent, or a given layer's command is unavailable in this environment, run the
+   built-in generic layer instead:
+   `python3 "$SD/scripts/generic-layers.py" --layer <format|existence|semantic> --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`
+   (in incremental mode you may add `--paths -` and pipe the impacted-doc list to scope it;
+   the semantic layer always scans the full repo for orphan-reference resolution regardless).
+   Fold its `findings[]` into the verdict: `severity:"FAIL"` -> NEEDS FIX, `severity:"WARN"` -> report only.
 2. If `boundaryCommand` set and gate open, run it.
 3. Run `reviewCommands.code` (e.g. `/code-review high`) on the working diff, then
    `reviewCommands.security` (e.g. `/security-review`). Normalize any
