@@ -74,6 +74,23 @@ def extract_links(text):
     return out
 
 
+_TOKEN_RE = re.compile(r"`([^`\n]+)`")
+def extract_path_tokens(text):
+    out = []
+    for m in _TOKEN_RE.finditer(text):
+        out.append((m.group(1).strip(), text.count("\n", 0, m.start()) + 1))
+    return out
+
+
+def looks_like_repo_path(tok, repo_root):
+    # conservative: must contain '/', no whitespace/shell chars, and start with an
+    # existing top-level directory of the repo (so prose/commands are not flagged).
+    if "/" not in tok or any(ch in tok for ch in " \t|<>"):
+        return False
+    top = tok.lstrip("/").split("/", 1)[0]
+    return os.path.isdir(os.path.join(repo_root, top))
+
+
 def is_local_link(target):
     return not target.startswith(("http://", "https://", "mailto:", "#", "//"))
 
@@ -124,7 +141,19 @@ def check_format(repo_root, docs, cfg):
 
 
 def check_existence(repo_root, docs, cfg):
-    return []  # implemented in Task 1
+    findings = []
+    for d in docs:
+        text = _read(repo_root, d)
+        if text is None:
+            continue
+        for tok, line in extract_path_tokens(text):
+            t = tok.split("#", 1)[0]
+            if "*" in t or not looks_like_repo_path(t, repo_root):
+                continue
+            if not os.path.exists(os.path.join(repo_root, t.lstrip("/"))):
+                findings.append({"layer": "existence", "severity": "WARN", "path": d,
+                                 "line": line, "message": f"path-like token does not resolve: {tok}"})
+    return findings
 
 
 def check_semantic(repo_root, docs, cfg):

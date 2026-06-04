@@ -59,5 +59,32 @@ class TestFormatLayer(unittest.TestCase):
         self.assertEqual([f for f in out["findings"] if "front matter" in f["message"]], [])
 
 
+class TestExistenceLayer(unittest.TestCase):
+    def setUp(self):
+        self.repo = tempfile.mkdtemp()
+        os.makedirs(os.path.join(self.repo, "scripts"), exist_ok=True)
+        open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+
+    def test_nonresolving_repo_pathish_token_warns(self):
+        write(self.repo, "docs/a.md", "see `scripts/ghost.py` for details\n")
+        out = run(self.repo, "existence")
+        self.assertTrue(any("scripts/ghost.py" in f["message"] for f in out["findings"]))
+
+    def test_resolving_token_no_finding(self):
+        write(self.repo, "docs/a.md", "see `scripts/real.py`\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(out["findings"], [])
+
+    def test_non_path_backtick_ignored(self):
+        write(self.repo, "docs/a.md", "run `make deploy` then `occ status`\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(out["findings"], [])
+
+    def test_glob_token_skipped(self):
+        write(self.repo, "docs/a.md", "edit `scripts/*.py`\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(out["findings"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
