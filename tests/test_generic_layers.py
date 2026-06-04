@@ -86,5 +86,33 @@ class TestExistenceLayer(unittest.TestCase):
         self.assertEqual(out["findings"], [])
 
 
+class TestSemanticLayer(unittest.TestCase):
+    def setUp(self):
+        self.repo = tempfile.mkdtemp()
+
+    def test_orphan_doc_warns(self):
+        write(self.repo, "docs/README.md", "index: [a](./a.md)\n")
+        write(self.repo, "docs/a.md", "linked\n")
+        write(self.repo, "docs/orphan.md", "nobody links me\n")
+        out = run(self.repo, "semantic")
+        msgs = [(f["path"], f["message"]) for f in out["findings"]]
+        self.assertTrue(any(p == "docs/orphan.md" for p, _ in msgs))
+        self.assertFalse(any(p == "docs/a.md" for p, _ in msgs))
+
+    def test_index_file_not_orphan(self):
+        write(self.repo, "docs/README.md", "nothing links the index itself\n")
+        out = run(self.repo, "semantic")
+        self.assertFalse(any(f["path"] == "docs/README.md" for f in out["findings"]))
+
+    def test_all_layer_counts(self):
+        write(self.repo, "docs/README.md", "[a](./a.md)\n")
+        write(self.repo, "docs/a.md", "see [x](./gone.md) and `scripts/ghost.py`\n")
+        os.makedirs(os.path.join(self.repo, "scripts"), exist_ok=True)
+        out = run(self.repo, "all")
+        self.assertGreaterEqual(out["counts"]["fail"], 1)   # broken link gone.md
+        self.assertIn("findings", out)
+        self.assertEqual(out["counts"]["findings"], len(out["findings"]))
+
+
 if __name__ == "__main__":
     unittest.main()

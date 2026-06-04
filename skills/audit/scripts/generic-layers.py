@@ -157,7 +157,34 @@ def check_existence(repo_root, docs, cfg):
 
 
 def check_semantic(repo_root, docs, cfg):
-    return []  # implemented in Task 2
+    findings = []
+    index_files = cfg.get("indexFiles")
+    if index_files is None:
+        index_files = [d for d in docs if os.path.basename(d).lower() == "readme.md"]
+    index_files = set(index_files)
+    referenced = set()
+    for d in docs:
+        text = _read(repo_root, d)
+        if text is None:
+            continue
+        for target, _line in extract_links(text):
+            if not is_local_link(target):
+                continue
+            t = target.split("#", 1)[0].split("?", 1)[0]
+            if not t:
+                continue
+            if t.startswith("/"):
+                ref = os.path.normpath(t.lstrip("/"))
+            else:
+                ref = os.path.normpath(os.path.join(os.path.dirname(d), t))
+            referenced.add(ref)
+    for d in docs:
+        if d in index_files:
+            continue
+        if os.path.normpath(d) not in referenced:
+            findings.append({"layer": "semantic", "severity": "WARN", "path": d,
+                             "line": 1, "message": "orphan: not linked from any index file or other doc"})
+    return findings
 
 
 LAYERS = {"format": check_format, "existence": check_existence, "semantic": check_semantic}
