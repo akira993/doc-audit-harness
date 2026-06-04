@@ -8,8 +8,10 @@ a single CONSISTENT / NEEDS FIX verdict. Report-only (no edits).
 
 ## Install (global)
 
-    cp -R doc-audit-harness ~/.claude/plugins/docaudit   # or submit to a marketplace
-    # then in any repo, add .claude/doc-audit.json (see skills/audit/references/config-schema.md)
+    cp -R doc-audit-harness ~/.claude/skills/docaudit    # skills-dir plugin; auto-loads next session as docaudit@skills-dir
+    # then in any repo: run /docaudit:init, or add .claude/doc-audit.json by hand
+    #   (schema: skills/audit/references/config-schema.md)
+    # NOTE: ~/.claude/skills/<name>/ (NOT ~/.claude/plugins/, which is marketplace-cache territory)
 
 ## Dev / test
 
