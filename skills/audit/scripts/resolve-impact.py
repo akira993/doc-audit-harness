@@ -24,6 +24,8 @@ Rules:
     mapped paths are warned to stderr.
   - maxImpactedDocs cap: keep mapped first, then heuristic; extras dropped,
     truncated=true, dropped count logged to stderr.
+  - counts.mapped / counts.heuristicOnly reflect docs in the emitted (post-cap)
+    impacted list; counts.candidatesBeforeCap is the pre-cap total of candidates.
 """
 import argparse, json, os, re, sys
 
@@ -63,8 +65,10 @@ def matches(path, pattern):
 def list_doc_files(repo_root, doc_globs):
     docs = []
     regexes = [glob_to_regex(g) for g in doc_globs]
+    # followlinks=False (default): symlinked doc trees are not traversed
     for dirpath, _dirs, files in os.walk(repo_root):
-        if "/.git" in dirpath or dirpath.endswith("/.git"):
+        parts = dirpath.replace("\\", "/").split("/")
+        if ".git" in parts:
             continue
         for fn in files:
             full = os.path.join(dirpath, fn)
@@ -88,14 +92,22 @@ def main():
     ap.add_argument("--repo-root", default=os.getcwd())
     args = ap.parse_args()
 
-    with open(args.config, encoding="utf-8") as f:
-        cfg = json.load(f)
+    try:
+        with open(args.config, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except OSError as e:
+        print(f"error: {e}", file=sys.stderr); sys.exit(2)
+    except json.JSONDecodeError as e:
+        print(f"error: {e}", file=sys.stderr); sys.exit(2)
 
     if args.changed == "-":
         raw = sys.stdin.read()
     else:
-        with open(args.changed, encoding="utf-8") as f:
-            raw = f.read()
+        try:
+            with open(args.changed, encoding="utf-8") as f:
+                raw = f.read()
+        except OSError as e:
+            print(f"error: {e}", file=sys.stderr); sys.exit(2)
     changed = [ln.strip() for ln in raw.splitlines() if ln.strip()]
 
     repo = args.repo_root
@@ -144,6 +156,7 @@ def main():
     for s in cfg.get("ssotSources", []):
         cite_paths = {c.split(":", 1)[0] for c in s.get("docsThatCite", [])}
         live = s.get("liveSource", "")
+        # extract path-like tokens from liveSource; server commands like "occ status" yield none (correctly inert)
         live_paths = set(re.findall(r"[\w./-]+\.[\w]+", live))
         reason = None
         if any(c in cite_paths for c in changed):
@@ -161,6 +174,7 @@ def main():
     mapped_paths = sorted(p for p in prov if "mapped" in prov[p])
     heur_only = sorted(p for p in prov if "mapped" not in prov[p])
     ordered = mapped_paths + heur_only
+    candidates_before_cap = len(mapped_paths) + len(heur_only)
     truncated = len(ordered) > max_docs
     if truncated:
         dropped = len(ordered) - max_docs
@@ -170,13 +184,17 @@ def main():
     impacted = [{"path": p, "provenance": provenance(p)} for p in ordered]
     map_gap = [p for p in ordered if provenance(p) == "heuristic"]
 
+    mapped_n = sum(1 for d in impacted if d["provenance"] in ("mapped", "both"))
+    heur_n = sum(1 for d in impacted if d["provenance"] == "heuristic")
+
     json.dump({
         "impacted": impacted,
         "mapGapCandidates": map_gap,
         "ssotRecheck": ssot,
         "truncated": truncated,
         "counts": {"changed": len(changed), "impacted": len(impacted),
-                   "mapped": len(mapped_paths), "heuristicOnly": len(heur_only)},
+                   "mapped": mapped_n, "heuristicOnly": heur_n,
+                   "candidatesBeforeCap": candidates_before_cap},
     }, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
 

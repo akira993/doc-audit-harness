@@ -91,6 +91,21 @@ class TestResolveImpact(unittest.TestCase):
         self.assertTrue(out["truncated"])
         self.assertEqual(len(out["impacted"]), 1)
 
+    def test_provenance_both(self):
+        # docs/other.md is BOTH a mapped impact AND a heuristic hit for special_helper.
+        with open(os.path.join(self.repo, "docs/other.md"), "w", encoding="utf-8") as f:
+            f.write("references special_helper behavior\n")
+        cfg = self.base_config(impactMap=[
+            {"changed": "apps/nc_proto/css/variables.css",
+             "impacts": ["docs/wcag.md", "DESIGN.md"], "note": "color tokens"},
+            {"changed": "scripts/*.cron", "impacts": ["docs/server-paths.md"]},
+            {"changed": "scripts/special_helper.py", "impacts": ["docs/other.md"]},
+        ])
+        out = run(["scripts/special_helper.py"], cfg, self.repo)
+        by = {d["path"]: d["provenance"] for d in out["impacted"]}
+        self.assertIn("docs/other.md", by)
+        self.assertEqual(by["docs/other.md"], "both")
+
 
 if __name__ == "__main__":
     unittest.main()
