@@ -48,9 +48,9 @@ fi
   git -C "$REPO_ROOT" ls-files --others --exclude-standard
 } | sort -u > "$TMPFILE" || true
 
+# Filter changed paths by diffGlobs. g2r maps globs to regex: star-star spans slashes, single star does not; diffGlobs here are dir-prefix or exact, so this is adequate.
 CHANGED_JSON="$(py '
 import json,sys,re
-# g2r: '**' -> '.*' (matches across '/'); test-my-nc diffGlobs are dir-prefix (apps/**, docs/**) or exact, no mid-path '**/' — adequate here.
 def g2r(p):
     out=[];i=0;n=len(p)
     while i<n:
