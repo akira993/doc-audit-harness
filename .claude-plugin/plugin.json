@@ -1,0 +1,6 @@
+{
+  "name": "docaudit",
+  "description": "Change-driven documentation audit harness: diffs since the last clean audit, maps changed code/config to impacted docs, delegates existing doc checks, and drives /code-review + /security-review into one verdict.",
+  "version": "0.1.0",
+  "author": { "name": "NC-PROTO Dev" }
+}
