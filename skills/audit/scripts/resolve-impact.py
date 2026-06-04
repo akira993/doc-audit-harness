@@ -137,13 +137,16 @@ def main():
                 prov.setdefault(doc, set()).add("heuristic")
 
     # --- ssotRecheck ---
+    # Spec §5.2: trigger on CHANGED files, not impacted docs.
+    # reason="docsThatCite" if any changed path ∈ docsThatCite (strip ':line').
+    # reason="liveSource"   if any changed path ∈ file paths extracted from liveSource.
     ssot = []
     for s in cfg.get("ssotSources", []):
         cite_paths = {c.split(":", 1)[0] for c in s.get("docsThatCite", [])}
         live = s.get("liveSource", "")
         live_paths = set(re.findall(r"[\w./-]+\.[\w]+", live))
         reason = None
-        if any(doc in cite_paths for doc in prov):
+        if any(c in cite_paths for c in changed):
             reason = "docsThatCite"
         elif any(c in live_paths for c in changed):
             reason = "liveSource"

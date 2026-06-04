@@ -65,9 +65,17 @@ class TestResolveImpact(unittest.TestCase):
         self.assertIn("docs/other.md", out.get("mapGapCandidates", []))
 
     def test_ssot_recheck_triggered_by_docsThatCite(self):
-        out = run(["apps/nc_proto/css/variables.css"], self.base_config(), self.repo)
+        # docs/wcag.md IS in nc_version's docsThatCite → must trigger recheck.
+        out = run(["docs/wcag.md"], self.base_config(), self.repo)
         names = [s["name"] for s in out["ssotRecheck"]]
         self.assertIn("nc_version", names)
+
+    def test_ssot_no_recheck_when_changed_file_unrelated(self):
+        # variables.css is NOT in docsThatCite; liveSource "occ status" has no
+        # matching repo file path → nc_version must NOT be rechecked.
+        out = run(["apps/nc_proto/css/variables.css"], self.base_config(), self.repo)
+        names = [s["name"] for s in out["ssotRecheck"]]
+        self.assertNotIn("nc_version", names)
 
     def test_nonexistent_mapped_path_dropped_with_warning(self):
         cfg = self.base_config(impactMap=[
