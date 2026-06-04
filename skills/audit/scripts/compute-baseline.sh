@@ -49,6 +49,7 @@ fi
 } | sort -u > "$TMPFILE" || true
 
 # Filter changed paths by diffGlobs. g2r maps globs to regex: star-star spans slashes, single star does not; diffGlobs here are dir-prefix or exact, so this is adequate.
+# NOTE: this g2r is intentionally simpler than resolve-impact.py's (no zero-width '/**/' handling); do NOT reuse it for docGlobs-style patterns like docs/STARSTAR/*.md.
 CHANGED_JSON="$(py '
 import json,sys,re
 def g2r(p):

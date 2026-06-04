@@ -28,7 +28,8 @@ class TestWriteAnchor(unittest.TestCase):
     def test_writes_on_consistent(self):
         p = self.run_script("CONSISTENT")
         self.assertEqual(p.returncode, 0, p.stderr)
-        data = json.load(open(os.path.join(self.repo, self.anchor)))
+        with open(os.path.join(self.repo, self.anchor)) as f:
+            data = json.load(f)
         head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
         self.assertEqual(data["sha"], head)
         self.assertEqual(data["verdict"], "CONSISTENT")
