@@ -137,5 +137,14 @@ class TestPlan2Fixes(unittest.TestCase):
         self.assertFalse(any("x-custom" in f["message"] for f in out["findings"]))
 
 
+    def test_node_modules_skipped(self):
+        # Broad docGlobs must not scan node_modules (no findings from vendored md).
+        os.makedirs(os.path.join(self.repo, "node_modules", "pkg"), exist_ok=True)
+        write(self.repo, "node_modules/pkg/x.md", "see [a](./gone.md)\n")
+        write(self.repo, "docs/a.md", "ok\n")
+        out = run(self.repo, "all", config={"docGlobs": ["**/*.md"]})
+        self.assertFalse(any("node_modules" in f["path"] for f in out["findings"]))
+
+
 if __name__ == "__main__":
     unittest.main()

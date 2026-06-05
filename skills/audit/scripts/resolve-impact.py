@@ -67,13 +67,12 @@ def matches(path, pattern):
 
 
 def list_doc_files(repo_root, doc_globs):
+    skip = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}
     docs = []
     regexes = [glob_to_regex(g) for g in doc_globs]
     # followlinks=False (default): symlinked doc trees are not traversed
-    for dirpath, _dirs, files in os.walk(repo_root):
-        parts = dirpath.replace("\\", "/").split("/")
-        if ".git" in parts:
-            continue
+    for dirpath, dirs, files in os.walk(repo_root):
+        dirs[:] = [d for d in dirs if d not in skip]  # prune .git/node_modules/etc
         for fn in files:
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, repo_root)

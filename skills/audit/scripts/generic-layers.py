@@ -42,11 +42,11 @@ def glob_to_regex(pattern):
 
 
 def list_doc_files(repo_root, doc_globs):
+    skip = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}
     regexes = [glob_to_regex(g) for g in doc_globs]
     docs = []
-    for dp, _d, files in os.walk(repo_root):
-        if ".git" in dp.replace("\\", "/").split("/"):
-            continue
+    for dp, dirs, files in os.walk(repo_root):
+        dirs[:] = [d for d in dirs if d not in skip]  # prune .git/node_modules/etc
         for fn in files:
             rel = os.path.relpath(os.path.join(dp, fn), repo_root)
             if any(rx.match(rel) for rx in regexes):

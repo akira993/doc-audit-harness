@@ -84,9 +84,9 @@ def main():
     if os.path.isdir(os.path.join(root, ".claude")):
         diff.append(".claude/**")
 
-    docglobs = []
-    if "docs" in topdirs:
-        docglobs.append("docs/**/*.md")
+    # derive doc globs from dirs that ACTUALLY contain docs (handles non-standard
+    # layouts like vps/; symlinked dirs are not walked so they are excluded).
+    docglobs = [f"{d}/**/*.md" for d in docdirs]
     docglobs.append("*.md")
     if os.path.isdir(os.path.join(root, ".claude")):
         docglobs.append(".claude/**/*.md")

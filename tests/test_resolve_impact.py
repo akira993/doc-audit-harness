@@ -116,5 +116,17 @@ class TestResolveImpact(unittest.TestCase):
         self.assertEqual(by["docs/other.md"], "both")
 
 
+    def test_node_modules_skipped_in_heuristic(self):
+        # A broad docGlobs (**/*.md) must NOT pull node_modules into the heuristic
+        # scan (noise + perf). list_doc_files prunes node_modules/.venv/etc.
+        nmdir = os.path.join(self.repo, "node_modules", "pkg")
+        os.makedirs(nmdir, exist_ok=True)
+        with open(os.path.join(nmdir, "doc.md"), "w", encoding="utf-8") as f:
+            f.write("this vendored file mentions variables.css inside node_modules\n")
+        out = run(["apps/nc_proto/css/variables.css"],
+                  self.base_config(docGlobs=["**/*.md"]), self.repo)
+        self.assertNotIn("node_modules/pkg/doc.md", [d["path"] for d in out["impacted"]])
+
+
 if __name__ == "__main__":
     unittest.main()

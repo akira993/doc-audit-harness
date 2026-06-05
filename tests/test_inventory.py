@@ -60,5 +60,17 @@ class TestInventory(unittest.TestCase):
         self.assertEqual(out["frontMatter"]["total"], 2)
 
 
+    def test_docglobs_derived_from_actual_docdirs(self):
+        # docGlobs must derive from dirs that ACTUALLY contain docs (non-standard
+        # layout: docs live in guide/, not docs/) — not assume a docs/ dir exists.
+        repo = tempfile.mkdtemp()
+        write(repo, "guide/intro.md", "x\n")
+        write(repo, "top.md", "y\n")
+        out = run(repo)
+        self.assertIn("guide/**/*.md", out["docGlobs"])
+        self.assertIn("*.md", out["docGlobs"])
+        self.assertNotIn("docs/**/*.md", out["docGlobs"])
+
+
 if __name__ == "__main__":
     unittest.main()
