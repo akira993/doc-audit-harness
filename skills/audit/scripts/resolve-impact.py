@@ -33,6 +33,10 @@ DEFAULT_MIN_IDENT = 5
 DEFAULT_EXCLUDE_BASENAMES = {
     "readme.md", "index.md", "changelog.md", "license", "license.md",
     "__init__.py", "makefile", "main.md", "test.md",
+    # generic Claude Code convention filenames: a SKILL.md exists in every skill
+    # dir, so its basename/stem token would heuristic-match every doc that merely
+    # mentions skills. Precise impact stays covered by impactMap (.claude/skills/**).
+    "skill", "skill.md",
 }
 
 

@@ -50,6 +50,15 @@ class TestResolveImpact(unittest.TestCase):
         self.assertIn("DESIGN.md", paths)
         self.assertEqual(paths["docs/wcag.md"], "mapped")
 
+    def test_common_filename_token_not_heuristic_flooded(self):
+        # A changed */SKILL.md must NOT heuristic-match docs that merely mention
+        # "SKILL.md"/"SKILL" — it is a generic Claude Code convention filename that
+        # appears across many dirs (excluded by default to avoid heuristic flooding).
+        with open(os.path.join(self.repo, "docs/mentions.md"), "w", encoding="utf-8") as f:
+            f.write("see the markdown-query SKILL.md and another SKILL for details\n")
+        out = run(["plugins/foo/SKILL.md"], self.base_config(), self.repo)
+        self.assertNotIn("docs/mentions.md", [d["path"] for d in out["impacted"]])
+
     def test_glob_match_is_mapped(self):
         out = run(["scripts/nc_backup_cleanup.cron"], self.base_config(), self.repo)
         paths = [d["path"] for d in out["impacted"]]
