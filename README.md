@@ -10,7 +10,12 @@ a single CONSISTENT / NEEDS FIX verdict. Report-only (no edits).
 onboarding, config reference, the impact-map method, the verdict/anchor lifecycle, and
 hard-won gotchas. Copy-paste config template: [docs/examples/doc-audit.example.json](docs/examples/doc-audit.example.json).
 
-## Install (global)
+## Install (Claude Code plugin marketplace)
+
+    /plugin marketplace add akira993/doc-audit-harness   # register this repo as a marketplace
+    /plugin install docaudit@akira-plugins               # install; skills surface as /docaudit:audit, /docaudit:init
+
+## Install (global, skills-dir — alternative)
 
     cp -R doc-audit-harness ~/.claude/skills/docaudit    # skills-dir plugin; auto-loads next session as docaudit@skills-dir
     # then in any repo: run /docaudit:init, or add .claude/doc-audit.json by hand
@@ -29,4 +34,6 @@ hard-won gotchas. Copy-paste config template: [docs/examples/doc-audit.example.j
     /docaudit:init             bootstrap .claude/doc-audit.json for a repo that has none
     /docaudit:init --scaffold  also generate project-tailored layer skills (skill-creator)
 
-Design spec: test-my-nc `docs/superpowers/specs/2026-06-04-doc-audit-harness-design.md`.
+## License
+
+MIT — see [LICENSE](LICENSE).
