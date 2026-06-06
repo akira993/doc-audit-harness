@@ -39,6 +39,9 @@ print(("1" if e else "0")+"\t"+b)
 ' "$CONFIG")
 fi
 [[ -n "$BIN" ]] || BIN="mdq"
+[[ -n "$ENABLED" ]] || ENABLED="1"
+# JSON-safe copy of BIN for echoing into the JSON (BIN comes from user config).
+BIN_J="$(printf '%s' "$BIN" | tr -d '"\\' | tr -d '[:cntrl:]')"
 
 if [[ "$ENABLED" != "1" ]]; then
   printf '{"mdqAvailable":false,"reason":"disabled-by-config"}\n'
@@ -46,7 +49,7 @@ if [[ "$ENABLED" != "1" ]]; then
 fi
 
 if ! command -v "$BIN" >/dev/null 2>&1; then
-  printf '{"mdqAvailable":false,"reason":"not-installed","bin":"%s"}\n' "$BIN"
+  printf '{"mdqAvailable":false,"reason":"not-installed","bin":"%s"}\n' "$BIN_J"
   exit 0
 fi
 
@@ -77,12 +80,12 @@ fi
 ERRF="$(mktemp "${TMPDIR:-/tmp}/mdq_index_err.XXXXXX")"
 trap 'rm -f "$ERRF"' EXIT
 if ( cd "$REPO_ROOT" && PYTHONUTF8=1 PYTHONIOENCODING=utf-8 "$BIN" index "${ROOT_ARGS[@]}" ) >/dev/null 2>"$ERRF"; then
-  printf '{"mdqAvailable":true,"reason":"indexed","bin":"%s","dbPath":".mdq/index.sqlite"}\n' "$BIN"
+  printf '{"mdqAvailable":true,"reason":"indexed","bin":"%s","dbPath":".mdq/index.sqlite"}\n' "$BIN_J"
   exit 0
 else
   rc=$?
-  TAIL="$(tail -n 3 "$ERRF" 2>/dev/null | tr '\n' ' ' | tr -d '"\\')"
+  TAIL="$(tail -n 3 "$ERRF" 2>/dev/null | tr '\n' ' ' | tr -d '"\\' | tr -d '[:cntrl:]')"
   echo "mdq index failed (rc=$rc): $TAIL" >&2
-  printf '{"mdqAvailable":false,"reason":"index-failed","rc":%d,"bin":"%s"}\n' "$rc" "$BIN"
+  printf '{"mdqAvailable":false,"reason":"index-failed","rc":%d,"bin":"%s"}\n' "$rc" "$BIN_J"
   exit 0
 fi
