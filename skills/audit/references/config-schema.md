@@ -32,7 +32,7 @@ default it indexes the whole repo (`--root .`) — mdq's own default roots (`doc
 `knowledge`, …) would miss `README.md`, `skills/**`, and `agents/**`; set `roots` to
 narrow the scope. When `mdq` is absent, `indexing.enabled` is `false`, or indexing
 fails, the audit silently degrades to grep — so the harness stays tool-independent. Add
-`.mdq/` to `.gitignore` (it also contains `usage.jsonl`, which logs query text verbatim).
+`.mdq/` to `.gitignore` (it may also contain a `usage.jsonl` that logs query text verbatim).
 `tool` is reserved for future multi-backend support; the runtime currently reads only
 `bin` (to locate the executable), plus `enabled` and `roots` — `tool` itself is not consumed.
 

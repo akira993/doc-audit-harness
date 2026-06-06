@@ -22,7 +22,7 @@ const a = args || {}
 const impacted = (a.impacted || [])
 const changeSummary = a.changeSummary || '(no summary provided)'
 const repoRoot = a.repoRoot || '.'
-const mdqAvailable = a.mdqAvailable === true
+const mdqAvailable = a.mdqAvailable === true || a.mdqAvailable === 'true'
 const dbPath = `${repoRoot}/.mdq/index.sqlite`
 
 const readInstruction = (docPath) => mdqAvailable
