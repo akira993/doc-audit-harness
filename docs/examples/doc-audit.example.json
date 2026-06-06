@@ -1,0 +1,20 @@
+{
+  "_note": "TEMPLATE — copy to <your-repo>/.claude/doc-audit.json and edit. Full schema + impact-map method: docs/ADOPTION.md (§5 schema, §6 impact map). MINIMAL viable config = anchorPath + diffGlobs + impactMap (impactMap may even start as []). This template uses the BUILT-IN GENERIC fallback layers (no docAuditCommands key). To DELEGATE to your project's own doc tools instead, add e.g. \"docAuditCommands\": {\"format\": \"/review-docs\", \"existence\": \"/check-docs\", \"semantic\": \"doc-lint\"}. To enforce a front-matter contract via the generic format layer, add \"frontMatterFields\": [\"title\", \"description\"]. For a project-boundary check, add \"boundaryCommand\": \"make check-boundary\". For a sub-directory that is NOT its own git repo, see docs/ADOPTION.md §10 (full-mode-only: omit the anchor, always run /docaudit:audit --full). Delete this _note key in real configs.",
+  "anchorPath": ".claude/state/last-doc-audit.json",
+  "diffGlobs": ["src/**", "scripts/**", "Makefile", "package.json", "docs/**", "README.md"],
+  "docGlobs": ["docs/**/*.md", "*.md"],
+  "indexFiles": ["docs/README.md"],
+  "maxImpactedDocs": 80,
+  "heuristics": { "minIdentifierLength": 6, "excludeBasenames": ["index.md", "config.json"] },
+  "reviewCommands": { "code": "/code-review high", "security": "/security-review" },
+  "reportPath": "docs/audit/doc_audit_<YYYY-MM-DD>[_NN].md",
+  "ssotSources": [
+    { "name": "app_version", "value": "1.0.0", "liveSource": "package.json", "docsThatCite": ["README.md", "docs/install.md"] }
+  ],
+  "impactMap": [
+    { "changed": "src/api/**", "impacts": ["docs/api-reference.md", "README.md"], "note": "public API surface documented here" },
+    { "changed": "src/cli/**", "impacts": ["docs/cli.md"], "note": "CLI commands & flags" },
+    { "changed": "scripts/*.sh", "impacts": ["docs/operations.md"], "note": "ops runbooks reference these scripts" },
+    { "changed": "Makefile", "impacts": ["README.md", "docs/contributing.md"], "note": "dev-command catalog" }
+  ]
+}

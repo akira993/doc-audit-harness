@@ -6,6 +6,10 @@ impacted doc still matches its source, delegates the project's existing doc
 checks, and drives `/code-review` + `/security-review` — rolling everything into
 a single CONSISTENT / NEEDS FIX verdict. Report-only (no edits).
 
+**New to docaudit? → [docs/ADOPTION.md](docs/ADOPTION.md)** — full adoption guide: install,
+onboarding, config reference, the impact-map method, the verdict/anchor lifecycle, and
+hard-won gotchas. Copy-paste config template: [docs/examples/doc-audit.example.json](docs/examples/doc-audit.example.json).
+
 ## Install (global)
 
     cp -R doc-audit-harness ~/.claude/skills/docaudit    # skills-dir plugin; auto-loads next session as docaudit@skills-dir
