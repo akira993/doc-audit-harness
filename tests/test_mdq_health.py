@@ -70,6 +70,17 @@ class TestMdqHealth(unittest.TestCase):
         self.assertFalse(out["healthy"])
         self.assertEqual(out["status"], "probe-error")
 
+    def test_probe_error_bad_type_stats(self):
+        # JSON-valid but non-numeric field must degrade to probe-error, never crash.
+        out = run_health({"STUB_STATS": '{"files":"bad","chunks":10}'})
+        self.assertFalse(out["healthy"])
+        self.assertEqual(out["status"], "probe-error")
+
+    def test_files_present_chunks_zero_is_empty(self):
+        out = run_health({"STUB_STATS": '{"files":2,"chunks":0}'})
+        self.assertFalse(out["healthy"])
+        self.assertEqual(out["status"], "empty-index")
+
 
 if __name__ == "__main__":
     unittest.main()

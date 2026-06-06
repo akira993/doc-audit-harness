@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # mdq-health.py — Phase-0 health probe (spec §4.1). Read-only: given an mdq index db,
 # report whether mdq is actually firing. Emits a single-line JSON object and ALWAYS
-# exits 0 (a probe failure must never break the audit).
+# exits 0 (a probe failure must never break the audit) — main() wraps the probe in a
+# blanket try/except so any unexpected error degrades to status "probe-error".
 #
 #   {"files": F, "chunks": C, "searchSmoke": bool, "healthy": bool, "status": S}
 #   status in {ok, empty-index, search-broken, probe-error}
 #   healthy == (files > 0 and chunks > 0 and searchSmoke)
-import argparse, json, os, re, subprocess, sys
+import argparse, json, os, re, subprocess
 
 
 def run(bin_, *args):
@@ -21,16 +22,10 @@ def run(bin_, *args):
         return 127, ""
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--bin", default="mdq")
-    ap.add_argument("--db", default=".mdq/index.sqlite")
-    a = ap.parse_args()
-
-    out = {"files": 0, "chunks": 0, "searchSmoke": False, "healthy": False, "status": "probe-error"}
-
-    # 1) stats — files/chunks. Unparseable or nonzero rc => probe-error.
-    rc, so = run(a.bin, "stats", "--db", a.db)
+def _probe(out, bin_, db):
+    """Fill `out` in place. May raise; main() catches and keeps status=probe-error."""
+    # 1) stats — files/chunks. Unparseable or nonzero rc => probe-error (status unchanged).
+    rc, so = run(bin_, "stats", "--db", db)
     st = None
     if rc == 0 and so.strip():
         try:
@@ -38,19 +33,18 @@ def main():
         except Exception:
             st = None
     if st is None:
-        print(json.dumps(out))
         return
+    # A non-numeric files/chunks raises ValueError here -> caught by main() -> probe-error.
     out["files"] = int(st.get("files", 0) or 0)
     out["chunks"] = int(st.get("chunks", 0) or 0)
 
     # 2) empty index — no search needed.
     if out["files"] <= 0 or out["chunks"] <= 0:
         out["status"] = "empty-index"
-        print(json.dumps(out))
         return
 
     # 3) self-derived search smoke: take real terms from the index itself, search one.
-    rc, lo = run(a.bin, "list", "--db", a.db, "--limit", "5")
+    rc, lo = run(bin_, "list", "--db", db, "--limit", "5")
     cand = []
     for line in lo.splitlines():
         line = line.strip()
@@ -80,7 +74,7 @@ def main():
 
     smoke = False
     for w in terms:
-        rc, so = run(a.bin, "search", "--db", a.db, "--q", w, "--top-k", "1")
+        rc, so = run(bin_, "search", "--db", db, "--q", w, "--top-k", "1")
         if rc == 0 and any(ln.strip() for ln in so.splitlines()):
             smoke = True
             break
@@ -88,6 +82,21 @@ def main():
     out["searchSmoke"] = smoke
     out["healthy"] = bool(smoke)  # files>0 and chunks>0 already hold here
     out["status"] = "ok" if smoke else "search-broken"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--bin", default="mdq")
+    ap.add_argument("--db", default=".mdq/index.sqlite")
+    a = ap.parse_args()
+
+    out = {"files": 0, "chunks": 0, "searchSmoke": False, "healthy": False, "status": "probe-error"}
+    try:
+        _probe(out, a.bin, a.db)
+    except Exception:
+        # Any unexpected error -> degrade to probe-error but still emit valid JSON + exit 0.
+        out["healthy"] = False
+        out["status"] = "probe-error"
     print(json.dumps(out))
 
 
