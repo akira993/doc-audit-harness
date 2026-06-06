@@ -18,9 +18,23 @@ live here; the plugin ships no project knowledge.
 | `reportPath` | string | no | output report path template (supports `<YYYY-MM-DD>` and `[_NN]`) |
 | `maxImpactedDocs` | number | no | cap on impacted docs (default 200); overflow sets `truncated` |
 | `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:string[]}` |
+| `indexing` | object | no | `{enabled:bool=true, tool:string="mdq", bin:string="mdq", roots:string[]?}` — Phase-0 mdq preflight; `roots` overrides index roots (default: whole repo `.`, since mdq's own default roots miss `README.md`/`skills`/`agents`); `enabled:false` opts out even when mdq is installed (conditional-force) |
 
 `impacts` entries MUST be doc paths only; put commentary in `note`. `changed`
 accepts a single path or a glob.
+
+## Indexing (mdq, Phase 0)
+
+`indexing` is optional and conditional-force. With `mdq` on `PATH` (or `bin` pointed at a
+vendored binary), Phase 0 builds the index under `.mdq/index.sqlite` and Phase 3 reads
+impacted docs as token-optimized chunks (`mdq search --paths <doc>` / `mdq get`). By
+default it indexes the whole repo (`--root .`) — mdq's own default roots (`docs`,
+`knowledge`, …) would miss `README.md`, `skills/**`, and `agents/**`; set `roots` to
+narrow the scope. When `mdq` is absent, `indexing.enabled` is `false`, or indexing
+fails, the audit silently degrades to grep — so the harness stays tool-independent. Add
+`.mdq/` to `.gitignore` (it also contains `usage.jsonl`, which logs query text verbatim).
+`tool` is reserved for future multi-backend support; the runtime currently reads only
+`bin` (to locate the executable), plus `enabled` and `roots` — `tool` itself is not consumed.
 
 ## Generic fallback layers
 

@@ -21,6 +21,8 @@ suggestedDiffGlobs, existingDocTools, boundaryCommandGuess, indexFiles, mentions
 (Optional enrichment: if `markdown-query`/CocoIndex/Serena are available you may use
 them to refine the impactMap couplings — they are NOT required; inventory.py alone
 suffices. CocoIndex needs `sentence_transformers`; skip it if unavailable.)
+Also run `command -v mdq`: if present, this repo can use conditional-force indexing —
+propose an `indexing` block in Step 2.
 
 ## Step 2 — draft the config
 Build a `doc-audit.json` draft from the inventory:
@@ -28,6 +30,11 @@ Build a `doc-audit.json` draft from the inventory:
   `docGlobs`: inventory `docGlobs`. `indexFiles`: inventory `indexFiles`.
 - `frontMatterFields`: include `suggestedFrontMatterFields` ONLY if the user wants
   front-matter enforced (ask). `boundaryCommand`: `boundaryCommandGuess` if present.
+- `indexing`: if `mdq` was detected in Step 1, propose
+  `"indexing": { "enabled": true, "tool": "mdq", "bin": "mdq" }` so Phase 0 indexes the whole repo and
+  Phase 3 reads chunks (big token savings); tell the user `enabled:false` opts out and
+  `roots` narrows the scope. If `mdq` was NOT detected, OMIT the key — the audit already
+  degrades to grep by default.
 - `reviewCommands`: `{code:"/code-review high", security:"/security-review"}`.
   `reportPath`: `docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md` (or repo-root if no docs/logs).
   `maxImpactedDocs`: 60.
@@ -49,6 +56,8 @@ grounded in the inventory.
 On approval, write `.claude/doc-audit.json` (create `.claude/` if needed). Then tell the
 user: review the impactMap, commit the config, and run `/docaudit:audit --full` to
 produce the first CONSISTENT verdict + anchor (that audit, not init, writes the anchor).
+If `mdq` is installed, no manual index step is needed — the first `/docaudit:audit`
+Phase 0 builds `.mdq/index.sqlite` automatically (add `.mdq/` to `.gitignore`).
 
 ## Step 5 — --scaffold (opt-in; only when invoked with --scaffold)
 Generate project-tailored layer skill skeletons so this repo owns richer checks than

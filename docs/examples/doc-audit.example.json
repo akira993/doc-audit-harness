@@ -3,6 +3,7 @@
   "anchorPath": ".claude/state/last-doc-audit.json",
   "diffGlobs": ["src/**", "scripts/**", "Makefile", "package.json", "docs/**", "README.md"],
   "docGlobs": ["docs/**/*.md", "*.md"],
+  "indexing": { "enabled": true, "tool": "mdq", "bin": "mdq" },
   "indexFiles": ["docs/README.md"],
   "maxImpactedDocs": 80,
   "heuristics": { "minIdentifierLength": 6, "excludeBasenames": ["index.md", "config.json"] },
