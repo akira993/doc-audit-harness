@@ -16,13 +16,20 @@ Also bind `ANCHOR_PATH="$(python3 -c 'import json,sys; print(json.load(open(sys.
 
 ## Phase 0 — index preflight (deterministic)
 Run: `bash "$SD/scripts/mdq-index.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`.
-Parse `{mdqAvailable, reason}` and bind `MDQ_AVAILABLE` (true/false) for Phase 3.
+Parse `{mdqAvailable, reason, bin}` and bind `MDQ_AVAILABLE` (true/false) for Phase 3 and `MDQ_BIN` (the `bin` field, default `mdq`).
 `mdqAvailable:false` is EXPECTED, not an error (`reason` is `not-installed` /
 `disabled-by-config` / `index-failed`): record the reason and proceed in grep-degrade
 mode — the engine is fully functional without mdq. When `mdqAvailable:true`, the whole
 repo's Markdown is now indexed under `$CLAUDE_PROJECT_DIR/.mdq/index.sqlite`; indexing runs in a subprocess,
 so doc bodies never enter context — only this JSON summary does. This phase always runs
 first (both incremental and `--full`).
+
+When `MDQ_AVAILABLE` is true, also run
+`python3 "$SD/scripts/mdq-health.py" --bin "<MDQ_BIN>" --db "$CLAUDE_PROJECT_DIR/.mdq/index.sqlite"`
+and bind `MDQ_HEALTHY` / `MDQ_CHUNKS` / `MDQ_STATUS` from its JSON
+`{healthy, chunks, status}` (`status` ∈ `ok`/`empty-index`/`search-broken`/`probe-error`).
+The probe is report-only and always exits 0; if it cannot run, treat `MDQ_HEALTHY` as
+`false` and `MDQ_STATUS` as `probe-error` and continue. These feed the Phase-5 mdq status line.
 
 ## Phase 1 — baseline + diff
 Run: `bash "$SD/scripts/compute-baseline.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`.
@@ -69,8 +76,14 @@ Phase 3 subagent verdicts are already PASS/WARN/FAIL — use them directly. For 
 Write a single report to `reportPath` (e.g. `docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md`,
 6-field front matter (title, description, category, created, updated, version) with `category: logs`), containing: change set, impacted docs +
 per-doc verdicts, delegated-check results, review summaries, `mapGapCandidates`,
-and the roll-up verdict. Do NOT edit any existing doc and do NOT auto-edit
+the **mdq status line** (below), and the roll-up verdict. Do NOT edit any existing doc and do NOT auto-edit
 `docs/README.md` — list "add report to index" as a manual follow-up.
+
+**mdq status line** — always include exactly one; it is **non-blocking** (never changes the verdict):
+- `MDQ_AVAILABLE` false → `💡 mdq: not active — docs read in full. Install mdq for Phase-0 indexed, chunked reads (~90%+ token savings on large docs): clone github.com/dahatake/skills and run its ./setup/setup-markdown-query.sh`
+- `MDQ_AVAILABLE` true and `MDQ_HEALTHY` true → `✓ mdq: active (indexed <MDQ_CHUNKS> chunks; chunked reads on)`
+- `MDQ_AVAILABLE` true and `MDQ_HEALTHY` false → `⚠ mdq: installed but NOT firing (<MDQ_STATUS>) — not getting token savings; run mdq index --root . (or check indexing.roots). [non-blocking]`
+
 On **CONSISTENT only**, run
 `bash "$SD/scripts/write-anchor.sh" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --verdict CONSISTENT --mode "$MODE"`.
 
