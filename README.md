@@ -10,6 +10,14 @@ a single CONSISTENT / NEEDS FIX verdict. Report-only (no edits).
 onboarding, config reference, the impact-map method, the verdict/anchor lifecycle, and
 hard-won gotchas. Copy-paste config template: [docs/examples/doc-audit.example.json](docs/examples/doc-audit.example.json).
 
+## Requirements
+
+- **Required:** [Claude Code](https://code.claude.com/docs), a **git** repo ([git](https://git-scm.com/)), and [Python 3](https://www.python.org/) (standard library only — no `pip install`).
+- **Optional (all degrade gracefully):** [`/code-review` + `/security-review`](https://code.claude.com/docs) (Claude Code built-ins), [`mdq`](https://github.com/yshavit/mdq) (faster doc reads, else grep), [CocoIndex](https://github.com/cocoindex-io/cocoindex) / [Serena](https://github.com/oraios/serena) (richer `init` discovery).
+- **`--scaffold` only:** [`skill-creator`](https://github.com/anthropics/skills) (Anthropic) + [`superpowers:writing-skills`](https://github.com/obra/superpowers) to tailor the generated layer skills.
+
+Full table with fallbacks → [docs/ADOPTION.md §2](docs/ADOPTION.md).
+
 ## Install (Claude Code plugin marketplace)
 
     /plugin marketplace add akira993/doc-audit-harness   # register this repo as a marketplace
@@ -56,7 +64,7 @@ a clean verdict advances the anchor, so the next audit only looks at newer chang
     /docaudit:audit            incremental (diff since anchor)
     /docaudit:audit --full     whole-corpus deep audit / first run
     /docaudit:init             bootstrap .claude/doc-audit.json for a repo that has none
-    /docaudit:init --scaffold  also generate project-tailored layer skills (skill-creator)
+    /docaudit:init --scaffold  also generate project-tailored layer skills (skill-creator / writing-skills)
 
 ## License
 

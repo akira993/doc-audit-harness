@@ -72,14 +72,15 @@ Key properties to internalize:
 
 | Need | Why | Required? |
 |------|-----|-----------|
-| Claude Code | runs the `/docaudit:*` skills | yes |
+| [Claude Code](https://code.claude.com/docs) | runs the `/docaudit:*` skills | yes |
 | A **git repository** at the audit root | the engine diffs with git | yes (see §10 for sub-dirs) |
-| Python 3 (standard library only) | the engine scripts; no `pip install` needed | yes |
-| `git` | diff/anchor | yes |
-| `/code-review`, `/security-review` | Claude Code built-in review skills (Phase 4) | optional — skipped + WARNed if absent |
-| `markdown-query` (mdq) | faster doc reading in verification/inventory | optional — falls back to grep |
-| CocoIndex / Serena (MCP) | richer code↔doc discovery during `init` | optional — falls back to grep/heuristic |
+| [Python 3](https://www.python.org/) (standard library only) | the engine scripts; no `pip install` needed | yes |
+| [`git`](https://git-scm.com/) | diff/anchor | yes |
+| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code built-in review skills (Phase 4) | optional — skipped + WARNed if absent |
+| [`markdown-query` (mdq)](https://github.com/yshavit/mdq) | faster doc reading in verification/inventory | optional — falls back to grep |
+| [CocoIndex](https://github.com/cocoindex-io/cocoindex) / [Serena](https://github.com/oraios/serena) (MCP) | richer code↔doc discovery during `init` | optional — falls back to grep/heuristic |
 | Project doc tools (`/check-docs`, `doc-lint`, …) | richer Phase-4 layers via delegation | optional — generic fallback otherwise |
+| [`skill-creator`](https://github.com/anthropics/skills) / [`superpowers:writing-skills`](https://github.com/obra/superpowers) | author & tailor the `--scaffold` layer skills | optional — only for `/docaudit:init --scaffold` |
 
 The engine is **MCP- and server-independent** by design; none of the optional pieces are
 required to get a useful audit.
