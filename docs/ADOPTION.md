@@ -5,6 +5,8 @@ any repository to it — from a 5-minute quick start to the config reference, th
 impact-map design method, the verdict/anchor lifecycle, and the hard-won gotchas
 from real-world use.
 
+> 🌐 日本語版: [ADOPTION.ja.md](ADOPTION.ja.md)
+
 > **docaudit is report-only.** It maps what changed to the docs that describe it,
 > verifies them, drives `/code-review` + `/security-review`, and emits one
 > **CONSISTENT / NEEDS FIX** verdict — but it **never edits your docs**. Every fix is
@@ -377,7 +379,8 @@ doc-audit-harness/
 │                                        #   (generic format/existence/semantic layers are
 │                                        #    realized as generic-layers.py above, NOT skill dirs)
 ├── agents/doc-impact-verifier.md       # per-doc verification subagent
-├── docs/ADOPTION.md                    # ← this guide
+├── docs/ADOPTION.md                    # ← this guide (English)
+├── docs/ADOPTION.ja.md                 # Japanese translation
 ├── docs/examples/doc-audit.example.json # copy-paste config template (see §4b)
 └── tests/                              # engine unit tests (python3 -m unittest discover -s tests -t .)
 ```
