@@ -1,8 +1,0 @@
-__pycache__/
-*.pyc
-.venv/
-.DS_Store
-.serena/
-data/
-docs/superpowers/
-.mdq/
