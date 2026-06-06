@@ -77,7 +77,7 @@ Key properties to internalize:
 | [Python 3](https://www.python.org/) (standard library only) | the engine scripts; no `pip install` needed | yes |
 | [`git`](https://git-scm.com/) | diff/anchor | yes |
 | [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code built-in review skills (Phase 4) | optional — skipped + WARNed if absent |
-| [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 whole-repo index + Phase 3 chunked doc reads (big token savings) | optional — auto-used when present (conditional-force); grep when absent |
+| [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 whole-repo index + Phase 3 chunked doc reads (~90%+ savings on large docs; upstream bench 97–99%) | optional — auto-used when present (conditional-force); grep when absent |
 | [CocoIndex](https://github.com/cocoindex-io/cocoindex) / [Serena](https://github.com/oraios/serena) (MCP) | richer code↔doc discovery during `init` | optional — falls back to grep/heuristic |
 | Project doc tools (`/check-docs`, `doc-lint`, …) | richer Phase-4 layers via delegation | optional — generic fallback otherwise |
 | [`skill-creator`](https://github.com/anthropics/skills) / [`superpowers:writing-skills`](https://github.com/obra/superpowers) | author & tailor the `--scaffold` layer skills | optional — only for `/docaudit:init --scaffold` |
@@ -85,6 +85,9 @@ Key properties to internalize:
 The engine is **MCP- and server-independent** by design; none of the optional pieces are
 required to get a useful audit — and `mdq`, when installed, is auto-applied for
 token-optimized doc reads (conditional-force) but degrades to grep when absent.
+Every audit prints an **mdq status line**: a 💡 install nudge when mdq is absent, or a
+⚠ non-blocking WARN when mdq is installed but its index isn't firing (`empty-index` /
+`search-broken` / `probe-error`).
 
 ---
 
