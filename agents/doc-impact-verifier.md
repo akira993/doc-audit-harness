@@ -13,8 +13,12 @@ The prompt gives you: the repo root, a summary of what changed since the last
 audit, and the target doc path (+ its provenance: `mapped` or `heuristic`).
 
 ## Method
-1. Pull only the relevant chunks of the target doc (prefer `markdown-query`/`mdq`
-   if available, else `grep -n`). Do not read unrelated files.
+1. Pull only the relevant chunks of the target doc. When the orchestrator says the
+   repo is mdq-indexed, you MUST use `mdq search --db <repoRoot>/.mdq/index.sqlite
+   --q "<keywords>" --paths "<this doc>" --top-k 5 --max-tokens 800` then `mdq get --db
+   <repoRoot>/.mdq/index.sqlite --chunk-id <ID>` (use `--mode grep` for exact
+   identifiers) — never a full-file Read, and never grep unless told mdq is
+   unavailable. Never Read an entire doc, and do not read unrelated files.
 2. Compare what the doc claims against the changed source. If needed, read the
    specific changed source lines to confirm a contradiction.
 3. Decide a single verdict:
