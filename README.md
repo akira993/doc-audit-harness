@@ -22,6 +22,30 @@ hard-won gotchas. Copy-paste config template: [docs/examples/doc-audit.example.j
     #   (schema: skills/audit/references/config-schema.md)
     # NOTE: ~/.claude/skills/<name>/ (NOT ~/.claude/plugins/, which is marketplace-cache territory)
 
+## Usage example
+
+First run in a repo (no adapter yet):
+
+    /docaudit:init             # writes .claude/doc-audit.json (detects docs + existing doc checks)
+    /docaudit:audit --full     # whole-corpus baseline; on CONSISTENT it sets the anchor
+
+Day-to-day, after editing code / config / docs:
+
+    /docaudit:audit            # diffs since the anchor → maps changed files to the docs they impact
+
+docaudit is report-only — it never edits your docs. Example roll-up (illustrative):
+
+    Verdict: NEEDS FIX
+    Change set:       3 files since anchor a1b2c3d
+    Impacted docs:    docs/api.md  (FAIL — endpoint renamed; doc still says POST /v1/login)
+                      README.md    (PASS)
+    Delegated checks: existence ✔   semantic ✔   format ✔
+    Reviews:          /code-review ⚠ 1 medium    /security-review ✔
+    Report:           docs/logs/doc_audit_2026-06-06.md
+
+Fix the flagged docs, then re-run `/docaudit:audit` until it reports **CONSISTENT** —
+a clean verdict advances the anchor, so the next audit only looks at newer changes.
+
 ## Dev / test
 
     claude --plugin-dir ~/Projects/doc-audit-harness     # load against a target repo
