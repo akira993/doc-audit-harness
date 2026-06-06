@@ -14,6 +14,16 @@ repo has no adapter yet — do NOT invent project facts.
 Also bind `ANCHOR_PATH="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("anchorPath",""))' "$CFG")"` for Phase 5.
 `--full` forces whole-corpus mode (ignores the anchor diff scope).
 
+## Phase 0 — index preflight (deterministic)
+Run: `bash "$SD/scripts/mdq-index.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`.
+Parse `{mdqAvailable, reason}` and bind `MDQ_AVAILABLE` (true/false) for Phase 3.
+`mdqAvailable:false` is EXPECTED, not an error (`reason` is `not-installed` /
+`disabled-by-config` / `index-failed`): record the reason and proceed in grep-degrade
+mode — the engine is fully functional without mdq. When `mdqAvailable:true`, the whole
+repo's Markdown is now indexed under `$CLAUDE_PROJECT_DIR/.mdq/index.sqlite`; indexing runs in a subprocess,
+so doc bodies never enter context — only this JSON summary does. This phase always runs
+first (both incremental and `--full`).
+
 ## Phase 1 — baseline + diff
 Run: `bash "$SD/scripts/compute-baseline.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`.
 Do NOT pass `--full` to this script (it only accepts `--config`/`--repo-root`; an unknown flag makes it `exit 2`). `--full` is a skill-level argument only: after parsing the script output, if the skill was invoked with `--full`, set the effective `MODE` to `full` in memory. Bind `MODE` to the effective mode for use in Phase 5.
@@ -28,7 +38,7 @@ Pipe the `changed` list into:
 Parse `{impacted[], mapGapCandidates[], ssotRecheck[], truncated, counts{changed,impacted,mapped,heuristicOnly,candidatesBeforeCap}}`. If `truncated` is true, record the dropped count (the script also prints it to stderr) explicitly in the Phase 5 report — never silently discard it.
 
 ## Phase 3 — change-impact verification (Workflow fan-out)
-Launch `Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted}})`.
+Launch `Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted, mdqAvailable: MDQ_AVAILABLE}})`.
 Collect per-doc `{path, verdict, rationale, suggestion}`. (Built-in `/code-review`
 & `/security-review` CANNOT run inside a subagent/Workflow — they run in Phase 4.)
 
@@ -66,4 +76,6 @@ On **CONSISTENT only**, run
 
 ## Guardrails
 Report-only. Never rewrite ADRs or `docs/logs/`. Surface fixes as proposals. mdq is
-optional (fallback to grep). MCP servers are optional.
+auto-detected in Phase 0; when present it is REQUIRED for doc reads (whole-repo index +
+chunked `mdq search`/`get`), with grep used only when mdq is genuinely absent
+(conditional-force). The engine still runs fully without mdq. MCP servers are optional.
