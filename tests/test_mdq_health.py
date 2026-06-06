@@ -81,6 +81,17 @@ class TestMdqHealth(unittest.TestCase):
         self.assertFalse(out["healthy"])
         self.assertEqual(out["status"], "empty-index")
 
+    def test_non_ascii_headings_smoke(self):
+        # A healthy index whose headings + filenames are entirely non-ASCII (CJK) must
+        # still yield smoke terms and report ok — not a false search-broken WARN.
+        out = run_health({
+            "STUB_STATS": '{"files":3,"chunks":10}',
+            "STUB_LIST": '{"path":"ドキュメント/導入.md","heading_path":"ドキュメント監査ハーネス > 要件"}',
+            "STUB_SEARCH": '{"chunk_id":"x","path":"ドキュメント/導入.md"}',
+        })
+        self.assertTrue(out["healthy"])
+        self.assertEqual(out["status"], "ok")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -55,7 +55,7 @@ def _probe(out, bin_, db):
         except Exception:
             continue
         text = " ".join(str(d.get(k, "")) for k in ("heading_path", "path"))
-        cand += re.findall(r"[A-Za-z0-9]{4,}", text)
+        cand += re.findall(r"[^\W_]{3,}", text)  # Unicode-aware (incl. CJK), excludes underscore
     if not cand:  # fallback: basename stems of listed paths
         for line in lo.splitlines():
             try:
@@ -63,7 +63,7 @@ def _probe(out, bin_, db):
             except Exception:
                 continue
             stem = re.sub(r"\.[A-Za-z0-9]+$", "", os.path.basename(str(d.get("path", ""))))
-            cand += re.findall(r"[A-Za-z0-9]{3,}", stem)
+            cand += re.findall(r"[^\W_]{2,}", stem)
     seen, terms = set(), []
     for w in cand:
         if w.lower() not in seen:
