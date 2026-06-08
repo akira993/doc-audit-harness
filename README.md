@@ -1,5 +1,7 @@
 # docaudit — Documentation Audit Harness (Claude Code plugin)
 
+[![release](https://img.shields.io/github/v/release/akira993/doc-audit-harness?display_name=release)](https://github.com/akira993/doc-audit-harness/releases/latest)
+
 Change-driven documentation audit. Diffs the repo since the last clean audit
 (anchor), maps changed code/config to the docs that describe them, verifies each
 impacted doc still matches its source, delegates the project's existing doc
