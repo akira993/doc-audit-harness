@@ -19,6 +19,7 @@ live here; the plugin ships no project knowledge.
 | `maxImpactedDocs` | number | no | cap on impacted docs (default 200); overflow sets `truncated` |
 | `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:string[]}` |
 | `indexing` | object | no | `{enabled:bool=true, tool:string="mdq", bin:string="mdq", roots:string[]?}` — Phase-0 mdq preflight; `roots` overrides index roots (default: whole repo `.`, since mdq's own default roots miss `README.md`/`skills`/`agents`); `enabled:false` opts out even when mdq is installed (conditional-force) |
+| `contextMode` | object | no | `{enabled:bool=true}` — Phase-0 context-mode probe (by `ctx_*` tool availability + `ctx_doctor`); when context-mode is installed, large outputs (git diff, reviews) are processed in its sandbox instead of read in full. `enabled:false` opts out even when installed (conditional-force). No `bin`/`roots`/CLI — context-mode is a location-independent global plugin |
 
 `impacts` entries MUST be doc paths only; put commentary in `note`. `changed`
 accepts a single path or a glob.
@@ -35,6 +36,20 @@ fails, the audit silently degrades to grep — so the harness stays tool-indepen
 `.mdq/` to `.gitignore` (it may also contain a `usage.jsonl` that logs query text verbatim).
 `tool` is reserved for future multi-backend support; the runtime currently reads only
 `bin` (to locate the executable), plus `enabled` and `roots` — `tool` itself is not consumed.
+
+## context-mode (Phase 0/2/3/4)
+
+`contextMode` is optional and conditional-force, complementary to `indexing` (mdq): mdq
+optimizes Markdown *reads*, context-mode optimizes the *processing of large machine
+output*. When the `ctx_*` MCP tools are available, the audit's Phase-0 probe calls
+`ctx_doctor`, and Phases 2/3/4 process the big `git diff` and `/code-review` /
+`/security-review` output in context-mode's sandbox (returning only distilled summaries)
+instead of reading them in full. It needs no `bin`/`roots` — context-mode is a global
+plugin with nothing to locate, so detection is purely by tool availability (never by
+inspecting `~/.claude` plugin paths). When the tools are absent, `contextMode.enabled`
+is `false`, or the probe fails, the audit silently runs the normal full-read path — so
+the harness stays tool-independent. Every audit prints a non-blocking **context-mode
+status line** (💡 not active / ✓ active / ⚠ degraded).
 
 ## Generic fallback layers
 

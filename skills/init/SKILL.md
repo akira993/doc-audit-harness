@@ -22,7 +22,10 @@ suggestedDiffGlobs, existingDocTools, boundaryCommandGuess, indexFiles, mentions
 them to refine the impactMap couplings — they are NOT required; inventory.py alone
 suffices. CocoIndex needs `sentence_transformers`; skip it if unavailable.)
 Also run `command -v mdq`: if present, this repo can use conditional-force indexing —
-propose an `indexing` block in Step 2.
+propose an `indexing` block in Step 2. Likewise, check whether the `ctx_*` MCP tools
+(context-mode) are available to you in this session — judge purely by tool availability,
+NOT by globbing `~/.claude` plugin paths (never bake machine-specific globals into the
+config). If available, propose a `contextMode` block in Step 2.
 
 ## Step 2 — draft the config
 Build a `doc-audit.json` draft from the inventory:
@@ -35,6 +38,11 @@ Build a `doc-audit.json` draft from the inventory:
   Phase 3 reads chunks (big token savings); tell the user `enabled:false` opts out and
   `roots` narrows the scope. If `mdq` was NOT detected, OMIT the key — the audit already
   degrades to grep by default.
+- `contextMode`: if the `ctx_*` tools (context-mode) were detected in Step 1, propose
+  `"contextMode": { "enabled": true }` so the audit processes large outputs (git diff,
+  reviews) in context-mode's sandbox (token savings on big audits); tell the user
+  `enabled:false` opts out. If context-mode was NOT detected, OMIT the key — the audit
+  already runs the normal full-read path by default (conditional-force, like `indexing`).
 - `reviewCommands`: `{code:"/code-review high", security:"/security-review"}`.
   `reportPath`: `docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md` (or repo-root if no docs/logs).
   `maxImpactedDocs`: 60.
