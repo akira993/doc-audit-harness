@@ -62,7 +62,7 @@ Pipe the `changed` list into:
 Parse `{impacted[], mapGapCandidates[], ssotRecheck[], truncated, counts{changed,impacted,mapped,heuristicOnly,candidatesBeforeCap}}`. If `truncated` is true, record the dropped count (the script also prints it to stderr) explicitly in the Phase 5 report — never silently discard it.
 
 ## Phase 3 — change-impact verification (Workflow fan-out)
-Launch `Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted, mdqAvailable: MDQ_AVAILABLE}})`.
+Launch `Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted, mdqAvailable: MDQ_AVAILABLE, cmAvailable: CM_AVAILABLE}})`.
 Collect per-doc `{path, verdict, rationale, suggestion}`. (Built-in `/code-review`
 & `/security-review` CANNOT run inside a subagent/Workflow — they run in Phase 4.)
 

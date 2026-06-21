@@ -23,6 +23,7 @@ const impacted = (a.impacted || [])
 const changeSummary = a.changeSummary || '(no summary provided)'
 const repoRoot = a.repoRoot || '.'
 const mdqAvailable = a.mdqAvailable === true || a.mdqAvailable === 'true'
+const cmAvailable = a.cmAvailable === true || a.cmAvailable === 'true'
 const dbPath = `${repoRoot}/.mdq/index.sqlite`
 
 const readInstruction = (docPath) => mdqAvailable
@@ -33,6 +34,11 @@ const readInstruction = (docPath) => mdqAvailable
     `\`mdq get --db "${dbPath}" --chunk-id <ID>\` to pull ONLY the relevant heading chunks. ` +
     `Do NOT Read the whole doc; use Read only for the specific changed SOURCE lines you must confirm.`
   : 'Use `grep -n` to pull only the relevant chunks of the doc; do not read unrelated files.'
+
+const cmNote = cmAvailable
+  ? ' This environment auto-optimizes large command output, so to confirm the SOURCE ' +
+    'prefer `grep -n "<identifier>" <file>` for the exact lines over a full-file Read.'
+  : ''
 
 phase('Verify')
 
@@ -45,7 +51,7 @@ CHANGED SOURCE (since last audit):
 ${changeSummary}
 
 TASK: Decide whether the doc at "${d.path}" (provenance: ${d.provenance}) still
-ACCURATELY describes the changed source above. ${readInstruction(d.path)} Report-only — do NOT edit.
+ACCURATELY describes the changed source above. ${readInstruction(d.path)}${cmNote} Report-only — do NOT edit.
 
 Emit exactly one verdict:
 - FAIL: the doc now states something contradicted by the change (must fix).
