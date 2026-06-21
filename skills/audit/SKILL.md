@@ -31,6 +31,23 @@ and bind `MDQ_HEALTHY` / `MDQ_CHUNKS` / `MDQ_STATUS` from its JSON
 The probe is report-only and always exits 0; if it cannot run, treat `MDQ_HEALTHY` as
 `false` and `MDQ_STATUS` as `probe-error` and continue. These feed the Phase-5 mdq status line.
 
+Then probe **context-mode** (complementary to mdq — mdq optimizes Markdown *reads*,
+context-mode optimizes *processing of large machine output*). This probe is
+**skill-level — no shipped script** (do NOT grep `~/.claude` plugin paths; judge purely
+by tool availability). First read the opt-out:
+`CM_ENABLED="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("contextMode",{}).get("enabled",True))' "$CFG")"`.
+- If `CM_ENABLED` is `False`, SKIP the probe: bind `CM_AVAILABLE=false`, `CM_STATUS=disabled-by-config`.
+- Else if the `ctx_*` MCP tools are available to you (e.g. `ctx_doctor`, `ctx_execute`),
+  bind `CM_AVAILABLE=true` and call `ctx_doctor` — it returns a plain-text report whose
+  lines are `[OK]`/`[FAIL]`/`[WARN] <label>: <detail>`. Parse it:
+  `CM_HEALTHY=true` iff both `Server test` and `FTS5 / SQLite` are `[OK]`; `CM_STATUS` =
+  `ok` (healthy) / `degraded` (available but either is `[FAIL]`) / `probe-error` (report
+  unparseable).
+- Else (tools absent) bind `CM_AVAILABLE=false`, `CM_STATUS=not-installed`.
+Like the mdq probe this is report-only and **never fatal** — any failure falls back to
+`CM_AVAILABLE=false`/`CM_STATUS=probe-error` and the audit continues. These bind
+`CM_AVAILABLE`/`CM_HEALTHY`/`CM_STATUS` for Phases 2/3/4 and the Phase-5 context-mode status line.
+
 ## Phase 1 — baseline + diff
 Run: `bash "$SD/scripts/compute-baseline.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`.
 Do NOT pass `--full` to this script (it only accepts `--config`/`--repo-root`; an unknown flag makes it `exit 2`). `--full` is a skill-level argument only: after parsing the script output, if the skill was invoked with `--full`, set the effective `MODE` to `full` in memory. Bind `MODE` to the effective mode for use in Phase 5.
@@ -76,13 +93,18 @@ Phase 3 subagent verdicts are already PASS/WARN/FAIL — use them directly. For 
 Write a single report to `reportPath` (e.g. `docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md`,
 6-field front matter (title, description, category, created, updated, version) with `category: logs`), containing: change set, impacted docs +
 per-doc verdicts, delegated-check results, review summaries, `mapGapCandidates`,
-the **mdq status line** (below), and the roll-up verdict. Do NOT edit any existing doc and do NOT auto-edit
+the **mdq status line** and the **context-mode status line** (both below), and the roll-up verdict. Do NOT edit any existing doc and do NOT auto-edit
 `docs/README.md` — list "add report to index" as a manual follow-up.
 
 **mdq status line** — always include exactly one; it is **non-blocking** (never changes the verdict):
 - `MDQ_AVAILABLE` false → `💡 mdq: not active — docs read in full. Install mdq for Phase-0 indexed, chunked reads (~90%+ token savings on large docs): clone github.com/dahatake/skills and run its ./setup/setup-markdown-query.sh`
 - `MDQ_AVAILABLE` true and `MDQ_HEALTHY` true → `✓ mdq: active (indexed <MDQ_CHUNKS> chunks; chunked reads on)`
 - `MDQ_AVAILABLE` true and `MDQ_HEALTHY` false → `⚠ mdq: installed but NOT firing (<MDQ_STATUS>) — not getting token savings; run mdq index --root . (or check indexing.roots). [non-blocking]`
+
+**context-mode status line** — always include exactly one, immediately after the mdq line; it is **non-blocking** (never changes the verdict):
+- `CM_AVAILABLE` false → `💡 context-mode: not active — large outputs (diff, reviews) read in full. Install context-mode for sandboxed processing (token savings on big audits).`
+- `CM_AVAILABLE` true and `CM_HEALTHY` true → `✓ context-mode: active (sandbox processing on)`
+- `CM_AVAILABLE` true and `CM_HEALTHY` false → `⚠ context-mode: installed but degraded (<CM_STATUS>) — not getting savings. [non-blocking]`
 
 On **CONSISTENT only**, run
 `bash "$SD/scripts/write-anchor.sh" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --verdict CONSISTENT --mode "$MODE"`.
