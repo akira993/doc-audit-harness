@@ -56,7 +56,7 @@ If `mode=full` (no or invalid anchor), tell the user this is a full run and proc
 with the whole doc corpus as the change set context.
 
 ## Phase 2 — impact resolution
-Build a concise `changeSummary` (per changed file: path + 1-line nature of change from `git diff --stat`/`git show`); it depends only on the Phase 1 `changed` list.
+Build a concise `changeSummary` (per changed file: path + 1-line nature of change from `git diff --stat`/`git show`); it depends only on the Phase 1 `changed` list. When `CM_AVAILABLE` is true, derive this `changeSummary` with context-mode instead of reading raw diffs into context: run the `git diff`/`git show` through `ctx_execute` (or `ctx_batch_execute`) in the sandbox and return only the compact per-file summary — the raw diff stays out of context, so every downstream subagent prompt is smaller too. When `CM_AVAILABLE` is false, build it from `git diff --stat`/`git show` as usual.
 Pipe the `changed` list into:
 `printf '%s\n' "${changed[@]}" | python3 "$SD/scripts/resolve-impact.py" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR" --changed -`.
 Parse `{impacted[], mapGapCandidates[], ssotRecheck[], truncated, counts{changed,impacted,mapped,heuristicOnly,candidatesBeforeCap}}`. If `truncated` is true, record the dropped count (the script also prints it to stderr) explicitly in the Phase 5 report — never silently discard it.
@@ -85,7 +85,11 @@ Global gate: run this phase's delegated checks **iff** `impacted` is non-empty O
    `/security-audit ...` request to `/security-review`. If a review command is not
    available in this environment, skip it and WARN (do not fail the run).
    `/code-review ultra` is non-blocking — never wait on a cloud run; default to the
-   configured effort.
+   configured effort. When `CM_AVAILABLE` is true and a review exposes its output as
+   capturable text/JSON or a file, do not read that raw output into context: reduce it
+   to its FAIL/WARN findings with `ctx_execute`/`ctx_batch_execute` in the sandbox and
+   fold only the distilled findings into the verdict (non-blocking; degrade to reading
+   the output directly when context-mode is absent).
 
 ## Phase 5 — synthesize + anchor
 Phase 3 subagent verdicts are already PASS/WARN/FAIL — use them directly. For Phase 4 tool outputs, map high-severity findings to FAIL and medium-severity to WARN. Verdict =
