@@ -4,6 +4,7 @@
   "diffGlobs": ["src/**", "scripts/**", "Makefile", "package.json", "docs/**", "README.md"],
   "docGlobs": ["docs/**/*.md", "*.md"],
   "indexing": { "enabled": true, "tool": "mdq", "bin": "mdq" },
+  "contextMode": { "enabled": true },
   "indexFiles": ["docs/README.md"],
   "maxImpactedDocs": 80,
   "heuristics": { "minIdentifierLength": 6, "excludeBasenames": ["index.md", "config.json"] },

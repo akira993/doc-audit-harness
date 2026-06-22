@@ -78,6 +78,7 @@ Key properties to internalize:
 | [`git`](https://git-scm.com/) | diff/anchor | yes |
 | [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code built-in review skills (Phase 4) | optional — skipped + WARNed if absent |
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 whole-repo index + Phase 3 chunked doc reads (~90%+ savings on large docs; upstream bench 97–99%) | optional — auto-used when present (conditional-force); grep when absent |
+| [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 git diff + Phase 4 `/code-review`·`/security-review` output processed in its sandbox (only distilled summaries enter context) | optional — auto-used when its `ctx_*` tools are present (conditional-force); read in full when absent |
 | [CocoIndex](https://github.com/cocoindex-io/cocoindex) / [Serena](https://github.com/oraios/serena) (MCP) | richer code↔doc discovery during `init` | optional — falls back to grep/heuristic |
 | Project doc tools (`/check-docs`, `doc-lint`, …) | richer Phase-4 layers via delegation | optional — generic fallback otherwise |
 | [`skill-creator`](https://github.com/anthropics/skills) / [`superpowers:writing-skills`](https://github.com/obra/superpowers) | author & tailor the `--scaffold` layer skills | optional — only for `/docaudit:init --scaffold` |
@@ -88,6 +89,16 @@ token-optimized doc reads (conditional-force) but degrades to grep when absent.
 Every audit prints an **mdq status line**: a 💡 install nudge when mdq is absent, or a
 ⚠ non-blocking WARN when mdq is installed but its index isn't firing (`empty-index` /
 `search-broken` / `probe-error`).
+
+`context-mode` is mdq's complement, not a competitor: **mdq optimizes Markdown *reads*,
+context-mode optimizes the *processing of large machine output*.** When its `ctx_*` tools are
+present, the audit runs the Phase-1 git diff and the Phase-4 `/code-review` + `/security-review`
+results through context-mode's sandbox and pulls back only distilled summaries — the raw bytes
+never enter context. It is conditional-force the same way (auto-used when available; opt out with
+`"contextMode": {"enabled": false}` even when installed) and degrades silently when absent — the
+engine needs no `bin`/`roots` for it because context-mode is a location-independent global plugin.
+Every audit prints a non-blocking **context-mode status line** immediately after the mdq one:
+💡 when not active, ✓ when active, ⚠ when installed but degraded (it never changes the verdict).
 
 ---
 
@@ -111,7 +122,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.4.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.4.1  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now

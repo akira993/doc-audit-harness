@@ -1,6 +1,6 @@
 {
   "name": "docaudit",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Change-driven documentation audit harness: diffs since the last clean audit, maps changed code/config to impacted docs, delegates existing doc checks, and drives /code-review + /security-review into one verdict.",
   "author": { "name": "akira993" },
   "homepage": "https://github.com/akira993/doc-audit-harness",
