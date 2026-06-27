@@ -63,6 +63,9 @@ Parse `{impacted[], mapGapCandidates[], ssotRecheck[], truncated, counts{changed
 
 ## Phase 3 — change-impact verification (Workflow fan-out)
 Launch `Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted, mdqAvailable: MDQ_AVAILABLE, cmAvailable: CM_AVAILABLE}})`.
+(The template hardens two runtime-dependent facts: some runtimes deliver `args` as a JSON
+*string* — it parses both shapes — and the verifier subagent is the plugin-namespaced
+`docaudit:doc-impact-verifier`, not the bare name. Keep both when editing the template.)
 Collect per-doc `{path, verdict, rationale, suggestion}`. (Built-in `/code-review`
 & `/security-review` CANNOT run inside a subagent/Workflow — they run in Phase 4.)
 

@@ -18,7 +18,20 @@ const VERDICT = {
   required: ['path', 'verdict', 'rationale'],
 }
 
-const a = args || {}
+// This runtime delivers Workflow `args` to the script as a JSON STRING, not a parsed
+// object (other runtimes pass it as an object). Accept both shapes — otherwise every
+// field below silently falls back to its default and the fan-out runs on 0 docs.
+let a = args
+if (typeof a === 'string') {
+  try { a = JSON.parse(a) } catch (e) { a = null }
+}
+if (a == null || typeof a !== 'object') {
+  // Fail loud: an empty impacted list here is a plumbing failure, not a real 0-impact result.
+  throw new Error(
+    `docaudit Phase 3: Workflow args did not reach the script in a usable shape (got ${typeof args}); ` +
+    `the impacted-doc list would be empty due to a plumbing failure, not a real 0-impact result.`
+  )
+}
 const impacted = (a.impacted || [])
 const changeSummary = a.changeSummary || '(no summary provided)'
 const repoRoot = a.repoRoot || '.'
@@ -60,7 +73,7 @@ Emit exactly one verdict:
 For provenance "heuristic", bias toward WARN/PASS unless a real contradiction exists
 (it is an impactMap-gap candidate, not a known coupling).
 Give a one-sentence rationale citing file:line, and a suggestion when FAIL/WARN.`,
-      { label: `verify:${d.path}`, phase: 'Verify', schema: VERDICT, agentType: 'doc-impact-verifier' }
+      { label: `verify:${d.path}`, phase: 'Verify', schema: VERDICT, agentType: 'docaudit:doc-impact-verifier' }
     )
   )
 )
