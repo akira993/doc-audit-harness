@@ -94,6 +94,51 @@ class TestExistenceLayer(unittest.TestCase):
         out = run(self.repo, "existence")
         self.assertEqual(out["findings"], [])
 
+    def test_file_line_locator_with_existing_base_no_warn(self):
+        write(self.repo, "docs/real.md", "x\n")
+        write(self.repo, "docs/a.md", "see `docs/real.md:18,25-34`\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(out["findings"], [])
+
+    def test_file_symbol_locator_with_existing_base_no_warn(self):
+        write(self.repo, "apps/worker/src/index.ts", "x\n")
+        write(self.repo, "docs/a.md", "see `apps/worker/src/index.ts:SYMBOL`\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(out["findings"], [])
+
+    def test_ellipsis_shorthand_skipped(self):
+        write(self.repo, "apps/worker/src/index.ts", "x\n")  # makes apps/ a real top dir
+        write(self.repo, "docs/a.md", "see `apps/admin/src/x/...`\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(out["findings"], [])
+
+    def test_brace_shorthand_skipped(self):
+        write(self.repo, "docs/a.md", "see `docs/{a,b}.md`\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(out["findings"], [])
+
+    def test_locator_with_missing_base_still_warns(self):
+        # The base path must still be checked: a locator does not excuse a
+        # genuinely missing file.
+        write(self.repo, "docs/a.md", "see `docs/ghost.md:42`\n")
+        out = run(self.repo, "existence")
+        self.assertTrue(any("docs/ghost.md:42" in f["message"] for f in out["findings"]))
+
+    def test_locators_and_shorthand_only_flag_genuine_miss(self):
+        write(self.repo, "docs/real.md", "x\n")
+        write(self.repo, "apps/worker/src/index.ts", "x\n")
+        write(self.repo, "docs/t.md",
+              "`docs/real.md:18,25-34`\n"        # file:line, base exists -> NO warn
+              "`apps/worker/src/index.ts:SYMBOL`\n"  # file:symbol, base exists -> NO warn
+              "`apps/admin/src/x/...`\n"         # ellipsis -> NO warn
+              "`docs/{a,b}.md`\n"                # brace -> NO warn
+              "`docs/missing-real.md`\n"         # genuinely missing -> WARN (kept)
+              "`apps/worker/src/index.ts`\n")    # exists -> NO warn
+        out = run(self.repo, "existence")
+        msgs = [f["message"] for f in out["findings"]]
+        self.assertEqual(len(msgs), 1, msgs)
+        self.assertIn("docs/missing-real.md", msgs[0])
+
 
 class TestSemanticLayer(unittest.TestCase):
     def setUp(self):

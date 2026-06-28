@@ -13,7 +13,9 @@ Layers:
               link, and is ignored. (image links and percent-encoded targets are checked
               as-is; names with spaces or %20 may report as broken).
   existence — backtick path-like tokens that look repo-relative must resolve on disk
-              (non-resolving => WARN). Conservative, to limit noise.
+              (non-resolving => WARN). Conservative, to limit noise: a trailing
+              ':line'/':symbol' locator resolves against the base file, and
+              ellipsis/brace/glob shorthand (`...`, `{a,b}`, `*`) is ignored.
   semantic  — orphan: a .md linked from no index file and no other doc (=> WARN).
 
 Reads:  --config, --repo-root, --layer {format,existence,semantic,all},
@@ -201,11 +203,22 @@ def check_existence(repo_root, docs, cfg):
             continue
         for tok, line in extract_path_tokens(text):
             t = tok.split("#", 1)[0]
-            if "*" in t or not looks_like_repo_path(t, repo_root):
+            # Skip non-literal path tokens: globs, ellipsis, and brace-expansion are
+            # illustrative shorthand, not a single concrete path (limit noise).
+            if any(ch in t for ch in "*{}") or "..." in t or "…" in t:
                 continue
-            if not os.path.exists(os.path.join(repo_root, t.lstrip("/"))):
-                findings.append({"layer": "existence", "severity": "WARN", "path": d,
-                                 "line": line, "message": f"path-like token does not resolve: {tok}"})
+            if not looks_like_repo_path(t, repo_root):
+                continue
+            if os.path.exists(os.path.join(repo_root, t.lstrip("/"))):
+                continue
+            # A trailing ":<locator>" (line number/range or symbol name) points INTO a
+            # file and is not part of the path; resolve the base path when present.
+            base = t.split(":", 1)[0]
+            if base != t and looks_like_repo_path(base, repo_root) \
+                    and os.path.exists(os.path.join(repo_root, base.lstrip("/"))):
+                continue
+            findings.append({"layer": "existence", "severity": "WARN", "path": d,
+                             "line": line, "message": f"path-like token does not resolve: {tok}"})
     return findings
 
 
