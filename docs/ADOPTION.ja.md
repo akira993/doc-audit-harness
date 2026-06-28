@@ -108,7 +108,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.4.2  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.4.3  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
