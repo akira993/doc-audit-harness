@@ -8,8 +8,10 @@ project's own tooling.
 Layers:
   format    — relative markdown links must resolve on disk (broken => FAIL); if
               config.frontMatterFields is set, each .md must have YAML front matter
-              containing those fields (missing => WARN). (image links and percent-encoded
-              targets are checked as-is; names with spaces or %20 may report as broken).
+              containing those fields (missing => WARN). Link syntax inside code
+              (inline `...` spans and ``` / ~~~ fenced blocks) is literal text, not a
+              link, and is ignored. (image links and percent-encoded targets are checked
+              as-is; names with spaces or %20 may report as broken).
   existence — backtick path-like tokens that look repo-relative must resolve on disk
               (non-resolving => WARN). Conservative, to limit noise.
   semantic  — orphan: a .md linked from no index file and no other doc (=> WARN).
@@ -67,13 +69,61 @@ def parse_front_matter(text):
     return fields
 
 
+def _blank_keep_newlines(s):
+    # Replace every non-newline char with a space, preserving length and newline
+    # positions so downstream line numbers (text.count("\n", 0, m.start())) stay exact.
+    return "".join("\n" if c == "\n" else " " for c in s)
+
+
+# A line that, after up to 3 spaces of indent, opens a fenced code block (CommonMark:
+# 3+ backticks or 3+ tildes). group(3) is the info string after the fence.
+_FENCE_OPEN_RE = re.compile(r"^( {0,3})(`{3,}|~{3,})(.*)$")
+# An inline code span on a single line: a backtick run, content, the same-length run.
+# Single-line (no re.DOTALL) so a stray backtick cannot swallow links on later lines.
+_INLINE_CODE_RE = re.compile(r"(`+)[^\n]+?\1")
+
+
+def _mask_fenced(text):
+    # Blank fenced code blocks in place (length + newlines preserved). Tracks the open
+    # fence char/length so only a matching closer (same char, >= length, line by itself)
+    # ends the block; an unterminated fence masks to end of file (CommonMark behaviour).
+    lines = text.split("\n")
+    out, fence = [], None
+    for line in lines:
+        if fence is None:
+            m = _FENCE_OPEN_RE.match(line)
+            # A backtick fence's info string may not contain a backtick (CommonMark);
+            # if it does, this is not actually a fence opener.
+            if m and not (m.group(2)[0] == "`" and "`" in m.group(3)):
+                fence = (m.group(2)[0], len(m.group(2)))
+                out.append(_blank_keep_newlines(line))
+            else:
+                out.append(line)
+        else:
+            fch, flen = fence
+            out.append(_blank_keep_newlines(line))
+            if re.match(r"^ {0,3}%s{%d,}\s*$" % (re.escape(fch), flen), line):
+                fence = None
+    return "\n".join(out)
+
+
+def _mask_code(text):
+    # Markdown link syntax inside code (inline spans / fenced blocks) is literal text,
+    # not a link. Blank code regions before link extraction so quoted link examples do
+    # not trip the broken-link check, while keeping length + newline offsets intact so
+    # reported line numbers stay exact. Fences first, then inline spans on what remains.
+    masked = _mask_fenced(text)
+    return _INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), masked)
+
+
 _LINK_RE = re.compile(r"\[[^\]]*\]\(([^)]+)\)")
 def extract_links(text):
+    masked = _mask_code(text)
     out = []
-    for m in _LINK_RE.finditer(text):
+    for m in _LINK_RE.finditer(masked):
         target = m.group(1).strip()
         target = re.sub(r"""\s+["'].*$""", "", target)  # strip optional Markdown link title
-        out.append((target, text.count("\n", 0, m.start()) + 1))
+        out.append((target, masked.count("\n", 0, m.start()) + 1))
     return out
 
 
