@@ -53,13 +53,21 @@ class Base(unittest.TestCase):
         with open(os.path.join(self.run_dir, "manifest.json"), "w") as fh:
             json.dump(m, fh)
 
-    def write_verdicts(self, records):
-        with open(os.path.join(self.run_dir, "verdicts.jsonl"), "w") as fh:
-            for r in records:
-                fh.write(json.dumps(r) + "\n")
+    def _vdir(self):
+        d = os.path.join(self.run_dir, "verdicts")
+        os.makedirs(d, exist_ok=True)
+        return d
 
-    def write_verdicts_raw(self, text):
-        with open(os.path.join(self.run_dir, "verdicts.jsonl"), "w") as fh:
+    def write_verdicts(self, records):
+        # one file per record; index-suffixed so duplicate paths still get
+        # distinct filenames (the gate dedups on the path field, not filename)
+        for i, r in enumerate(records):
+            fn = r["path"].replace("/", "__") + f".{i}.json"
+            with open(os.path.join(self._vdir(), fn), "w") as fh:
+                json.dump(r, fh)
+
+    def write_verdict_file(self, name, text):
+        with open(os.path.join(self._vdir(), name), "w") as fh:
             fh.write(text)
 
     def write_phase4(self, findings):
@@ -204,9 +212,10 @@ class TestAttacks(Base):
         self.assertEqual(p.returncode, 3)
         self.assertNoAnchor()
 
-    def test_garbage_verdict_line(self):
+    def test_garbage_verdict_file(self):
         self.write_manifest(["a.md"])
-        self.write_verdicts_raw(json.dumps(self.rec("a.md", "PASS")) + "\nNOT JSON\n")
+        self.write_verdicts([self.rec("a.md", "PASS")])
+        self.write_verdict_file("junk.json", "NOT JSON")
         p = self.run_gate()
         self.assertEqual(p.returncode, 3)
         self.assertNoAnchor()

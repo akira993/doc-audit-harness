@@ -1,5 +1,8 @@
 // docaudit phase-3: change-impact verification fan-out.
-// Launch with Workflow({scriptPath: "<this file>", args: {repoRoot, changeSummary, impacted:[{path,provenance}]}})
+// Launch with Workflow({scriptPath: "<this file>", args: {repoRoot, changeSummary, impacted:[{path,provenance}], runId, runDir}})
+// Each verifier subagent ALSO persists its runid-stamped verdict to
+// `${runDir}/verdicts/<slug>.json` so the deterministic gate (decide-verdict.py)
+// reads verdicts authored by the harness-spawned subagent, not relayed prose.
 export const meta = {
   name: 'docaudit-impact-verify',
   description: 'Verify each impacted doc still matches the changed source (PASS/WARN/FAIL)',
@@ -35,6 +38,17 @@ if (a == null || typeof a !== 'object') {
 const impacted = (a.impacted || [])
 const changeSummary = a.changeSummary || '(no summary provided)'
 const repoRoot = a.repoRoot || '.'
+// runId/runDir bind each verdict to this run so the gate can require one
+// runid-stamped file per impacted doc. Missing them is a plumbing failure: the
+// gate would REFUSE for want of evidence, so fail loud here instead.
+const runId = a.runId
+const runDir = a.runDir
+if (!runId || !runDir) {
+  throw new Error(
+    'docaudit Phase 3: runId/runDir missing from Workflow args — verdicts cannot ' +
+    'be persisted for the deterministic gate (a plumbing failure, not a real run).'
+  )
+}
 const mdqAvailable = a.mdqAvailable === true || a.mdqAvailable === 'true'
 const cmAvailable = a.cmAvailable === true || a.cmAvailable === 'true'
 const dbPath = `${repoRoot}/.mdq/index.sqlite`
@@ -55,6 +69,8 @@ const cmNote = cmAvailable
 
 phase('Verify')
 
+const slug = (p) => p.replace(/[/\\]/g, '__')
+
 const results = await parallel(
   impacted.map((d) => () =>
     agent(
@@ -64,7 +80,7 @@ CHANGED SOURCE (since last audit):
 ${changeSummary}
 
 TASK: Decide whether the doc at "${d.path}" (provenance: ${d.provenance}) still
-ACCURATELY describes the changed source above. ${readInstruction(d.path)}${cmNote} Report-only — do NOT edit.
+ACCURATELY describes the changed source above. ${readInstruction(d.path)}${cmNote} Report-only on the DOC — do NOT edit the doc.
 
 Emit exactly one verdict:
 - FAIL: the doc now states something contradicted by the change (must fix).
@@ -72,7 +88,14 @@ Emit exactly one verdict:
 - PASS: the doc is unaffected or already consistent.
 For provenance "heuristic", bias toward WARN/PASS unless a real contradiction exists
 (it is an impactMap-gap candidate, not a known coupling).
-Give a one-sentence rationale citing file:line, and a suggestion when FAIL/WARN.`,
+Give a one-sentence rationale citing file:line, and a suggestion when FAIL/WARN.
+
+THEN PERSIST your verdict so the deterministic gate can read it (this is the ONLY
+file you may write). Run exactly this, substituting your VERDICT and a one-line
+rationale with no embedded double-quotes or newlines:
+  mkdir -p "${runDir}/verdicts" && python3 -c 'import json,sys; json.dump({"runid":sys.argv[1],"path":sys.argv[2],"verdict":sys.argv[3],"rationale":sys.argv[4]}, open(sys.argv[5],"w"))' "${runId}" "${d.path}" "<PASS|WARN|FAIL>" "<rationale>" "${runDir}/verdicts/${slug(d.path)}.json"
+The verdict you write MUST equal the verdict you emit. Using python3 -c guarantees
+valid JSON. Then return the structured verdict.`,
       { label: `verify:${d.path}`, phase: 'Verify', schema: VERDICT, agentType: 'docaudit:doc-impact-verifier' }
     )
   )

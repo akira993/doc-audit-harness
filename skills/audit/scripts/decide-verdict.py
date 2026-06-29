@@ -102,27 +102,27 @@ def main():
     if head != manifest["head"]:
         refuse(f"HEAD {head} != manifest.head {manifest['head']} (stale or replayed evidence)")
 
-    # --- Phase 3 verdict records (one runid-stamped record per impacted doc) ----
-    vpath = os.path.join(rd, "verdicts.jsonl")
+    # --- Phase 3 verdict records (one runid-stamped file per impacted doc) ------
+    # Each Phase-3 verifier subagent writes its own file under verdicts/, so
+    # parallel subagents never collide on a shared file.
+    vdir = os.path.join(rd, "verdicts")
     records = []
-    if os.path.isfile(vpath):
-        with open(vpath) as f:
-            for i, line in enumerate(f, 1):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    r = json.loads(line)
-                except Exception:
-                    refuse(f"verdicts.jsonl line {i} is not valid JSON")
-                for k in ("runid", "path", "verdict"):
-                    if k not in r:
-                        refuse(f"verdict record on line {i} missing field: {k}")
-                if r["runid"] != runid:
-                    refuse(f"verdict record runid {r['runid']!r} != run {runid!r} (foreign/forged record)")
-                if r["verdict"] not in VALID_VERDICTS:
-                    refuse(f"verdict record has invalid verdict {r['verdict']!r}")
-                records.append(r)
+    if os.path.isdir(vdir):
+        for name in sorted(os.listdir(vdir)):
+            if not name.endswith(".json"):
+                continue
+            try:
+                r = load_json(os.path.join(vdir, name))
+            except Exception:
+                refuse(f"verdicts/{name} is not valid JSON")
+            for k in ("runid", "path", "verdict"):
+                if k not in r:
+                    refuse(f"verdicts/{name} missing field: {k}")
+            if r["runid"] != runid:
+                refuse(f"verdicts/{name} runid {r['runid']!r} != run {runid!r} (foreign/forged record)")
+            if r["verdict"] not in VALID_VERDICTS:
+                refuse(f"verdicts/{name} has invalid verdict {r['verdict']!r}")
+            records.append(r)
 
     paths = [r["path"] for r in records]
     if len(paths) != len(set(paths)):
