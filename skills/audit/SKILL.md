@@ -57,16 +57,24 @@ with the whole doc corpus as the change set context.
 
 ## Phase 2 — impact resolution
 Build a concise `changeSummary` (per changed file: path + 1-line nature of change from `git diff --stat`/`git show`); it depends only on the Phase 1 `changed` list. When `CM_AVAILABLE` is true, derive this `changeSummary` with context-mode instead of reading raw diffs into context: run the `git diff`/`git show` through `ctx_execute` (or `ctx_batch_execute`) in the sandbox and return only the compact per-file summary — the raw diff stays out of context, so every downstream subagent prompt is smaller too. When `CM_AVAILABLE` is false, build it from `git diff --stat`/`git show` as usual.
-Pipe the `changed` list into:
-`printf '%s\n' "${changed[@]}" | python3 "$SD/scripts/resolve-impact.py" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR" --changed -`.
-Parse `{impacted[], mapGapCandidates[], ssotRecheck[], truncated, counts{changed,impacted,mapped,heuristicOnly,candidatesBeforeCap}}`. If `truncated` is true, record the dropped count (the script also prints it to stderr) explicitly in the Phase 5 report — never silently discard it.
+Bind `RUN_DIR="$CLAUDE_PROJECT_DIR/.claude/state/docaudit-run"; mkdir -p "$RUN_DIR"` and capture
+the impact output to a file so it feeds both your parse and the run manifest:
+`printf '%s\n' "${changed[@]}" | python3 "$SD/scripts/resolve-impact.py" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR" --changed - > "$RUN_DIR/impact.json"`.
+Parse `$RUN_DIR/impact.json` for `{impacted[], mapGapCandidates[], ssotRecheck[], truncated, counts{changed,impacted,mapped,heuristicOnly,candidatesBeforeCap}}`. If `truncated` is true, record the dropped count (the script also prints it to stderr) explicitly in the Phase 5 report — never silently discard it.
+
+Then **open the run** (deterministic): this writes the evidence manifest — the
+"expected work" contract the Phase-5 gate checks against — and binds `RUNID`:
+`RUNID="$(python3 "$SD/scripts/start-run.py" --run-dir "$RUN_DIR" --repo-root "$CLAUDE_PROJECT_DIR" --impact-json "$RUN_DIR/impact.json" --mode "$MODE" | python3 -c 'import json,sys;print(json.load(sys.stdin)["runid"])')"`.
+Do NOT hand-author anything under `$RUN_DIR`; the manifest fixes the impacted set, HEAD, and whether Phase 4 is required. Verdicts are written by the Phase-3 subagents (below) and reviews by Phase 4 — the Phase-5 gate refuses if any are missing.
 
 ## Phase 3 — change-impact verification (Workflow fan-out)
-Launch `Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted, mdqAvailable: MDQ_AVAILABLE, cmAvailable: CM_AVAILABLE}})`.
+Launch `Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted, mdqAvailable: MDQ_AVAILABLE, cmAvailable: CM_AVAILABLE, runId: RUNID, runDir: RUN_DIR}})`.
 (The template hardens two runtime-dependent facts: some runtimes deliver `args` as a JSON
 *string* — it parses both shapes — and the verifier subagent is the plugin-namespaced
 `docaudit:doc-impact-verifier`, not the bare name. Keep both when editing the template.)
-Collect per-doc `{path, verdict, rationale, suggestion}`. (Built-in `/code-review`
+`runId`/`runDir` are REQUIRED: each verifier subagent persists its runid-stamped verdict to
+`$RUN_DIR/verdicts/<slug>.json`, which is the evidence the Phase-5 gate reads (the template throws if they are absent). Do NOT write these files yourself — they must come from the subagents.
+Collect per-doc `{path, verdict, rationale, suggestion}` for the report. (Built-in `/code-review`
 & `/security-review` CANNOT run inside a subagent/Workflow — they run in Phase 4.)
 
 ## Phase 4 — existing layers + reviews (main loop, sequential)
@@ -94,9 +102,19 @@ Global gate: run this phase's delegated checks **iff** `impacted` is non-empty O
    fold only the distilled findings into the verdict (non-blocking; degrade to reading
    the output directly when context-mode is absent).
 
-## Phase 5 — synthesize + anchor
-Phase 3 subagent verdicts are already PASS/WARN/FAIL — use them directly. For Phase 4 tool outputs, map high-severity findings to FAIL and medium-severity to WARN. Verdict =
-**NEEDS FIX if any FAIL**, else **CONSISTENT** (WARN never blocks).
+**Record Phase-4 evidence for the gate.** When the global gate is open, write every
+delegated-layer and review finding to `$RUN_DIR/phase4.json` as
+`{"findings":[{"severity":"...","source":"...","title":"..."}]}`. Use each finding's own
+severity verbatim (`FAIL`/`HIGH`/`CRITICAL` = blocking; `WARN`/`MEDIUM`/`LOW`/`INFO` = non-blocking);
+map review high→`HIGH`, medium→`MEDIUM`. Write the file even with zero findings
+(`{"findings":[]}`) — the gate REFUSES if Phase 4 was required but the file is absent. Do not
+declare a verdict anywhere; the gate derives it from this file plus the Phase-3 verdicts.
+
+## Phase 5 — gate + report
+Phase-3 verdicts (`$RUN_DIR/verdicts/`) and Phase-4 findings (`$RUN_DIR/phase4.json`) are already
+on disk. **You do NOT compute, declare, or hand off the verdict** — the deterministic gate derives
+it (`NEEDS FIX if any FAIL`, else `CONSISTENT`; WARN never blocks) and is the SOLE writer of the
+anchor. Write the human report below; take its roll-up verdict from the gate's stdout.
 Write a single report to `reportPath` (e.g. `docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md`,
 6-field front matter (title, description, category, created, updated, version) with `category: logs`), containing: change set, impacted docs +
 per-doc verdicts, delegated-check results, review summaries, `mapGapCandidates`,
@@ -113,8 +131,16 @@ the **mdq status line** and the **context-mode status line** (both below), and t
 - `CM_AVAILABLE` true and `CM_HEALTHY` true → `✓ context-mode: active (sandbox processing on)`
 - `CM_AVAILABLE` true and `CM_HEALTHY` false → `⚠ context-mode: installed but degraded (<CM_STATUS>) — not getting savings. [non-blocking]`
 
-On **CONSISTENT only**, run
-`bash "$SD/scripts/write-anchor.sh" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --verdict CONSISTENT --mode "$MODE"`.
+**Run the gate** — it derives the verdict from the on-disk evidence and writes the anchor
+**only** on CONSISTENT (there is no verdict to pass in; the anchor cannot be advanced any other way):
+`python3 "$SD/scripts/decide-verdict.py" --run-dir "$RUN_DIR" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH"`.
+Report its stdout `verdict` verbatim:
+- `CONSISTENT` → anchor advanced to HEAD (`anchorWritten:true`).
+- `NEEDS_FIX` → anchor unchanged; list the FAIL doc(s)/finding(s).
+- `REFUSED` (exit 3) → the run is **INVALID**: evidence missing/inconsistent (see `reason`). Do NOT
+  claim a pass, do NOT hand-write the anchor, do NOT re-run the gate with fabricated evidence —
+  fix the plumbing (usually a skipped Phase 3/4) and run the audit again.
+Never override a `NEEDS_FIX`/`REFUSED`. The old `write-anchor.sh --verdict` path is retired.
 
 ## Guardrails
 Report-only. Never rewrite ADRs or `docs/logs/`. Surface fixes as proposals. mdq is

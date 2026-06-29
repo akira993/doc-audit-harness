@@ -1,45 +1,35 @@
-import json, os, subprocess, tempfile, unittest
+"""write-anchor.sh is RETIRED. The old `--verdict CONSISTENT` hand-off was the
+hole the cure closes; the anchor is now written only by decide-verdict.py, which
+DERIVES the verdict. These tests assert the old interface can no longer advance
+the anchor."""
+import os
+import subprocess
+import tempfile
+import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "write-anchor.sh")
 
 
-def git(repo, *a):
-    return subprocess.run(["git", "-C", repo, *a], capture_output=True, text=True, check=True)
-
-
-class TestWriteAnchor(unittest.TestCase):
+class TestWriteAnchorRetired(unittest.TestCase):
     def setUp(self):
         self.repo = tempfile.mkdtemp()
-        git(self.repo, "init", "-b", "main")
-        git(self.repo, "config", "user.email", "t@t.t")
-        git(self.repo, "config", "user.name", "t")
-        with open(os.path.join(self.repo, "f"), "w") as f:
-            f.write("x")
-        git(self.repo, "add", "-A"); git(self.repo, "commit", "-m", "init")
         self.anchor = ".claude/state/last-doc-audit.json"
 
-    def run_script(self, verdict, mode="incremental"):
-        return subprocess.run(
-            ["bash", SCRIPT, "--repo-root", self.repo, "--anchor-path", self.anchor,
-             "--verdict", verdict, "--mode", mode, "--date", "2026-06-04"],
-            capture_output=True, text=True)
+    def run_script(self, *args):
+        return subprocess.run(["bash", SCRIPT, *args], capture_output=True, text=True)
 
-    def test_writes_on_consistent(self):
-        p = self.run_script("CONSISTENT")
-        self.assertEqual(p.returncode, 0, p.stderr)
-        with open(os.path.join(self.repo, self.anchor)) as f:
-            data = json.load(f)
-        head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
-        self.assertEqual(data["sha"], head)
-        self.assertEqual(data["verdict"], "CONSISTENT")
-        self.assertEqual(data["date"], "2026-06-04")
-        self.assertEqual(data["tool"], "docaudit")
+    def test_hand_fed_verdict_no_longer_writes_anchor(self):
+        # the exact old attack: hand-feed CONSISTENT
+        p = self.run_script("--repo-root", self.repo, "--anchor-path", self.anchor,
+                            "--verdict", "CONSISTENT", "--mode", "incremental")
+        self.assertNotEqual(p.returncode, 0, "retired stub must fail loud")
+        self.assertFalse(os.path.exists(os.path.join(self.repo, self.anchor)),
+                         "no anchor may be written through the retired path")
 
-    def test_noop_on_needs_fix(self):
-        p = self.run_script("NEEDS_FIX")
-        self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertFalse(os.path.exists(os.path.join(self.repo, self.anchor)))
+    def test_points_at_decide_verdict(self):
+        p = self.run_script()
+        self.assertIn("decide-verdict.py", p.stderr)
 
 
 if __name__ == "__main__":

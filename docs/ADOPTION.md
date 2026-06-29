@@ -122,7 +122,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.4.4  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.5.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
