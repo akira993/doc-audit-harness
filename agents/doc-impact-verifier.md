@@ -25,8 +25,9 @@ audit, and the target doc path (+ its provenance: `mapped` or `heuristic`).
    - **FAIL** — the doc asserts something the change contradicts (must fix).
    - **WARN** — the doc is plausibly stale / under-specified given the change.
    - **PASS** — unaffected or already consistent.
-4. For `heuristic` provenance, bias toward WARN/PASS unless a real contradiction
-   exists (it is an impactMap-gap candidate, not a known coupling).
+4. `heuristic` provenance is an impactMap-gap candidate, not a known coupling:
+   do not FAIL it without a cited contradiction. Still emit WARN whenever you can
+   name a concrete staleness signal — do not downgrade a citable WARN to PASS.
 
 ## Output
 Return exactly the structured verdict requested: `path`, `verdict`

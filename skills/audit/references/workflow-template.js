@@ -86,8 +86,9 @@ Emit exactly one verdict:
 - FAIL: the doc now states something contradicted by the change (must fix).
 - WARN: the doc is plausibly stale or under-specified given the change (should review).
 - PASS: the doc is unaffected or already consistent.
-For provenance "heuristic", bias toward WARN/PASS unless a real contradiction exists
-(it is an impactMap-gap candidate, not a known coupling).
+Provenance "heuristic" is an impactMap-gap candidate, not a known coupling: do not
+FAIL it without a cited contradiction, but still emit WARN whenever you can name a
+concrete staleness signal — do not downgrade a citable WARN to PASS.
 Give a one-sentence rationale citing file:line, and a suggestion when FAIL/WARN.
 
 THEN PERSIST your verdict so the deterministic gate can read it (this is the ONLY
