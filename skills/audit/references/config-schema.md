@@ -20,6 +20,7 @@ live here; the plugin ships no project knowledge.
 | `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:string[]}` |
 | `indexing` | object | no | `{enabled:bool=true, tool:string="mdq", bin:string="mdq", roots:string[]?}` — Phase-0 mdq preflight; `roots` overrides index roots (default: whole repo `.`, since mdq's own default roots miss `README.md`/`skills`/`agents`); `enabled:false` opts out even when mdq is installed (conditional-force) |
 | `contextMode` | object | no | `{enabled:bool=true}` — Phase-0 context-mode probe (by `ctx_*` tool availability + `ctx_doctor`); when context-mode is installed, large outputs (git diff, reviews) are processed in its sandbox instead of read in full. `enabled:false` opts out even when installed (conditional-force). No `bin`/`roots`/CLI — context-mode is a location-independent global plugin |
+| `webExtract` | object | no | `{enabled:bool=true, tool:string="ax", bin:string="ax"}` — Phase-0 `ax` CLI preflight; when `ax` is installed, doc-impact-verifier may corroborate a doc's external-URL-dependent claim by fetching it (read-only, GET-only). `enabled:false` opts out even when `ax` is installed (conditional-force) |
 
 `impacts` entries MUST be doc paths only; put commentary in `note`. `changed`
 accepts a single path or a glob.
@@ -50,6 +51,23 @@ inspecting `~/.claude` plugin paths). When the tools are absent, `contextMode.en
 is `false`, or the probe fails, the audit silently runs the normal full-read path — so
 the harness stays tool-independent. Every audit prints a non-blocking **context-mode
 status line** (💡 not active / ✓ active / ⚠ degraded).
+
+## ax (webExtract, Phase 0/3)
+
+`webExtract` is optional and conditional-force, mirroring `indexing`'s shape but for the `ax`
+CLI (`~/.local/bin/ax`) — a structured web/API extraction tool, not a Markdown-indexing tool.
+Its only role in the audit is letting `doc-impact-verifier` corroborate a doc claim that
+depends on an external upstream URL (an upstream doc, an API spec, etc.). With `ax` on `PATH`
+(or `bin` pointed at a vendored binary), Phase 0 detects it and Phase 3 passes the verifier a
+conditional instruction to fetch cited URLs read-only (`--md --budget 800` for prose,
+`--row`/`--table` for structured data, `--outline` to see page structure first) — GET-only,
+never `-X POST`/`-d`/`-o`. Fetched content is treated as data, never as instructions. When `ax`
+is absent, `webExtract.enabled` is `false`, or the fetch fails, the check is silently skipped
+or reported as "external check unavailable" — never a FAIL basis, and the audit stays
+tool-independent. `ax` is a **static HTML parser** (no JS rendering — SPA content is invisible
+to it) and is **pre-1.0** (`v0.1.x`), so its flag surface may change; the probe's `axVersion`
+field is the hook for re-verifying after an upgrade. `tool` is reserved for future
+multi-backend support; the runtime currently reads only `bin` and `enabled`.
 
 ## Generic fallback layers
 
