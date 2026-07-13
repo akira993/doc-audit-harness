@@ -71,7 +71,7 @@ Build a concise `changeSummary` (per changed file: path + 1-line nature of chang
 Bind `RUN_DIR="$CLAUDE_PROJECT_DIR/.claude/state/docaudit-run"; mkdir -p "$RUN_DIR"` and capture
 the impact output to a file so it feeds both your parse and the run manifest:
 `printf '%s\n' "${changed[@]}" | python3 "$SD/scripts/resolve-impact.py" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR" --changed - > "$RUN_DIR/impact.json"`.
-Parse `$RUN_DIR/impact.json` for `{impacted[], mapGapCandidates[], ssotRecheck[], truncated, counts{changed,impacted,mapped,heuristicOnly,candidatesBeforeCap}}`. If `truncated` is true, record the dropped count (the script also prints it to stderr) explicitly in the Phase 5 report — never silently discard it.
+Parse `$RUN_DIR/impact.json` for `{impacted[], mapGapCandidates[], ssotRecheck[], warnings[], truncated, counts{changed,impacted,mapped,heuristicOnly,candidatesBeforeCap}}`. If `truncated` is true, record the dropped count (the script also prints it to stderr) explicitly in the Phase 5 report — never silently discard it. If `warnings` is non-empty (e.g. an `ssotSources` entry with a URL `liveSource`, which is never fetched or verified), carry them to the Phase-5 warning lines — never silently discard them.
 
 Then **open the run** (deterministic): this writes the evidence manifest — the
 "expected work" contract the Phase-5 gate checks against — and binds `RUNID`:
@@ -145,6 +145,8 @@ the **mdq status line**, the **context-mode status line**, and the **ax status l
 **ax status line** — always include exactly one, immediately after the context-mode line; it is **non-blocking** (never changes the verdict):
 - `AX_AVAILABLE` false → `💡 ax: not active — external-URL claims go unverified; install: curl -fsSL https://ax.yusuke.run/install | sh`
 - `AX_AVAILABLE` true → `✓ ax: active (external-URL corroboration available; read-only, GET-only)`
+
+**impact warning lines** — if the Phase-2 `warnings[]` is non-empty, include one `⚠ <warning> [non-blocking]` line per entry, immediately after the ax line; they are **non-blocking** (never change the verdict).
 
 **Run the gate** — it derives the verdict from the on-disk evidence and writes the anchor
 **only** on CONSISTENT (there is no verdict to pass in; the anchor cannot be advanced any other way):

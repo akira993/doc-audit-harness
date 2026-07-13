@@ -86,6 +86,18 @@ class TestResolveImpact(unittest.TestCase):
         names = [s["name"] for s in out["ssotRecheck"]]
         self.assertNotIn("nc_version", names)
 
+    def test_ssot_url_livesource_warned_not_rechecked(self):
+        # A URL liveSource is unsupported: it must surface a warning in the output
+        # JSON (never silently skipped) and must NOT trigger an ssotRecheck.
+        cfg = self.base_config(ssotSources=[
+            {"name": "api_status", "liveSource": "https://example.com/api/status",
+             "docsThatCite": ["docs/wcag.md"]},
+        ])
+        out = run(["apps/nc_proto/css/variables.css"], cfg, self.repo)
+        self.assertTrue(any("api_status" in w and "URL" in w for w in out["warnings"]),
+                        f"warnings: {out['warnings']}")
+        self.assertNotIn("api_status", [s["name"] for s in out["ssotRecheck"]])
+
     def test_nonexistent_mapped_path_dropped_with_warning(self):
         cfg = self.base_config(impactMap=[
             {"changed": "x.css", "impacts": ["docs/missing.md", "docs/wcag.md"]}])

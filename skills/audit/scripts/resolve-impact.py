@@ -8,7 +8,7 @@ Reads:
 
 Writes JSON to stdout:
   {"impacted":[{"path","provenance"}], "mapGapCandidates":[path],
-   "ssotRecheck":[{"name","reason"}], "truncated":bool, "counts":{...}}
+   "ssotRecheck":[{"name","reason"}], "warnings":[str], "truncated":bool, "counts":{...}}
 
 Rules:
   - UNION: impacted = mapped ∪ heuristic. Heuristic only ADDS docs, never removes.
@@ -156,11 +156,20 @@ def main():
     # reason="docsThatCite" if any changed path ∈ docsThatCite (strip ':line').
     # reason="liveSource"   if any changed path ∈ file paths extracted from liveSource.
     ssot = []
+    warnings = []
     for s in cfg.get("ssotSources", []):
         cite_paths = {c.split(":", 1)[0] for c in s.get("docsThatCite", [])}
         live = s.get("liveSource", "")
-        # extract path-like tokens from liveSource; server commands like "occ status" yield none (correctly inert)
-        live_paths = set(re.findall(r"[\w./-]+\.[\w]+", live))
+        if re.match(r"^https?://", live):
+            # URL liveSource is unsupported: never fetched or verified — warn loudly
+            # instead of silently skipping, and don't pretend its tokens are repo paths.
+            warnings.append(
+                f"ssotSource '{s.get('name', '?')}': liveSource is a URL — not supported; "
+                "the value is not fetched or verified. Track it manually.")
+            live_paths = set()
+        else:
+            # extract path-like tokens from liveSource; server commands like "occ status" yield none (correctly inert)
+            live_paths = set(re.findall(r"[\w./-]+\.[\w]+", live))
         reason = None
         if any(c in cite_paths for c in changed):
             reason = "docsThatCite"
@@ -194,6 +203,7 @@ def main():
         "impacted": impacted,
         "mapGapCandidates": map_gap,
         "ssotRecheck": ssot,
+        "warnings": warnings,
         "truncated": truncated,
         "counts": {"changed": len(changed), "impacted": len(impacted),
                    "mapped": mapped_n, "heuristicOnly": heur_n,

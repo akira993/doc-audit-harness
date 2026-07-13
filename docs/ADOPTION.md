@@ -247,7 +247,9 @@ source path changes, re-check these docs."**
 **`ssotSources`** is for *values* repeated across docs (versions, IPs, sizes). It flags a
 re-check when a **changed file** is one of the `docsThatCite` entries, or is the file in
 `liveSource`. The harness compares the value **textually across docs** (it does **not**
-execute `liveSource` — server/command sources are recorded for manual follow-up).
+execute `liveSource` — server/command sources are recorded for manual follow-up). A URL
+`liveSource` (http/https) is likewise not supported: it is never fetched or verified, and
+the audit emits a warning so you track that value manually.
 
 ---
 

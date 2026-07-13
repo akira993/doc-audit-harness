@@ -11,7 +11,7 @@ live here; the plugin ships no project knowledge.
 | `frontMatterFields` | string[] | no | generic `format` layer requires these front-matter fields on every doc (WARN if missing); omit to skip front-matter checks |
 | `indexFiles` | string[] | no | generic `semantic` layer treats these as link roots for orphan detection (default: any `README.md` within the doc tree) |
 | `impactMap` | object[] | yes | `{changed: path\|glob, impacts: docPath[], note?: string}` |
-| `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: (path\|path:line)[]}` |
+| `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: (path\|path:line)[]}` — a URL `liveSource` (http/https) is not supported: it is never executed or fetched, and the audit emits a warning |
 | `docAuditCommands` | object | no | `{format, existence, semantic}` slash-command/skill names to delegate to |
 | `boundaryCommand` | string | no | shell command for project-boundary check |
 | `reviewCommands` | object | no | `{code, security}` review command strings (effort embedded, e.g. `/code-review high`) |
