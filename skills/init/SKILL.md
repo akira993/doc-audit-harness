@@ -72,7 +72,7 @@ On approval, write `.claude/doc-audit.json` (create `.claude/` if needed). Then 
 user: review the impactMap, commit the config, and run `/docaudit:audit --full` to
 produce the first CONSISTENT verdict + anchor (that audit, not init, writes the anchor).
 If `mdq` is installed, no manual index step is needed — the first `/docaudit:audit`
-Phase 0 builds `.mdq/index.sqlite` automatically (add `.mdq/` to `.gitignore`).
+Phase 0 builds the mdq index under `.mdq/` automatically (add `.mdq/` to `.gitignore`).
 
 ## Step 5 — --scaffold (opt-in; only when invoked with --scaffold)
 Generate project-tailored layer skill skeletons so this repo owns richer checks than

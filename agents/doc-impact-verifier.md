@@ -14,10 +14,12 @@ audit, and the target doc path (+ its provenance: `mapped` or `heuristic`).
 
 ## Method
 1. Pull only the relevant chunks of the target doc. When the orchestrator says the
-   repo is mdq-indexed, you MUST use `mdq search --db <repoRoot>/.mdq/index.sqlite
-   --q "<keywords>" --paths "<this doc>" --top-k 5 --max-tokens 800` then `mdq get --db
-   <repoRoot>/.mdq/index.sqlite --chunk-id <ID>` (use `--mode grep` for exact
-   identifiers) — never a full-file Read, and never grep unless told mdq is
+   repo is mdq-indexed, you MUST use `cd <repoRoot> && mdq search
+   --q "<keywords>" --paths "<this doc>" --top-k 5 --max-tokens 800` then
+   `cd <repoRoot> && mdq get --chunk-id <ID>` (use `--mode grep` for exact
+   identifiers) — run from the repo root and do NOT pass `--db`: mdq resolves its
+   default index under `<repoRoot>/.mdq/` by itself, which is the DB Phase 0 wrote.
+   Never a full-file Read, and never grep unless told mdq is
    unavailable. Never Read an entire doc, and do not read unrelated files.
 2. Compare what the doc claims against the changed source. If needed, read the
    specific changed source lines to confirm a contradiction.
