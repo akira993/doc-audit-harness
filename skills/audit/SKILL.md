@@ -31,6 +31,25 @@ and bind `MDQ_HEALTHY` / `MDQ_CHUNKS` / `MDQ_STATUS` from its JSON
 The probe is report-only and always exits 0; if it cannot run, treat `MDQ_HEALTHY` as
 `false` and `MDQ_STATUS` as `probe-error` and continue. These feed the Phase-5 mdq status line.
 
+**Confirmation gate (mdq unavailable or unhealthy).** Evaluate this immediately: the gate
+fires when `reason` is `not-installed` or `index-failed`, or when `MDQ_AVAILABLE` is true
+and `MDQ_HEALTHY` is false. It does NOT fire for `reason:disabled-by-config` (an explicit
+user opt-out, which keeps degrading silently as before). When it fires, STOP before Phase 1
+and ask via `AskUserQuestion` — quote the probe's own `reason` (or `MDQ_STATUS` when the
+index is unhealthy) and `MDQ_BIN` in the question, and state plainly that continuing without
+mdq makes every Phase-3 verifier subagent fall back to grep + full-file Read, substantially
+increasing this run's token consumption. Offer exactly two options:
+- **"Fix mdq first (Recommended)"** — do not proceed to Phase 1. Show the probe output
+  (`reason`/`MDQ_STATUS`/`MDQ_BIN`) and tell the user to install or repair mdq, then
+  re-run `/docaudit:audit`.
+- **"Continue without mdq"** — an approved degrade: proceed normally (Phase 3 already
+  treats mdq as unusable whenever `MDQ_AVAILABLE`/`MDQ_HEALTHY` say so) and bind
+  `MDQ_DEGRADE="user-approved"` for the Phase-5 mdq status line.
+If `AskUserQuestion` is unavailable in this session (non-interactive), or the user has explicitly instructed the run not to pause for questions, do not block: proceed
+in grep-degrade mode as before, but bind `MDQ_DEGRADE="non-interactive"` so the Phase-5 mdq
+status line surfaces the unconfirmed degrade instead of staying silent about it. When the
+gate does not fire, bind `MDQ_DEGRADE="n/a"`.
+
 Then probe **context-mode** (complementary to mdq — mdq optimizes Markdown *reads*,
 context-mode optimizes *processing of large machine output*). This probe is
 **skill-level — no shipped script** (do NOT grep `~/.claude` plugin paths; judge purely
@@ -79,7 +98,7 @@ Then **open the run** (deterministic): this writes the evidence manifest — the
 Do NOT hand-author anything under `$RUN_DIR`; the manifest fixes the impacted set, HEAD, and whether Phase 4 is required. Verdicts are written by the Phase-3 subagents (below) and reviews by Phase 4 — the Phase-5 gate refuses if any are missing.
 
 ## Phase 3 — change-impact verification (Workflow fan-out)
-Launch `Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted, mdqAvailable: MDQ_AVAILABLE, cmAvailable: CM_AVAILABLE, axAvailable: AX_AVAILABLE, runId: RUNID, runDir: RUN_DIR}})`.
+Launch `Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted, mdqAvailable: MDQ_AVAILABLE, mdqHealthy: MDQ_HEALTHY, cmAvailable: CM_AVAILABLE, axAvailable: AX_AVAILABLE, runId: RUNID, runDir: RUN_DIR}})`.
 (The template hardens two runtime-dependent facts: some runtimes deliver `args` as a JSON
 *string* — it parses both shapes — and the verifier subagent is the plugin-namespaced
 `docaudit:doc-impact-verifier`, not the bare name. Keep both when editing the template.)
@@ -132,10 +151,11 @@ per-doc verdicts, delegated-check results, review summaries, `mapGapCandidates`,
 the **mdq status line**, the **context-mode status line**, and the **ax status line** (all below), and the roll-up verdict. Do NOT edit any existing doc and do NOT auto-edit
 `docs/README.md` — list "add report to index" as a manual follow-up.
 
-**mdq status line** — always include exactly one; it is **non-blocking** (never changes the verdict):
+**mdq status line** — always include exactly one; it is **non-blocking** (never changes the verdict). If Phase 0's confirmation gate fired, append the matching `MDQ_DEGRADE` suffix below to whichever base line applies (omit the suffix when `MDQ_DEGRADE` is `n/a`):
 - `MDQ_AVAILABLE` false → `💡 mdq: not active — docs read in full. Install mdq for Phase-0 indexed, chunked reads (~90%+ token savings on large docs): clone github.com/dahatake/skills and run its ./setup/setup-markdown-query.sh`
 - `MDQ_AVAILABLE` true and `MDQ_HEALTHY` true → `✓ mdq: active (indexed <MDQ_CHUNKS> chunks; chunked reads on)`
 - `MDQ_AVAILABLE` true and `MDQ_HEALTHY` false → `⚠ mdq: installed but NOT firing (<MDQ_STATUS>) — not getting token savings; run mdq index --root . (or check indexing.roots). [non-blocking]`
+- `MDQ_DEGRADE` suffix: `user-approved` → append ` [user-approved degrade]`; `non-interactive` → append ` [UNCONFIRMED degrade — non-interactive session]` and lead the line with `⚠` regardless of the base glyph, so it cannot be mistaken for the routine nudge.
 
 **context-mode status line** — always include exactly one, immediately after the mdq line; it is **non-blocking** (never changes the verdict):
 - `CM_AVAILABLE` false → `💡 context-mode: not active — large outputs (diff, reviews) read in full. Install context-mode for sandboxed processing (token savings on big audits).`
