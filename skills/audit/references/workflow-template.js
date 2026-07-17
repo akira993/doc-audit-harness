@@ -53,14 +53,17 @@ const mdqAvailable = a.mdqAvailable === true || a.mdqAvailable === 'true'
 const mdqHealthy = a.mdqHealthy === true || a.mdqHealthy === 'true'
 const cmAvailable = a.cmAvailable === true || a.cmAvailable === 'true'
 const axAvailable = a.axAvailable === true || a.axAvailable === 'true'
-const dbPath = `${repoRoot}/.mdq/index.sqlite`
+// No hardcoded --db: mdq resolves its own default DB relative to the CWD (new mdq:
+// .mdq/index-<lang>-<strategy>.sqlite, old mdq: .mdq/index.sqlite), so running from
+// repoRoot reads the SAME DB the Phase-0 indexer wrote (which also cd's to the root).
 
 const readInstruction = (docPath) => (mdqAvailable && mdqHealthy)
   ? `The repo Markdown is already indexed with mdq (Phase 0). You MUST read the target ` +
-    `doc via mdq, NOT a full-file Read: run ` +
-    `\`mdq search --db "${dbPath}" --q "<keywords>" --paths "${docPath}" --top-k 5 --max-tokens 800\` ` +
+    `doc via mdq, NOT a full-file Read. Run mdq from the repo root and do NOT pass --db ` +
+    `(mdq resolves its default index under ${repoRoot}/.mdq/ by itself): run ` +
+    `\`cd "${repoRoot}" && mdq search --q "<keywords>" --paths "${docPath}" --top-k 5 --max-tokens 800\` ` +
     `(add \`--mode grep\` for exact identifiers), then ` +
-    `\`mdq get --db "${dbPath}" --chunk-id <ID>\` to pull ONLY the relevant heading chunks. ` +
+    `\`cd "${repoRoot}" && mdq get --chunk-id <ID>\` to pull ONLY the relevant heading chunks. ` +
     `Do NOT Read the whole doc; use Read only for the specific changed SOURCE lines you must confirm.`
   : 'Use `grep -n` to pull only the relevant chunks of the doc; do not read unrelated files.'
 

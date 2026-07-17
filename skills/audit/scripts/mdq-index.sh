@@ -74,13 +74,15 @@ else
   ROOT_ARGS=(--root .)
 fi
 
-# Index the corpus. The subprocess writes .mdq/index.sqlite under the repo root; doc
+# Index the corpus. No --db: mdq resolves its own default DB under .mdq/ at the repo
+# root (new mdq: index-<lang>-<strategy>.sqlite, old mdq: index.sqlite) — the health
+# probe and the Phase-3 verifiers also omit --db, so all three see the same file. Doc
 # bodies never enter the model context (only this JSON summary does). Incremental:
 # mdq skips files whose content hash is unchanged.
 ERRF="$(mktemp "${TMPDIR:-/tmp}/mdq_index_err.XXXXXX")"
 trap 'rm -f "$ERRF"' EXIT
 if ( cd "$REPO_ROOT" && PYTHONUTF8=1 PYTHONIOENCODING=utf-8 "$BIN" index "${ROOT_ARGS[@]}" ) >/dev/null 2>"$ERRF"; then
-  printf '{"mdqAvailable":true,"reason":"indexed","bin":"%s","dbPath":".mdq/index.sqlite"}\n' "$BIN_J"
+  printf '{"mdqAvailable":true,"reason":"indexed","bin":"%s","dbDir":".mdq"}\n' "$BIN_J"
   exit 0
 else
   rc=$?

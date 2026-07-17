@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# mdq-health.py — Phase-0 health probe (spec §4.1). Read-only: given an mdq index db,
-# report whether mdq is actually firing. Emits a single-line JSON object and ALWAYS
+# mdq-health.py — Phase-0 health probe (spec §4.1). Read-only: given an mdq binary
+# (and optionally an explicit --db), report whether mdq is actually firing. Emits a single-line JSON object and ALWAYS
 # exits 0 (a probe failure must never break the audit) — main() wraps the probe in a
 # blanket try/except so any unexpected error degrades to status "probe-error".
 #
@@ -24,8 +24,13 @@ def run(bin_, *args):
 
 def _probe(out, bin_, db):
     """Fill `out` in place. May raise; main() catches and keeps status=probe-error."""
+    # `--db` is an explicit override only (tests / special setups). When omitted, mdq
+    # resolves its own default DB relative to the CWD (new mdq:
+    # .mdq/index-<lang>-<strategy>.sqlite, old mdq: .mdq/index.sqlite), so the probe
+    # inspects the SAME DB the Phase-0 indexer wrote — run it from the repo root.
+    db_args = ["--db", db] if db else []
     # 1) stats — files/chunks. Unparseable or nonzero rc => probe-error (status unchanged).
-    rc, so = run(bin_, "stats", "--db", db)
+    rc, so = run(bin_, "stats", *db_args)
     st = None
     if rc == 0 and so.strip():
         try:
@@ -44,7 +49,7 @@ def _probe(out, bin_, db):
         return
 
     # 3) self-derived search smoke: take real terms from the index itself, search one.
-    rc, lo = run(bin_, "list", "--db", db, "--limit", "5")
+    rc, lo = run(bin_, "list", *db_args, "--limit", "5")
     cand = []
     for line in lo.splitlines():
         line = line.strip()
@@ -74,7 +79,7 @@ def _probe(out, bin_, db):
 
     smoke = False
     for w in terms:
-        rc, so = run(bin_, "search", "--db", db, "--q", w, "--top-k", "1")
+        rc, so = run(bin_, "search", *db_args, "--q", w, "--top-k", "1")
         if rc == 0 and any(ln.strip() for ln in so.splitlines()):
             smoke = True
             break
@@ -87,7 +92,8 @@ def _probe(out, bin_, db):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bin", default="mdq")
-    ap.add_argument("--db", default=".mdq/index.sqlite")
+    ap.add_argument("--db", default=None,
+                    help="explicit DB override; omit to let mdq resolve its own default DB")
     a = ap.parse_args()
 
     out = {"files": 0, "chunks": 0, "searchSmoke": False, "healthy": False, "status": "probe-error"}

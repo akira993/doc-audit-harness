@@ -20,7 +20,6 @@ def arg_logging_stub(rc=0):
     return ('#!/usr/bin/env bash\n'
             'echo "$@" >> "$ARGLOG"\n'
             'mkdir -p .mdq\n'
-            'echo ok > .mdq/index.sqlite\n'
             'exit %d\n' % rc)
 
 
@@ -69,7 +68,10 @@ class TestMdqIndex(unittest.TestCase):
         out = run_script(self.repo, {"indexing": {"bin": stub}}, {"ARGLOG": arglog})
         self.assertTrue(out["mdqAvailable"])
         self.assertEqual(out["reason"], "indexed")
-        self.assertEqual(out["dbPath"], ".mdq/index.sqlite")
+        self.assertEqual(out["dbDir"], ".mdq")
+        # Regression pin: the retired hardcoded default DB name must not resurface —
+        # mdq resolves its own default DB, so the harness never names the file.
+        self.assertNotIn("index.sqlite", json.dumps(out))
         self.assertTrue(os.path.isdir(os.path.join(self.repo, ".mdq")))
 
     def test_stub_failure_degrades(self):

@@ -28,7 +28,8 @@ accepts a single path or a glob.
 ## Indexing (mdq, Phase 0)
 
 `indexing` is optional and conditional-force. With `mdq` on `PATH` (or `bin` pointed at a
-vendored binary), Phase 0 builds the index under `.mdq/index.sqlite` and Phase 3 reads
+vendored binary), Phase 0 builds the index under `.mdq/` (mdq's own default DB resolution —
+e.g. `index-<lang>-<strategy>.sqlite` on current mdq, `index.sqlite` on older) and Phase 3 reads
 impacted docs as token-optimized chunks (`mdq search --paths <doc>` / `mdq get`). By
 default it indexes the whole repo (`--root .`) — mdq's own default roots (`docs`,
 `knowledge`, …) would miss `README.md`, `skills/**`, and `agents/**`; set `roots` to

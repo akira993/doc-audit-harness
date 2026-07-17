@@ -20,12 +20,15 @@ Parse `{mdqAvailable, reason, bin}` and bind `MDQ_AVAILABLE` (true/false) for Ph
 `mdqAvailable:false` is EXPECTED, not an error (`reason` is `not-installed` /
 `disabled-by-config` / `index-failed`): record the reason and proceed in grep-degrade
 mode — the engine is fully functional without mdq. When `mdqAvailable:true`, the whole
-repo's Markdown is now indexed under `$CLAUDE_PROJECT_DIR/.mdq/index.sqlite`; indexing runs in a subprocess,
+repo's Markdown is now indexed under `$CLAUDE_PROJECT_DIR/.mdq/` (mdq's own default DB
+resolution — e.g. `index-<lang>-<strategy>.sqlite` on current mdq); indexing runs in a subprocess,
 so doc bodies never enter context — only this JSON summary does. This phase always runs
 first (both incremental and `--full`).
 
 When `MDQ_AVAILABLE` is true, also run
-`python3 "$SD/scripts/mdq-health.py" --bin "<MDQ_BIN>" --db "$CLAUDE_PROJECT_DIR/.mdq/index.sqlite"`
+`(cd "$CLAUDE_PROJECT_DIR" && python3 "$SD/scripts/mdq-health.py" --bin "<MDQ_BIN>")`
+(no `--db`: mdq resolves its own default DB relative to the CWD, so the probe inspects
+the same DB the Phase-0 indexer just wrote — `--db` remains an explicit override only)
 and bind `MDQ_HEALTHY` / `MDQ_CHUNKS` / `MDQ_STATUS` from its JSON
 `{healthy, chunks, status}` (`status` ∈ `ok`/`empty-index`/`search-broken`/`probe-error`).
 The probe is report-only and always exits 0; if it cannot run, treat `MDQ_HEALTHY` as
