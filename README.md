@@ -34,6 +34,10 @@ Full table with fallbacks → [docs/ADOPTION.md §2](docs/ADOPTION.md).
 
 ## Usage example
 
+See [docs/PROMPTS.md](docs/PROMPTS.md) for copy-paste prompt examples covering common
+audit workflows (regular diff audit, full sweep, scoped audit, change-impact check, init,
+and scheduled runs).
+
 First run in a repo (no adapter yet):
 
     /docaudit:init             # writes .claude/doc-audit.json (detects docs + existing doc checks)
