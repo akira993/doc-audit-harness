@@ -50,11 +50,12 @@ if (!runId || !runDir) {
   )
 }
 const mdqAvailable = a.mdqAvailable === true || a.mdqAvailable === 'true'
+const mdqHealthy = a.mdqHealthy === true || a.mdqHealthy === 'true'
 const cmAvailable = a.cmAvailable === true || a.cmAvailable === 'true'
 const axAvailable = a.axAvailable === true || a.axAvailable === 'true'
 const dbPath = `${repoRoot}/.mdq/index.sqlite`
 
-const readInstruction = (docPath) => mdqAvailable
+const readInstruction = (docPath) => (mdqAvailable && mdqHealthy)
   ? `The repo Markdown is already indexed with mdq (Phase 0). You MUST read the target ` +
     `doc via mdq, NOT a full-file Read: run ` +
     `\`mdq search --db "${dbPath}" --q "<keywords>" --paths "${docPath}" --top-k 5 --max-tokens 800\` ` +

@@ -32,8 +32,13 @@ vendored binary), Phase 0 builds the index under `.mdq/index.sqlite` and Phase 3
 impacted docs as token-optimized chunks (`mdq search --paths <doc>` / `mdq get`). By
 default it indexes the whole repo (`--root .`) — mdq's own default roots (`docs`,
 `knowledge`, …) would miss `README.md`, `skills/**`, and `agents/**`; set `roots` to
-narrow the scope. When `mdq` is absent, `indexing.enabled` is `false`, or indexing
-fails, the audit silently degrades to grep — so the harness stays tool-independent. Add
+narrow the scope. When `indexing.enabled` is `false`, the audit silently degrades to grep
+(an explicit opt-out). When `mdq` is absent, indexing fails, or the Phase-0 health probe
+finds it installed but unhealthy, the audit's Phase-0 confirmation gate asks the user
+(`AskUserQuestion`) to fix mdq first or explicitly approve continuing in grep-degrade mode
+— it no longer degrades silently in those cases (a non-interactive session still degrades,
+but flags it in the Phase-5 status line instead of staying silent) — so the harness stays
+tool-independent overall. Add
 `.mdq/` to `.gitignore` (it may also contain a `usage.jsonl` that logs query text verbatim).
 `tool` is reserved for future multi-backend support; the runtime currently reads only
 `bin` (to locate the executable), plus `enabled` and `roots` — `tool` itself is not consumed.
