@@ -66,6 +66,49 @@ class TestComputeBaseline(unittest.TestCase):
                                      "diffGlobs": ["docs/**"]})
         self.assertEqual(out["mode"], "full")
 
+    # These tests widen diffGlobs to also cover the anchor state file and the
+    # .claude/doc-audit.json config file that run_script() itself commits, so
+    # filteredOutCount reflects only the paths the test explicitly adds.
+    OVERHEAD_GLOBS = ["docs/**", ".claude/state/**", ".claude/doc-audit.json"]
+
+    def test_paths_outside_diffGlobs_are_reported_filtered_out(self):
+        head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        write(self.repo, ".claude/state/last-doc-audit.json",
+              json.dumps({"sha": head, "verdict": "CONSISTENT"}))
+        write(self.repo, "docs/a.md", "changed\n")
+        write(self.repo, "apps/api/index.ts", "changed\n")
+        write(self.repo, "package.json", "{}\n")
+        git(self.repo, "add", "-A"); git(self.repo, "commit", "-m", "change")
+        out = run_script(self.repo, {"anchorPath": ".claude/state/last-doc-audit.json",
+                                     "diffGlobs": self.OVERHEAD_GLOBS})
+        self.assertIn("docs/a.md", out["changed"])
+        self.assertNotIn("apps/api/index.ts", out["changed"])
+        self.assertEqual(out["filteredOutCount"], 2)
+        self.assertEqual(out["filteredOutSample"], ["apps/api/index.ts", "package.json"])
+
+    def test_all_paths_within_diffGlobs_yields_zero_filtered_out(self):
+        head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        write(self.repo, ".claude/state/last-doc-audit.json",
+              json.dumps({"sha": head, "verdict": "CONSISTENT"}))
+        write(self.repo, "docs/a.md", "changed\n")
+        git(self.repo, "add", "-A"); git(self.repo, "commit", "-m", "change")
+        out = run_script(self.repo, {"anchorPath": ".claude/state/last-doc-audit.json",
+                                     "diffGlobs": self.OVERHEAD_GLOBS})
+        self.assertEqual(out["filteredOutCount"], 0)
+        self.assertEqual(out["filteredOutSample"], [])
+
+    def test_filteredOutSample_capped_at_five(self):
+        head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        write(self.repo, ".claude/state/last-doc-audit.json",
+              json.dumps({"sha": head, "verdict": "CONSISTENT"}))
+        for i in range(6):
+            write(self.repo, f"apps/api/file{i}.ts", "changed\n")
+        git(self.repo, "add", "-A"); git(self.repo, "commit", "-m", "change")
+        out = run_script(self.repo, {"anchorPath": ".claude/state/last-doc-audit.json",
+                                     "diffGlobs": self.OVERHEAD_GLOBS})
+        self.assertEqual(out["filteredOutCount"], 6)
+        self.assertEqual(len(out["filteredOutSample"]), 5)
+
 
 if __name__ == "__main__":
     unittest.main()

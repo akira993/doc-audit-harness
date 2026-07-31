@@ -84,9 +84,10 @@ and the audit continues unaffected — external-URL corroboration is a bonus, ne
 ## Phase 1 — baseline + diff
 Run: `bash "$SD/scripts/compute-baseline.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`.
 Do NOT pass `--full` to this script (it only accepts `--config`/`--repo-root`; an unknown flag makes it `exit 2`). `--full` is a skill-level argument only: after parsing the script output, if the skill was invoked with `--full`, set the effective `MODE` to `full` in memory. Bind `MODE` to the effective mode for use in Phase 5.
-Parse `{mode, baselineSha, changed[]}`. If `--full` was passed, treat mode as `full`.
+Parse `{mode, baselineSha, changed[], filteredOutCount, filteredOutSample[]}`. If `--full` was passed, treat mode as `full`.
 If `mode=full` (no or invalid anchor), tell the user this is a full run and proceed
 with the whole doc corpus as the change set context.
+`filteredOutCount` is how many changed paths `diffGlobs` dropped before `changed` was built (`filteredOutSample` holds up to 5 of them); carry both to the Phase-5 **diffGlobs filter status line** — never silently discard them.
 
 ## Phase 2 — impact resolution
 Build a concise `changeSummary` (per changed file: path + 1-line nature of change from `git diff --stat`/`git show`); it depends only on the Phase 1 `changed` list. When `CM_AVAILABLE` is true, derive this `changeSummary` with context-mode instead of reading raw diffs into context: run the `git diff`/`git show` through `ctx_execute` (or `ctx_batch_execute`) in the sandbox and return only the compact per-file summary — the raw diff stays out of context, so every downstream subagent prompt is smaller too. When `CM_AVAILABLE` is false, build it from `git diff --stat`/`git show` as usual.
@@ -169,7 +170,9 @@ the **mdq status line**, the **context-mode status line**, and the **ax status l
 - `AX_AVAILABLE` false → `💡 ax: not active — external-URL claims go unverified; install: curl -fsSL https://ax.yusuke.run/install | sh`
 - `AX_AVAILABLE` true → `✓ ax: active (external-URL corroboration available; read-only, GET-only)`
 
-**impact warning lines** — if the Phase-2 `warnings[]` is non-empty, include one `⚠ <warning> [non-blocking]` line per entry, immediately after the ax line; they are **non-blocking** (never change the verdict).
+**diffGlobs filter status line** — if Phase 1's `filteredOutCount > 0`, include one line immediately after the ax line: `⚠ diffGlobs excluded <filteredOutCount> changed path(s) from this audit (sample: <filteredOutSample joined by ", ">). If these are source roots you expect to affect docs, widen diffGlobs. [non-blocking]`. It is **non-blocking** (never changes the verdict) — a deliberately docs-only scope is legitimate. Omit the line entirely when `filteredOutCount` is 0.
+
+**impact warning lines** — if the Phase-2 `warnings[]` is non-empty, include one `⚠ <warning> [non-blocking]` line per entry, immediately after the diffGlobs filter line; they are **non-blocking** (never change the verdict).
 
 **Run the gate** — it derives the verdict from the on-disk evidence and writes the anchor
 **only** on CONSISTENT (there is no verdict to pass in; the anchor cannot be advanced any other way):
