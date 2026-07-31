@@ -73,6 +73,12 @@ def list_doc_files(repo_root, doc_globs):
     # followlinks=False (default): symlinked doc trees are not traversed
     for dirpath, dirs, files in os.walk(repo_root):
         dirs[:] = [d for d in dirs if d not in skip]  # prune .git/node_modules/etc
+        # prune nested checkouts: a subdir containing a .git entry (dir for a
+        # nested clone/submodule, file for a linked worktree's `gitdir: ...`
+        # pointer) is a separate checkout and must not be walked into. The
+        # walk root itself is exempt: this only filters dirs we'd descend
+        # into next, never the current dirpath.
+        dirs[:] = [d for d in dirs if not os.path.exists(os.path.join(dirpath, d, ".git"))]
         for fn in files:
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, repo_root)
