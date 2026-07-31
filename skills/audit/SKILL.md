@@ -96,6 +96,50 @@ completion, its `critical`/`high` findings DO fold into the verdict (§Phase 4 s
 the probe itself is still non-fatal, but downstream of it this seam behaves differently from the
 other three.
 
+Then probe **codegraph** (the `codegraph` CLI, a symbol graph — call graph, impact/node lookup),
+doc-impact-verifier's symbol-level corroboration seam, the symbol-level counterpart of ax's
+external-URL seam. Deterministic (mdq-index.sh pattern — it keeps the index fresh via an actual
+build/refresh call, not just `--version`): run
+`bash "$SD/scripts/codegraph-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"` and parse
+`{symbolGraphAvailable, symbolGraphBin, reason}` (`reason` ∈
+`ok`/`not-installed`/`disabled-by-config`/`index-failed`). Bind `SYMBOL_GRAPH_AVAILABLE` and
+`SYMBOL_GRAPH_BIN` (default `codegraph`) for Phase 3 and the Phase-5 symbol-graph status line. The
+probe keeps the index fresh every run: `.codegraph/` absent → `codegraph init .` (first run,
+confirmed 96ms on this repo); `.codegraph/` present → `codegraph sync .` (confirmed idempotent,
+fast); it never touches `.gitignore` itself (codegraph self-generates `.codegraph/.gitignore`).
+Always exits 0; any failure degrades to `SYMBOL_GRAPH_AVAILABLE=false` and the audit continues
+unaffected — symbol-level corroboration is a bonus, never a requirement.
+
+Then probe **graphify** (the `graphify` CLI, a unified code+doc graph), a candidate source for
+Phase 2's `mapGapCandidates` alongside the existing token heuristic. Deterministic, same pattern:
+run `bash "$SD/scripts/graphify-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"` and
+parse `{docGraphAvailable, docGraphBin, reason, gitignoreOk}` (`reason` ∈
+`ok`/`not-installed`/`disabled-by-config`/`update-failed`). Bind `DOC_GRAPH_AVAILABLE`,
+`DOC_GRAPH_BIN` (default `graphify`), and `DOC_GRAPH_GITIGNORE_OK` for Phase 2 and the Phase-5
+doc-graph status line. The probe runs `graphify update .` unconditionally (confirmed LLM-free and
+diff-based/idempotent — safe every run) and then checks whether `graphify-out/` is gitignored via
+`git check-ignore -q graphify-out` (graphify does NOT self-gitignore its output, unlike codegraph;
+report-only WARN via Phase 5 only, never a write). Aside: a detected topology change makes
+`graphify update .` write a dated backup under `graphify-out/<date>/` — a disk-hygiene accumulation
+this pass does not address (spec §6). Always exits 0; any failure degrades to
+`DOC_GRAPH_AVAILABLE=false` and the audit continues unaffected.
+
+Then probe **CocoIndex** (the `ccc` CLI, local-embedding semantic search), a second, independent
+candidate source for Phase 2's `mapGapCandidates`. Deterministic, same pattern: run
+`bash "$SD/scripts/cocoindex-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"` and parse
+`{semanticSearchAvailable, semanticSearchBin, reason}` (`reason` ∈
+`ok`/`not-installed`/`disabled-by-config`/`not-initialized`/`index-failed`). Bind
+`SEMANTIC_SEARCH_AVAILABLE` and `SEMANTIC_SEARCH_BIN` (default `ccc`) for Phase 2 and the Phase-5
+semanticSearch status line. This probe is the heaviest of the three (confirmed ~8.5s on this repo
+when it actually indexes) — and, the single most important sentence in this paragraph, **it never
+calls `ccc init` under any circumstance**: an absent `.cocoindex_code/` in the repo is a normal,
+silent `not-initialized` degrade (expected until the user runs `/docaudit:init`), NOT an error,
+because `ccc init` auto-appends `/.cocoindex_code/` to the target repo's `.gitignore` — a write the
+report-only audit phase must never trigger mid-run. Only when `.cocoindex_code/` already exists does
+the probe run `ccc index` to refresh (no path argument — `ccc index` operates on the cwd only;
+confirmed `ccc index .` errors "unexpected extra argument(s)"). Always exits 0; any failure degrades to
+`SEMANTIC_SEARCH_AVAILABLE=false` and the audit continues unaffected.
+
 ## Phase 1 — baseline + diff
 Run: `bash "$SD/scripts/compute-baseline.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`.
 Do NOT pass `--full` to this script (it only accepts `--config`/`--repo-root`; an unknown flag makes it `exit 2`). `--full` is a skill-level argument only: after parsing the script output, if the skill was invoked with `--full`, set the effective `MODE` to `full` in memory. Bind `MODE` to the effective mode for use in Phase 5.
@@ -111,13 +155,28 @@ the impact output to a file so it feeds both your parse and the run manifest:
 `printf '%s\n' "${changed[@]}" | python3 "$SD/scripts/resolve-impact.py" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR" --changed - > "$RUN_DIR/impact.json"`.
 Parse `$RUN_DIR/impact.json` for `{impacted[], mapGapCandidates[], ssotRecheck[], warnings[], truncated, counts{changed,impacted,mapped,heuristicOnly,candidatesBeforeCap}}`. If `truncated` is true, record the dropped count (the script also prints it to stderr) explicitly in the Phase 5 report — never silently discard it. If `warnings` is non-empty (e.g. an `ssotSources` entry with a URL `liveSource`, which is never fetched or verified), carry them to the Phase-5 warning lines — never silently discard them.
 
+When `DOC_GRAPH_AVAILABLE` or `SEMANTIC_SEARCH_AVAILABLE` is true, supplement `impact.json` with
+graphify/CocoIndex candidates BEFORE opening the run (either or both — each is an independent,
+optional source): `python3 "$SD/scripts/impact-supplement.py" --impact-json "$RUN_DIR/impact.json"
+--changed - --change-summary "$changeSummary" --repo-root "$CLAUDE_PROJECT_DIR"
+--max-impacted-docs <config maxImpactedDocs, default 200> --doc-globs <config docGlobs, comma-joined>
+[--graphify-bin "$DOC_GRAPH_BIN"] [--cocoindex-bin "$SEMANTIC_SEARCH_BIN" --min-score <config
+semanticSearch.minScore, default 0.4>]`, piping the Phase-1 `changed` list to stdin — include
+`--graphify-bin` only when `DOC_GRAPH_AVAILABLE` is true, and `--cocoindex-bin`/`--min-score` only
+when `SEMANTIC_SEARCH_AVAILABLE` is true. It rewrites `$RUN_DIR/impact.json` in place: re-parse it
+afterward (it may now carry updated `counts.graphifyOnly`/`counts.semanticOnly`/`truncated`/
+`warnings[]`) before proceeding. `resolve-impact.py`'s own `mapped`/`heuristic` result is never
+displaced — new candidates only ever fill the residual slots left under `maxImpactedDocs`, strictly
+`mapped` ≥ `heuristic` ≥ `graphify` ≥ `semantic` (Issue #8 anti-regression). When both
+`DOC_GRAPH_AVAILABLE` and `SEMANTIC_SEARCH_AVAILABLE` are false, skip this step entirely.
+
 Then **open the run** (deterministic): this writes the evidence manifest — the
 "expected work" contract the Phase-5 gate checks against — and binds `RUNID`:
 `RUNID="$(python3 "$SD/scripts/start-run.py" --run-dir "$RUN_DIR" --repo-root "$CLAUDE_PROJECT_DIR" --impact-json "$RUN_DIR/impact.json" --mode "$MODE" | python3 -c 'import json,sys;print(json.load(sys.stdin)["runid"])')"`.
 Do NOT hand-author anything under `$RUN_DIR`; the manifest fixes the impacted set, HEAD, and whether Phase 4 is required. Verdicts are written by the Phase-3 subagents (below) and reviews by Phase 4 — the Phase-5 gate refuses if any are missing.
 
 ## Phase 3 — change-impact verification (Workflow fan-out)
-Launch `Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted, mdqAvailable: MDQ_AVAILABLE, mdqHealthy: MDQ_HEALTHY, cmAvailable: CM_AVAILABLE, axAvailable: AX_AVAILABLE, runId: RUNID, runDir: RUN_DIR}})`.
+Launch `Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted, mdqAvailable: MDQ_AVAILABLE, mdqHealthy: MDQ_HEALTHY, cmAvailable: CM_AVAILABLE, axAvailable: AX_AVAILABLE, symbolGraphAvailable: SYMBOL_GRAPH_AVAILABLE, runId: RUNID, runDir: RUN_DIR}})`.
 (The template hardens two runtime-dependent facts: some runtimes deliver `args` as a JSON
 *string* — it parses both shapes — and the verifier subagent is the plugin-namespaced
 `docaudit:doc-impact-verifier`, not the bare name. Keep both when editing the template.)
@@ -227,7 +286,23 @@ lines, the findings it summarizes may already have contributed to the verdict vi
 - `CODEX_REVIEW_AVAILABLE` true and `CODEX_REVIEW_STATE=skipped-full-run` → `💡 codex-review: skipped (full run — no baseline SHA to scope the review against)`
 - `CODEX_REVIEW_AVAILABLE` true and `CODEX_REVIEW_STATE` ∈ `{completed, execution-failed, ref-invalid}` → `✓ codex-review: active (findings included in verdict when present)`
 
-**diffGlobs filter status line** — if Phase 1's `filteredOutCount > 0`, include one line immediately after the codex-review line: `⚠ diffGlobs excluded <filteredOutCount> changed path(s) from this audit (sample: <filteredOutSample joined by ", ">). If these are source roots you expect to affect docs, widen diffGlobs. [non-blocking]`. It is **non-blocking** (never changes the verdict) — a deliberately docs-only scope is legitimate. Omit the line entirely when `filteredOutCount` is 0.
+**symbol-graph status line** — always include exactly one, immediately after the codex-review line; it is **non-blocking** (never changes the verdict), 3-state:
+- `SYMBOL_GRAPH_AVAILABLE` false → `💡 symbol-graph: not active — symbol-level corroboration unavailable; install: (see codegraph install docs)`
+- `SYMBOL_GRAPH_AVAILABLE` true (`reason:ok`) → `✓ symbol-graph: active (codegraph impact/node corroboration available; read-only)`
+- `reason:index-failed` → `⚠ symbol-graph: installed but index build failed — not available this run. [non-blocking]`
+
+**doc-graph status line** — always include exactly one, immediately after the symbol-graph line; it is **non-blocking** (never changes the verdict), 3-state:
+- `DOC_GRAPH_AVAILABLE` false → `💡 doc-graph: not active — mapGapCandidates uses the token heuristic only; install: (see graphify install docs)`
+- `DOC_GRAPH_AVAILABLE` true and `DOC_GRAPH_GITIGNORE_OK` true → `✓ doc-graph: active (mapGapCandidates supplemented via graphify; graphify-out/ gitignored)`
+- `DOC_GRAPH_AVAILABLE` true and `DOC_GRAPH_GITIGNORE_OK` false → `⚠ doc-graph: active but graphify-out/ is NOT gitignored — add it to .gitignore. [non-blocking]`
+
+**semanticSearch status line** — always include exactly one, immediately after the doc-graph line; it is **non-blocking** (never changes the verdict), 3-state (4 distinguishable messages, same "not active" collapsing mdq's line already does):
+- `SEMANTIC_SEARCH_AVAILABLE` false and `reason` ∈ `{not-installed, disabled-by-config}` → `💡 semanticSearch: not active — mapGapCandidates gets no semantic-search source; install: uv tool install "cocoindex-code[full]==0.2.39"`
+- `SEMANTIC_SEARCH_AVAILABLE` false and `reason:not-initialized` → `💡 semanticSearch: not active — CocoIndex is installed but this repo isn't indexed yet; run /docaudit:init to set it up (or manually: ccc init && ccc index).`
+- `SEMANTIC_SEARCH_AVAILABLE` true (`reason:ok`) → `✓ semanticSearch: active (mapGapCandidates supplemented via CocoIndex semantic search; minScore=<config value>)`
+- `reason:index-failed` → `⚠ semanticSearch: installed but index update failed — not available this run. [non-blocking]`
+
+**diffGlobs filter status line** — if Phase 1's `filteredOutCount > 0`, include one line immediately after the semanticSearch line: `⚠ diffGlobs excluded <filteredOutCount> changed path(s) from this audit (sample: <filteredOutSample joined by ", ">). If these are source roots you expect to affect docs, widen diffGlobs. [non-blocking]`. It is **non-blocking** (never changes the verdict) — a deliberately docs-only scope is legitimate. Omit the line entirely when `filteredOutCount` is 0.
 
 **impact warning lines** — if the Phase-2 `warnings[]` is non-empty, include one `⚠ <warning> [non-blocking]` line per entry, immediately after the diffGlobs filter line; they are **non-blocking** (never change the verdict).
 
@@ -260,3 +335,21 @@ timeout, or schema-mismatched result is WARN, never a FAIL basis by itself. But 
 codex-review run's `critical`/`high` findings DO block the verdict, same as `/code-review`'s own
 high-severity findings — this is a deliberate exception to the rule that probe-style seams
 (mdq/context-mode/ax) never affect the verdict.
+codegraph, graphify, and CocoIndex (`symbolGraph`/`docGraph`/`semanticSearch`), when available, are
+ALL report-only and NEVER participate in the verdict — none of the three writes to `phase4.json`;
+this is not the codex-review exception, and no future edit should "upgrade" them into verdict
+participants by analogy with it. codegraph, when available, is read-only: `impact <symbol> --json`
+(post-filtered by `filePath` matching the changed file — its `affected[]` has no path-scoping flag)
+and `node <symbol> -f <changed-file>` (text output, no `--json`, disambiguated via `-f`, no
+post-filter needed) only; `codegraph affected` is NEVER used (confirmed empty on this repo's
+subprocess-driven test style). graphify's calls are read-only, TEXT-only graph queries (`affected`/
+`query --budget` — neither has `--json`); a `No unique node match` uniqueness error degrades to zero
+candidates from that call, not an error. CocoIndex's `ccc search` calls are read-only and MUST be
+threshold-filtered by `minScore` (no built-in relevance cutoff — confirmed irrelevant queries still
+return `limit` results at a visibly lower score band). **`ccc init` is never invoked by any
+audit-phase codepath — only `/docaudit:init`, behind explicit user approval that discloses the
+`.gitignore` write, may run it.** graphify's `graphify-out/<date>/` backup accumulation and
+CocoIndex's machine-global embedding-provider dimension-mismatch risk are disk-/environment-hygiene
+notes, not defects this pass fixes. graphify and CocoIndex candidates only ever occupy residual cap
+slots in strict priority order `mapped` ≥ `heuristic` ≥ `graphify` ≥ `semantic` and never evict an
+existing entry (Issue #8 anti-regression).

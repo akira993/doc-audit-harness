@@ -53,6 +53,7 @@ const mdqAvailable = a.mdqAvailable === true || a.mdqAvailable === 'true'
 const mdqHealthy = a.mdqHealthy === true || a.mdqHealthy === 'true'
 const cmAvailable = a.cmAvailable === true || a.cmAvailable === 'true'
 const axAvailable = a.axAvailable === true || a.axAvailable === 'true'
+const symbolGraphAvailable = a.symbolGraphAvailable === true || a.symbolGraphAvailable === 'true'
 // No hardcoded --db: mdq resolves its own default DB relative to the CWD (new mdq:
 // .mdq/index-<lang>-<strategy>.sqlite, old mdq: .mdq/index.sqlite), so running from
 // repoRoot reads the SAME DB the Phase-0 indexer wrote (which also cd's to the root).
@@ -81,6 +82,18 @@ const axNote = axAvailable
     '— report it as such and do NOT treat it as FAIL evidence on its own.'
   : ''
 
+const symbolGraphNote = symbolGraphAvailable
+  ? ' If the doc\'s claim depends on THIS CHANGED FILE\'S OWN symbols (e.g. a call graph or ' +
+    'impact-radius claim), you MAY corroborate it with codegraph: `codegraph impact <symbol> ' +
+    '--json` — filter the returned `affected[]` array to entries whose `filePath` matches the ' +
+    'changed file before using it (codegraph has no path-scoping flag, so unfiltered results mix ' +
+    'in unrelated same-named symbols from other files); or `codegraph node <symbol> -f ' +
+    '<changed-file>` (text output, no `--json` — `-f` disambiguates directly, no filtering ' +
+    'needed). Never `codegraph affected` (import-based; confirmed empty on subprocess-driven ' +
+    'test styles like this repo\'s). A failed or empty codegraph result is not FAIL evidence on ' +
+    'its own.'
+  : ''
+
 phase('Verify')
 
 const slug = (p) => p.replace(/[/\\]/g, '__')
@@ -94,14 +107,14 @@ CHANGED SOURCE (since last audit):
 ${changeSummary}
 
 TASK: Decide whether the doc at "${d.path}" (provenance: ${d.provenance}) still
-ACCURATELY describes the changed source above. ${readInstruction(d.path)}${cmNote}${axNote} Report-only on the DOC — do NOT edit the doc.
+ACCURATELY describes the changed source above. ${readInstruction(d.path)}${cmNote}${axNote}${symbolGraphNote} Report-only on the DOC — do NOT edit the doc.
 
 Emit exactly one verdict:
 - FAIL: the doc now states something contradicted by the change (must fix).
 - WARN: the doc is plausibly stale or under-specified given the change (should review).
 - PASS: the doc is unaffected or already consistent.
-Provenance "heuristic" is an impactMap-gap candidate, not a known coupling: do not
-FAIL it without a cited contradiction, but still emit WARN whenever you can name a
+Provenance "heuristic", "graphify", or "semantic" is an impactMap-gap candidate, not a known
+coupling: do not FAIL it without a cited contradiction, but still emit WARN whenever you can name a
 concrete staleness signal — do not downgrade a citable WARN to PASS.
 Give a one-sentence rationale citing file:line, and a suggestion when FAIL/WARN.
 
