@@ -21,6 +21,7 @@ live here; the plugin ships no project knowledge.
 | `indexing` | object | no | `{enabled:bool=true, tool:string="mdq", bin:string="mdq", roots:string[]?}` — Phase-0 mdq preflight; `roots` overrides index roots (default: whole repo `.`, since mdq's own default roots miss `README.md`/`skills`/`agents`); `enabled:false` opts out even when mdq is installed (conditional-force) |
 | `contextMode` | object | no | `{enabled:bool=true}` — Phase-0 context-mode probe (by `ctx_*` tool availability + `ctx_doctor`); when context-mode is installed, large outputs (git diff, reviews) are processed in its sandbox instead of read in full. `enabled:false` opts out even when installed (conditional-force). No `bin`/`roots`/CLI — context-mode is a location-independent global plugin |
 | `webExtract` | object | no | `{enabled:bool=true, tool:string="ax", bin:string="ax"}` — Phase-0 `ax` CLI preflight; when `ax` is installed, doc-impact-verifier may corroborate a doc's external-URL-dependent claim by fetching it (read-only, GET-only). `enabled:false` opts out even when `ax` is installed (conditional-force) |
+| `codexReview` | object | no | `{enabled:bool=true, bin:string="codex", model?:string, timeoutMs?:number=300000}` — Phase-0 `codex` CLI preflight; when `codex` is installed, Phase 4 runs a fourth, adversarial review via plain `codex exec` and its `critical`/`high` findings CAN block the verdict (the one exception among the probe-style seams — see below). `enabled:false` opts out even when `codex` is installed (conditional-force) |
 
 `impacts` entries MUST be doc paths only; put commentary in `note`. `changed`
 accepts a single path or a glob.
@@ -74,6 +75,34 @@ tool-independent. `ax` is a **static HTML parser** (no JS rendering — SPA cont
 to it) and is **pre-1.0** (`v0.1.x`), so its flag surface may change; the probe's `axVersion`
 field is the hook for re-verifying after an upgrade. `tool` is reserved for future
 multi-backend support; the runtime currently reads only `bin` and `enabled`.
+
+## Codex review (Phase 0/4)
+
+`codexReview` is optional and conditional-force, mirroring `webExtract`'s shape but for the
+`codex` CLI (`@openai/codex` npm package) — the fourth, adversarial review in Phase 4, run
+after `/code-review` and `/security-review`. Only the `codex` CLI itself is required; the
+openai-codex Claude Code plugin is not a dependency (its `/codex:review` slash command ships
+`disable-model-invocation: true` and cannot be invoked autonomously — see the design spec §3
+for the full rationale). With `codex` on `PATH` (or `bin` pointed at a vendored binary), Phase 0
+detects it and Phase 4 — when `mode=incremental` with a valid Phase-1 `baselineSha` — runs plain
+`codex exec` (never the `review` subcommand, which silently ignores `--output-schema`; never
+`--base`, which is mutually exclusive with a custom prompt at the CLI level) with the review
+scope embedded in the prompt text as an explicit "review the diff between `$BASELINE_SHA` and
+HEAD" instruction — never the working tree, never `--uncommitted` — plus adversarial framing and
+structured JSON forced via `--output-schema`. Before every `codex exec` call, docaudit runs the
+mandatory `git rev-parse --verify "$BASELINE_SHA^{commit}"` pre-flight (codex itself exits 0 and
+silently self-falls-back on an invalid ref, so this check is the only thing that catches a
+corrupted `baselineSha`), and every call carries the mandatory, non-configurable `-s read-only`
+flag (the default sandbox was observed writing files during real-machine smoke testing).
+`mode=full` (no anchor, no `baselineSha`) skips the review entirely — an unbounded full-corpus
+review is impractical — reported as a non-blocking "skipped (full run)" Phase-5 status line
+state. A non-zero exit, timeout (`codexReview.timeoutMs`, default 300000ms), or schema-mismatched
+result is WARN, never a FAIL basis by itself. **Verdict-participation exception:** unlike
+`indexing`/`contextMode`/`webExtract`, a *completed* codex-review run's `critical`/`high`
+findings DO fold into `phase4.json` as blocking (same rule as `/code-review`'s own
+high-severity findings; `medium`/`low` are non-blocking) — see the design spec §5.4 for the
+full severity mapping. When `codex` is absent or `codexReview.enabled` is `false`, Phase 4
+silently does nothing (no WARN, like `webExtract`) — the harness stays tool-independent.
 
 ## Generic fallback layers
 

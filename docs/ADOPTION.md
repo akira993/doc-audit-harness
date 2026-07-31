@@ -80,6 +80,7 @@ Key properties to internalize:
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 whole-repo index + Phase 3 chunked doc reads (~90%+ savings on large docs; upstream bench 97–99%) | optional — auto-used when present (conditional-force); grep when absent |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 git diff + Phase 4 `/code-review`·`/security-review` output processed in its sandbox (only distilled summaries enter context) | optional — auto-used when its `ctx_*` tools are present (conditional-force); read in full when absent |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: lets doc-impact-verifier corroborate a doc's external-URL-dependent claims via a read-only, GET-only fetch (static HTML only — no JS-rendered SPA support) | optional — auto-used when installed (conditional-force); external-URL claims go unverified when absent |
+| [`codex`](https://github.com/openai/codex) (`@openai/codex` CLI) | Phase 4: a fourth, adversarial review via plain `codex exec -s read-only`, scoped to `$BASELINE_SHA..HEAD` in the prompt text | optional — auto-used when installed (conditional-force); **its `critical`/`high` findings CAN block the verdict when the run completes** — see below |
 | [CocoIndex](https://github.com/cocoindex-io/cocoindex) / [Serena](https://github.com/oraios/serena) (MCP) | richer code↔doc discovery during `init` | optional — falls back to grep/heuristic |
 | Project doc tools (`/check-docs`, `doc-lint`, …) | richer Phase-4 layers via delegation | optional — generic fallback otherwise |
 | [`skill-creator`](https://github.com/anthropics/skills) / [`superpowers:writing-skills`](https://github.com/obra/superpowers) | author & tailor the `--scaffold` layer skills | optional — only for `/docaudit:init --scaffold` |
@@ -111,6 +112,23 @@ unavailable" rather than counted as a FAIL. `ax` is a static HTML parser (no JS 
 is pre-1.0, so treat its flag surface as subject to change. Every audit prints a non-blocking
 **ax status line** immediately after the context-mode one: 💡 when not active (with an install
 hint), ✓ when active — it never changes the verdict.
+
+`codex` (the CLI, `@openai/codex` npm package — **not** the openai-codex Claude Code plugin,
+which cannot be invoked autonomously) is Phase 4's fourth review, run after `/code-review` and
+`/security-review`. It is conditional-force the same way (auto-used when installed; opt out
+with `"codexReview": {"enabled": false}`), but it is **the one exception** to every other
+seam in this document: when `codex` is available, the baseline ref validates
+(`git rev-parse --verify`), and the run completes, its `critical`/`high` findings fold into
+`phase4.json` as **blocking**, exactly like `/code-review`'s own high-severity findings
+(`medium`/`low` are non-blocking). Every `codex exec` call carries the mandatory,
+non-configurable `-s read-only` flag and reviews only the audited change set
+(`$BASELINE_SHA..HEAD`, embedded in the prompt text — never the working tree, never a
+`--base` flag). A `mode=full` run (no baseline) skips the review outright (unbounded scope);
+a timeout, non-zero exit, or schema-mismatched result is WARN, never a FAIL basis by itself.
+Every audit prints a **3-state, non-blocking codex-review status line** immediately after the
+ax one: 💡 when not active, 💡 "skipped (full run)" when `mode=full`, ✓ "active (findings
+included in verdict when present)" otherwise — the line itself never blocks, but says plainly
+that the findings it summarizes may already have.
 
 ---
 

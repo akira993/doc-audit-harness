@@ -79,6 +79,7 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 で repo 全体を索引 + Phase 3 でチャンク読取り（大きい doc で ~90%+ 削減、upstream ベンチ 97–99%） | 任意 — 在れば自動使用（conditional-force）、非搭載で grep |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 の git diff と Phase 4 の `/code-review`・`/security-review` 出力をサンドボックスで処理（要約だけが context に入る） | 任意 — `ctx_*` ツールが在れば自動使用（conditional-force）、無ければ全文読取り |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: doc-impact-verifier がドキュメントの外部 URL 依存の主張を read-only・GET-only の fetch で照合できるようにする（静的 HTML のみ — JS レンダリングの SPA は非対応） | 任意 — 導入済みなら自動使用（conditional-force）、無ければ外部 URL の主張は未検証のまま |
+| [`codex`](https://github.com/openai/codex)（`@openai/codex` CLI） | Phase 4: 無印 `codex exec -s read-only` による第4の敵対的レビュー。範囲はプロンプト内で `$BASELINE_SHA..HEAD` に固定 | 任意 — 導入済みなら自動使用（conditional-force）、**完走時の `critical`/`high` 所見は verdict をブロックし得る**（下記参照） |
 | [CocoIndex](https://github.com/cocoindex-io/cocoindex) / [Serena](https://github.com/oraios/serena) (MCP) | `init` 時の code↔doc 発見をリッチ化 | 任意 — grep/heuristic に fallback |
 | プロジェクトのドキュメントツール（`/check-docs`, `doc-lint` …） | 委譲で Phase 4 をリッチ化 | 任意 — 無ければ generic fallback |
 | [`skill-creator`](https://github.com/anthropics/skills) / [`superpowers:writing-skills`](https://github.com/obra/superpowers) | `--scaffold` のレイヤスキルの生成・作り込み | 任意 — `/docaudit:init --scaffold` 使用時のみ |
@@ -96,6 +97,23 @@ FAIL ではなく「外部照合不能 (external check unavailable)」として�
 パーサー（JS レンダリング非対応）であり pre-1.0 のため、フラグ面は変更されうる。各 audit は
 context-mode 行の直後に非ブロッキングの **ax 状態行**を出力する: 未導入なら 💡（導入コマンド
 付き）、稼働なら ✓（verdict は変えない）。
+
+`codex`（CLI 本体、`@openai/codex` npm パッケージ — 自律実行から呼び出せない openai-codex
+Claude Code plugin とは**別物**）は Phase 4 の第4のレビューで、`/code-review`・`/security-review`
+の後に走る。他の任意項目と同じく conditional-force（導入済みなら自動使用、
+`"codexReview": {"enabled": false}` で opt-out 可）だが、**本ドキュメントの他のすべての seam に
+対する唯一の例外**である: `codex` が導入済みで、baseline ref が検証を通り（`git rev-parse
+--verify`）、実行が完走した場合、その `critical`/`high` 所見は `/code-review` 自身の
+high-severity 所見と同じ規則で `phase4.json` に**ブロッキングとして**取り込まれる
+（`medium`/`low` は非ブロッキング）。すべての `codex exec` 呼び出しは必須・変更不可の
+`-s read-only` フラグを持ち、レビュー対象は監査対象の変更集合のみ（`$BASELINE_SHA..HEAD`、
+プロンプト本文に埋め込み — working tree ではなく、`--base` フラグでもない）。`mode=full`
+（baseline 無し）の場合はレビュー自体を skip する（範囲が非有界なため）。タイムアウト・
+非ゼロ終了・schema 不一致の出力は WARN のみで、それ単独では FAIL の根拠にしない。各 audit は
+ax 行の直後に **3状態・非ブロッキングの codex-review 状態行**を出力する: 未導入なら 💡、
+`mode=full` なら 💡「skipped (full run)」、それ以外は ✓「active (findings included in
+verdict when present)」 — 行自体は verdict をブロックしないが、その行が要約する所見は既に
+verdict に寄与している場合がある旨を明記する。
 
 ---
 
