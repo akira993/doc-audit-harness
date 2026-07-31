@@ -6,6 +6,7 @@
   "indexing": { "enabled": true, "tool": "mdq", "bin": "mdq" },
   "contextMode": { "enabled": true },
   "webExtract": { "enabled": true, "tool": "ax", "bin": "ax" },
+  "codexReview": { "enabled": true, "bin": "codex" },
   "indexFiles": ["docs/README.md"],
   "maxImpactedDocs": 80,
   "heuristics": { "minIdentifierLength": 6, "excludeBasenames": ["index.md", "config.json"] },

@@ -27,7 +27,9 @@ propose an `indexing` block in Step 2. Likewise, check whether the `ctx_*` MCP t
 NOT by globbing `~/.claude` plugin paths (never bake machine-specific globals into the
 config). If available, propose a `contextMode` block in Step 2. Also run `command -v ax`:
 if present, doc-impact-verifier can corroborate external-URL-dependent doc claims (read-
-only) — propose a `webExtract` block in Step 2.
+only) — propose a `webExtract` block in Step 2. Also run `command -v codex`: if present,
+Phase 4 can run a fourth, adversarial Codex review whose `critical`/`high` findings CAN
+affect the verdict — propose a `codexReview` block in Step 2.
 
 ## Step 2 — draft the config
 Build a `doc-audit.json` draft from the inventory:
@@ -50,6 +52,13 @@ Build a `doc-audit.json` draft from the inventory:
   corroborate a doc's external-URL-dependent claims (read-only, GET-only); tell the user
   `enabled:false` opts out. If `ax` was NOT detected, OMIT the key — the audit already runs
   without external-URL corroboration by default (conditional-force, like `indexing`).
+- `codexReview`: if `codex` was detected in Step 1, propose
+  `"codexReview": { "enabled": true, "bin": "codex" }` so Phase 4 runs a fourth, adversarial
+  Codex review after `/code-review`/`/security-review`; tell the user its `critical`/`high`
+  findings CAN affect the verdict (unlike `webExtract`/`indexing`/`contextMode`, which are
+  purely advisory) and `enabled:false` opts out. If `codex` was NOT detected, OMIT the key —
+  the audit already runs without the Codex review by default (conditional-force, like
+  `indexing`).
 - `reviewCommands`: `{code:"/code-review high", security:"/security-review"}`.
   `reportPath`: `docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md` (or repo-root if no docs/logs).
   `maxImpactedDocs`: 60.
