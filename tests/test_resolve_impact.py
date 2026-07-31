@@ -139,6 +139,45 @@ class TestResolveImpact(unittest.TestCase):
                   self.base_config(docGlobs=["**/*.md"]), self.repo)
         self.assertNotIn("node_modules/pkg/doc.md", [d["path"] for d in out["impacted"]])
 
+    def test_linked_worktree_pruned_from_corpus(self):
+        # A linked git worktree (e.g. .claude/worktrees/<feature>/) has a `.git`
+        # FILE (a `gitdir: ...` pointer), not a directory, so the name-based
+        # `skip` set can't catch it. Its docs must not be double-counted.
+        wtdir = os.path.join(self.repo, ".claude", "worktrees", "feature", "docs")
+        os.makedirs(wtdir, exist_ok=True)
+        with open(os.path.join(self.repo, ".claude", "worktrees", "feature", ".git"),
+                   "w", encoding="utf-8") as f:
+            f.write("gitdir: /some/parent/.git/worktrees/feature\n")
+        with open(os.path.join(wtdir, "dup.md"), "w", encoding="utf-8") as f:
+            f.write("placeholder\n")
+        out = run(["apps/nc_proto/css/variables.css"],
+                  self.base_config(docGlobs=["**/*.md"]), self.repo)
+        paths = [d["path"] for d in out["impacted"]]
+        self.assertNotIn(".claude/worktrees/feature/docs/dup.md", paths)
+
+    def test_nested_clone_pruned_from_corpus(self):
+        # A nested full clone/submodule has a real `.git` DIRECTORY. It must be
+        # pruned the same way as a linked worktree's `.git` file.
+        clonedir = os.path.join(self.repo, "vendor", "sub", "docs")
+        os.makedirs(clonedir, exist_ok=True)
+        os.makedirs(os.path.join(self.repo, "vendor", "sub", ".git"), exist_ok=True)
+        with open(os.path.join(clonedir, "dup.md"), "w", encoding="utf-8") as f:
+            f.write("placeholder\n")
+        out = run(["apps/nc_proto/css/variables.css"],
+                  self.base_config(docGlobs=["**/*.md"]), self.repo)
+        paths = [d["path"] for d in out["impacted"]]
+        self.assertNotIn("vendor/sub/docs/dup.md", paths)
+
+    def test_root_docs_included_even_when_root_has_git_dir(self):
+        # The walk root itself commonly has a real .git directory (it's the repo
+        # being audited). Pruning must only apply to subdirs walked INTO, never
+        # exclude the root's own direct docs.
+        os.makedirs(os.path.join(self.repo, ".git"), exist_ok=True)
+        out = run(["apps/nc_proto/css/variables.css"], self.base_config(), self.repo)
+        paths = [d["path"] for d in out["impacted"]]
+        self.assertIn("docs/wcag.md", paths)
+        self.assertIn("DESIGN.md", paths)
+
 
 if __name__ == "__main__":
     unittest.main()
