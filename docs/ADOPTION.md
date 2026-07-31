@@ -81,7 +81,10 @@ Key properties to internalize:
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 git diff + Phase 4 `/code-review`·`/security-review` output processed in its sandbox (only distilled summaries enter context) | optional — auto-used when its `ctx_*` tools are present (conditional-force); read in full when absent |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: lets doc-impact-verifier corroborate a doc's external-URL-dependent claims via a read-only, GET-only fetch (static HTML only — no JS-rendered SPA support) | optional — auto-used when installed (conditional-force); external-URL claims go unverified when absent |
 | [`codex`](https://github.com/openai/codex) (`@openai/codex` CLI) | Phase 4: a fourth, adversarial review via plain `codex exec -s read-only`, scoped to `$BASELINE_SHA..HEAD` in the prompt text | optional — auto-used when installed (conditional-force); **its `critical`/`high` findings CAN block the verdict when the run completes** — see below |
-| [CocoIndex](https://github.com/cocoindex-io/cocoindex) / [Serena](https://github.com/oraios/serena) (MCP) | richer code↔doc discovery during `init` | optional — falls back to grep/heuristic |
+| [`codegraph`](https://github.com/colbymchenry/codegraph) | Phase 3: lets doc-impact-verifier corroborate a doc claim that depends on a changed file's own symbols via read-only `codegraph impact`/`node` | optional — auto-used when installed (conditional-force); purely advisory, like `ax` |
+| [`graphify`](https://github.com/Graphify-Labs/graphify) | Phase 2: a second, independent candidate source for `mapGapCandidates` via graph adjacency (provenance `graphify`) | optional — auto-used when installed (conditional-force); `mapGapCandidates` uses the token heuristic only when absent |
+| [CocoIndex](https://github.com/cocoindex-io/cocoindex-code) (`ccc`) | Phase 2: a third, independent candidate source for `mapGapCandidates` via local-embedding semantic search (provenance `semantic`) | optional — auto-used when installed AND already `ccc init`-ed (conditional-force); **docaudit itself never runs `ccc init`** — see below |
+| [Serena](https://github.com/oraios/serena) (MCP) | richer code↔doc discovery during `init` | optional — falls back to grep/heuristic |
 | Project doc tools (`/check-docs`, `doc-lint`, …) | richer Phase-4 layers via delegation | optional — generic fallback otherwise |
 | [`skill-creator`](https://github.com/anthropics/skills) / [`superpowers:writing-skills`](https://github.com/obra/superpowers) | author & tailor the `--scaffold` layer skills | optional — only for `/docaudit:init --scaffold` |
 
@@ -129,6 +132,42 @@ Every audit prints a **3-state, non-blocking codex-review status line** immediat
 ax one: 💡 when not active, 💡 "skipped (full run)" when `mode=full`, ✓ "active (findings
 included in verdict when present)" otherwise — the line itself never blocks, but says plainly
 that the findings it summarizes may already have.
+
+`codegraph`, `graphify`, and CocoIndex (`ccc`) are three further, purely-advisory seams — **none of
+them ever affects the verdict**, unlike `codex`. `codegraph` is symbol-level and Phase 3-only: it
+lets `doc-impact-verifier` corroborate a doc claim that depends on a *changed file's own* symbols
+(`codegraph impact <symbol> --json`, post-filtered by `filePath` since the subcommand has no
+path-scoping flag; or `codegraph node <symbol> -f <changed-file>`, text output disambiguated
+directly via `-f`) — never `codegraph affected`, which is import-based and confirmed empty on
+subprocess-driven test-style repos like this one. It is conditional-force the same way (auto-used
+when installed; opt out with `"symbolGraph": {"enabled": false}`); its Phase-0 probe keeps
+`.codegraph/` fresh every run (`init` the first time, `sync` thereafter — a bare `init` against an
+already-initialized `.codegraph/` is rejected).
+
+`graphify` and CocoIndex are Phase 2-only and both feed the SAME integration point —
+`mapGapCandidates`, alongside the existing token heuristic — via one shared script
+(`impact-supplement.py`), each as an independent, optional source: `graphify` via graph adjacency
+(provenance `graphify`, parsed from `graphify affected`/`graphify query --budget`'s confirmed
+fixed-format TEXT output — neither has `--json`), CocoIndex via local-embedding semantic search
+(provenance `semantic`, from `ccc search --json`, admitted only when `score >= minScore`, default
+`0.4` — `ccc search` has **no built-in relevance cutoff**, confirmed: irrelevant queries still
+return `limit` results, just at a visibly lower score band). Both are conditional-force
+(`"docGraph": {"enabled": false}` / `"semanticSearch": {"enabled": false}`) and both merge into
+`mapGapCandidates` using ONLY the residual slots left after `resolve-impact.py`'s own cap, in strict
+priority `mapped` ≥ `heuristic` ≥ `graphify` ≥ `semantic` — neither ever displaces an existing
+candidate (Issue #8 anti-regression). **The one rule that matters most for CocoIndex: docaudit
+itself NEVER runs `ccc init`** — `ccc init` auto-appends `/.cocoindex_code/` to the repo's
+`.gitignore` (confirmed real side effect), a write the report-only audit phase must not trigger
+mid-run, so an absent `.cocoindex_code/` is its own silent `not-initialized` degrade state, distinct
+from "not installed"; initialization only happens inside `/docaudit:init`, behind explicit user
+approval that discloses the `.gitignore` write.
+
+Every audit prints three further non-blocking status lines immediately after the codex-review one:
+**symbol-graph** (💡 not active / ✓ active / ⚠ index build failed), **doc-graph** (💡 not active /
+✓ active + `graphify-out/` gitignored / ⚠ active but `graphify-out/` NOT gitignored — add it), and
+**semanticSearch** (💡 not active-not-installed / 💡 not active-not-initialized, with a
+`/docaudit:init` hint / ✓ active, naming the configured `minScore` / ⚠ index update failed) — none
+of the three ever changes the verdict.
 
 ---
 

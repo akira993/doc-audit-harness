@@ -29,7 +29,16 @@ config). If available, propose a `contextMode` block in Step 2. Also run `comman
 if present, doc-impact-verifier can corroborate external-URL-dependent doc claims (read-
 only) — propose a `webExtract` block in Step 2. Also run `command -v codex`: if present,
 Phase 4 can run a fourth, adversarial Codex review whose `critical`/`high` findings CAN
-affect the verdict — propose a `codexReview` block in Step 2.
+affect the verdict — propose a `codexReview` block in Step 2. Also run `command -v
+codegraph`: if present, doc-impact-verifier can corroborate a changed file's own-symbol
+claims (read-only) — propose a `symbolGraph` block in Step 2. Also run `command -v
+graphify`: if present, Phase 2 can supplement `mapGapCandidates` with graph-adjacency
+candidates — propose a `docGraph` block in Step 2; also check
+`(cd "$CLAUDE_PROJECT_DIR" && git check-ignore -q graphify-out)` to see whether
+`graphify-out/` is already gitignored. Also run `command -v ccc`: if present, Phase 2 can
+additionally supplement `mapGapCandidates` with semantic-search candidates — check
+whether `.cocoindex_code/` already exists in the repo (two different proposals in Step 2
+depending on the answer).
 
 ## Step 2 — draft the config
 Build a `doc-audit.json` draft from the inventory:
@@ -59,6 +68,28 @@ Build a `doc-audit.json` draft from the inventory:
   purely advisory) and `enabled:false` opts out. If `codex` was NOT detected, OMIT the key —
   the audit already runs without the Codex review by default (conditional-force, like
   `indexing`).
+- `symbolGraph`: if `codegraph` was detected in Step 1, propose
+  `"symbolGraph": { "enabled": true, "tool": "codegraph", "bin": "codegraph" }` so
+  doc-impact-verifier can corroborate a changed file's own-symbol claims via read-only
+  `codegraph impact`/`node`; tell the user `enabled:false` opts out. This seam is purely
+  advisory (never affects the verdict), like `webExtract`. If `codegraph` was NOT detected,
+  OMIT the key.
+- `docGraph`: if `graphify` was detected in Step 1, propose
+  `"docGraph": { "enabled": true, "tool": "graphify", "bin": "graphify" }` so Phase 2 can
+  supplement `mapGapCandidates` with graph-adjacency candidates; tell the user
+  `enabled:false` opts out. If `graphify-out/` was NOT already gitignored (Step 1's
+  `git check-ignore` check), also propose (with user approval) appending `graphify-out/` to
+  `.gitignore` — additive, within the existing init discipline. If `graphify` was NOT
+  detected, OMIT the key.
+- `semanticSearch`: if `ccc` was detected in Step 1 AND `.cocoindex_code/` already exists,
+  propose `"semanticSearch": { "enabled": true, "tool": "cocoindex", "bin": "ccc", "minScore":
+  0.4 }` directly (Phase 2 can supplement `mapGapCandidates` with semantic-search
+  candidates). If `ccc` was detected but `.cocoindex_code/` does NOT exist, propose running
+  `ccc init && ccc index` with **explicit user approval whose copy discloses that `ccc init`
+  will append `/.cocoindex_code/` to `.gitignore`** — the audit itself never runs `ccc init`
+  on its own; only after approval and successful execution does this flow propose the
+  `semanticSearch` block. If `ccc` was NOT detected at all, OMIT the key. This seam is purely
+  advisory (never affects the verdict), like `webExtract`/`docGraph`.
 - `reviewCommands`: `{code:"/code-review high", security:"/security-review"}`.
   `reportPath`: `docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md` (or repo-root if no docs/logs).
   `maxImpactedDocs`: 60.

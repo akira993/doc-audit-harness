@@ -22,6 +22,9 @@ live here; the plugin ships no project knowledge.
 | `contextMode` | object | no | `{enabled:bool=true}` — Phase-0 context-mode probe (by `ctx_*` tool availability + `ctx_doctor`); when context-mode is installed, large outputs (git diff, reviews) are processed in its sandbox instead of read in full. `enabled:false` opts out even when installed (conditional-force). No `bin`/`roots`/CLI — context-mode is a location-independent global plugin |
 | `webExtract` | object | no | `{enabled:bool=true, tool:string="ax", bin:string="ax"}` — Phase-0 `ax` CLI preflight; when `ax` is installed, doc-impact-verifier may corroborate a doc's external-URL-dependent claim by fetching it (read-only, GET-only). `enabled:false` opts out even when `ax` is installed (conditional-force) |
 | `codexReview` | object | no | `{enabled:bool=true, bin:string="codex", model?:string, timeoutMs?:number=300000}` — Phase-0 `codex` CLI preflight; when `codex` is installed, Phase 4 runs a fourth, adversarial review via plain `codex exec` and its `critical`/`high` findings CAN block the verdict (the one exception among the probe-style seams — see below). `enabled:false` opts out even when `codex` is installed (conditional-force) |
+| `symbolGraph` | object | no | `{enabled:bool=true, tool:string="codegraph", bin:string="codegraph"}` — Phase-0 `codegraph` CLI preflight; when installed, doc-impact-verifier may corroborate a doc claim that depends on a changed file's own symbols via read-only `codegraph impact`/`node`. Report-only, never affects the verdict. `enabled:false` opts out even when `codegraph` is installed (conditional-force) |
+| `docGraph` | object | no | `{enabled:bool=true, tool:string="graphify", bin:string="graphify"}` — Phase-0 `graphify` CLI preflight; when installed, Phase 2 supplements `mapGapCandidates` with graph-adjacency candidates (provenance `graphify`). Report-only, never affects the verdict. `enabled:false` opts out even when `graphify` is installed (conditional-force) |
+| `semanticSearch` | object | no | `{enabled:bool=true, tool:string="cocoindex", bin:string="ccc", minScore?:number=0.4}` — Phase-0 `ccc` (CocoIndex) CLI preflight; when installed AND already initialized (`.cocoindex_code/` present), Phase 2 supplements `mapGapCandidates` with semantic-search candidates (provenance `semantic`) scoring `>= minScore`. **The audit itself never runs `ccc init`** — an uninitialized repo degrades to `reason:not-initialized`, distinct from `not-installed`; initialize via `/docaudit:init` (user-approved, discloses the `.gitignore` write). Report-only, never affects the verdict. `enabled:false` opts out even when `ccc` is installed (conditional-force) |
 
 `impacts` entries MUST be doc paths only; put commentary in `note`. `changed`
 accepts a single path or a glob.
@@ -103,6 +106,68 @@ findings DO fold into `phase4.json` as blocking (same rule as `/code-review`'s o
 high-severity findings; `medium`/`low` are non-blocking) — see the design spec §5.4 for the
 full severity mapping. When `codex` is absent or `codexReview.enabled` is `false`, Phase 4
 silently does nothing (no WARN, like `webExtract`) — the harness stays tool-independent.
+
+## codegraph (symbolGraph, Phase 0/3)
+
+`symbolGraph` is optional and conditional-force, mirroring `webExtract`'s shape but for the
+`codegraph` CLI — a symbol graph (call graph, impact/node lookup). Its sole role in the audit is
+letting `doc-impact-verifier` corroborate a doc claim that depends on a *changed file's own*
+symbols, the symbol-level counterpart of ax's external-URL seam. With `codegraph` on `PATH` (or
+`bin` pointed at a vendored binary), Phase 0 keeps the index fresh every run: `.codegraph/` absent
+→ `codegraph init .` (first run only — a bare `init` against an existing `.codegraph/` is
+rejected, confirmed); `.codegraph/` present → `codegraph sync .` (confirmed idempotent). codegraph
+self-generates `.codegraph/.gitignore`, so the probe never touches `.gitignore` itself. Phase 3
+then passes the verifier a conditional instruction to use `codegraph impact <symbol> --json`
+(post-filtered by `filePath` — its `affected[]` has no path-scoping flag, confirmed) or
+`codegraph node <symbol> -f <changed-file>` (text output, `--json` does not exist on this
+subcommand, confirmed; `-f` disambiguates directly). `codegraph affected` is NEVER used
+(import-based; confirmed empty on subprocess-driven test-style repos). When `codegraph` is absent,
+`symbolGraph.enabled` is `false`, or the index build fails, symbol-level corroboration is silently
+unavailable — never a FAIL basis, and the audit stays tool-independent.
+
+## graphify (docGraph, Phase 0/2)
+
+`docGraph` is optional and conditional-force, for the `graphify` CLI — a unified code+doc graph.
+Its role is a second, independent candidate source for Phase 2's `mapGapCandidates` (provenance
+`graphify`), alongside the existing token heuristic — the first seam to integrate at the impact-
+resolution point itself, not Phase 3/4. With `graphify` on `PATH`, Phase 0 runs `graphify update .`
+unconditionally (confirmed LLM-free and diff-based/idempotent — safe every run), then checks
+whether `graphify-out/` is gitignored via `git check-ignore -q graphify-out` (graphify does NOT
+self-gitignore its output, unlike codegraph — a direct `.gitignore` read would miss global
+gitignore/`.git/info/exclude`/pattern-wording differences, so this is the confirmed method). Phase
+2's `impact-supplement.py` then runs `graphify affected "<changed-file>"` and, once per run,
+`graphify query "<changeSummary>" --budget 800` — both are confirmed fixed-format TEXT output
+(neither has `--json`), parsed by regex and doc-filtered (via `docGlobs`) before becoming a
+candidate. A `No unique node match` uniqueness error (confirmed, exit 0) degrades that call to zero
+candidates, not an error. **Side effect** (spec §6, not handled by this pass): a detected topology
+change makes `graphify update .` write a dated backup under `graphify-out/<date>/`, which
+accumulates over repeated runs — a disk-only concern when `graphify-out/` is gitignored. When
+`graphify` is absent or `docGraph.enabled` is `false`, `mapGapCandidates` uses the token heuristic
+only — never a FAIL basis, and the audit stays tool-independent.
+
+## CocoIndex (semanticSearch, Phase 0/2)
+
+`semanticSearch` is optional and conditional-force, for the `ccc` (CocoIndex) CLI — local-embedding
+semantic search. Its role is a third, independent candidate source for Phase 2's
+`mapGapCandidates` (provenance `semantic`), running alongside (not instead of) the graphify source
+— one finds candidates via graph adjacency, the other via semantic similarity. **The single most
+important rule for this seam: the audit itself NEVER runs `ccc init`.** `ccc init` auto-appends
+`/.cocoindex_code/` to the target repo's `.gitignore` (confirmed real side effect), a write the
+report-only audit phase must never trigger mid-run — so an absent `.cocoindex_code/` directory is
+its own terminal probe state, `reason:not-initialized`, distinct from `not-installed`. This is a
+silent, expected degrade (no WARN) until the user runs `/docaudit:init`, which proposes running
+`ccc init && ccc index` behind **explicit user approval that discloses the `.gitignore` write**.
+Only when `.cocoindex_code/` already exists does Phase 0 run `ccc index` (no path argument — it
+operates on the cwd only; confirmed `ccc index .` errors "unexpected extra argument(s)") to refresh (confirmed
+the heaviest of the three seams' Phase-0 costs, ~8.5s on this repo). Phase 2's
+`impact-supplement.py` then runs `ccc search "<changeSummary>" --json --limit 10` once: `ccc
+search` has **no built-in relevance cutoff** (confirmed — irrelevant queries still return `limit`
+results, just at a visibly lower score band), so every result's `score` MUST clear `minScore`
+(default `0.4`, a provisional value from this repo's own measurements — real hits landed at
+0.36-0.62, noise at 0.23-0.26) before doc-filtering (via `docGlobs`) and admitting it as a
+candidate. When `ccc` is absent, not yet initialized, or `semanticSearch.enabled` is `false`,
+`mapGapCandidates` simply gets no semantic-search source — never a FAIL basis, and the audit stays
+tool-independent.
 
 ## Generic fallback layers
 
