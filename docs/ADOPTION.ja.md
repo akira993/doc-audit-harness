@@ -7,7 +7,8 @@ docaudit ハーネスを一度インストールし、任意のリポジトリ�
 > 🌐 English version: [ADOPTION.md](ADOPTION.md)
 
 > **docaudit は report-only（報告専用）。** 変更内容を、それを説明するドキュメントへマッピング
-> し、検証し、`/code-review` + `/security-review` を駆動して、単一の
+> し、検証し、`/security-review` を実行し、`/code-review` はユーザー実行を提案して
+> （モデルからは起動できない）、単一の
 > **CONSISTENT / NEEDS FIX** verdict を出す — が、**あなたのドキュメントを編集することは一切
 > ない**。修正はすべてあなたの手で行う。ツールが書き込むのは自身の config（`init` 経由）、
 > 監査レポート、anchor 状態ファイルのみ。
@@ -51,7 +52,7 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | 1 | **Baseline + diff** — anchor を読み、それ以降の変更集合（merge-base diff + 未コミット + 未追跡）を `diffGlobs` で絞って算出。anchor が無ければ full モード。 | `compute-baseline.sh` |
 | 2 | **Impact resolution** — 変更ファイル → 影響ドキュメント（明示 `impactMap` ∪ heuristic）、`ssotSources` の再検証対象、`truncated` フラグを解決。 | `resolve-impact.py` |
 | 3 | **Change-impact verification** — 影響ドキュメント 1 件ごとに subagent が *「このドキュメントは変更後のソースとまだ整合しているか？」* を敵対的に検証（PASS/WARN/FAIL）。 | Workflow fan-out + `doc-impact-verifier` agent |
-| 4 | **既存レイヤ + reviews** — プロジェクト固有のドキュメントチェック（または組込み generic fallback）、boundary コマンド、続いて `/code-review` + `/security-review` を実行。 | 委譲コマンド / `generic-layers.py` |
+| 4 | **既存レイヤ + reviews** — プロジェクト固有のドキュメントチェック（または組込み generic fallback）、boundary コマンド、続いて `/security-review` を実行し、`/code-review` はモデルから起動できないためユーザー実行を提案。 | 委譲コマンド / `generic-layers.py` |
 | 5 | **Synthesize + anchor** — 単一 verdict に集約、レポートを書き、（CONSISTENT のときのみ）anchor を更新。 | `write-anchor.sh` |
 
 頭に入れておくべき性質:
@@ -75,7 +76,7 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | 監査ルートが **git リポジトリ** であること | エンジンは git で diff を取る | はい（subdir は §10 参照） |
 | [Python 3](https://www.python.org/)（標準ライブラリのみ） | エンジンのスクリプト。`pip install` 不要 | はい |
 | [`git`](https://git-scm.com/) | diff/anchor | はい |
-| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code 組込みの review スキル（Phase 4） | 任意 — 無ければ skip + WARN |
+| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code 組込みの review スキル（Phase 4）。`/security-review` は監査で実行し、`/code-review` はユーザー実行のみ | 任意 — `/security-review` は利用可能なら実行、`/code-review` はユーザーに提案（モデルからは起動不可） |
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 で repo 全体を索引 + Phase 3 でチャンク読取り（大きい doc で ~90%+ 削減、upstream ベンチ 97–99%） | 任意 — 在れば自動使用（conditional-force）、非搭載で grep |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 の git diff と Phase 4 の `/code-review`・`/security-review` 出力をサンドボックスで処理（要約だけが context に入る） | 任意 — `ctx_*` ツールが在れば自動使用（conditional-force）、無ければ全文読取り |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: doc-impact-verifier がドキュメントの外部 URL 依存の主張を read-only・GET-only の fetch で照合できるようにする（静的 HTML のみ — JS レンダリングの SPA は非対応） | 任意 — 導入済みなら自動使用（conditional-force）、無ければ外部 URL の主張は未検証のまま |
@@ -89,7 +90,9 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 
 エンジンは設計上 **MCP・サーバー非依存**。任意項目はどれも、有用な監査を得るのに必須ではない。なお `mdq` は導入済みなら自動でトークン最適化読取りに使われ（conditional-force）、無ければ grep に degrade する。各 audit は **mdq 状態行**を出力する: mdq 未導入なら 💡 導入を促し、導入済みなのに索引が未発火（`empty-index` / `search-broken` / `probe-error`）なら ⚠ 非ブロッキング WARN を出す。
 
-`context-mode` は mdq の競合ではなく**相補物**: **mdq は Markdown の*読み取り*を、context-mode は*大きな機械出力の処理*を安くする。** `ctx_*` ツールが在るとき、audit は Phase 1 の git diff と Phase 4 の `/code-review` + `/security-review` の出力を context-mode のサンドボックスで処理し、要約だけを取り出す — 生バイト列は context に入らない。同じく conditional-force（在れば自動使用、導入済みでも `"contextMode": {"enabled": false}` で opt-out）で、無ければ silent に degrade する。context-mode は場所非依存のグローバルプラグインなので、エンジン側に `bin`/`roots` は不要。各 audit は mdq 行の直後に非ブロッキングの **context-mode 状態行**を出力する: 未導入なら 💡、稼働なら ✓、導入済みだが不健全なら ⚠（verdict は変えない）。
+`context-mode` は mdq の競合ではなく**相補物**: **mdq は Markdown の*読み取り*を、context-mode は*大きな機械出力の処理*を安くする。** `ctx_*` ツールが在るとき、audit は Phase 1 の git diff と Phase 4 の `/security-review` の出力を context-mode のサンドボックスで処理し、要約だけを取り出す — 生バイト列は context に入らない。同じく conditional-force（在れば自動使用、導入済みでも `"contextMode": {"enabled": false}` で opt-out）で、無ければ silent に degrade する。context-mode は場所非依存のグローバルプラグインなので、エンジン側に `bin`/`roots` は不要。各 audit は mdq 行の直後に非ブロッキングの **context-mode 状態行**を出力する: 未導入なら 💡、稼働なら ✓、導入済みだが不健全なら ⚠（verdict は変えない）。
+
+自律実行では `/code-review` はモデルから起動できないため、ユーザーが実行する層として提案されます。対話実行では一度だけ実行を確認し、完了後に監査を続行できます。
 
 `ax` は mdq/context-mode の組とは無関係: read-only の Web/API 抽出 CLI で、docaudit での役割は
 **Phase 3 の `doc-impact-verifier` がドキュメントの外部 URL 依存の主張（upstream ドキュメント・

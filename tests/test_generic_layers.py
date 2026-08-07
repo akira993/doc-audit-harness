@@ -184,6 +184,45 @@ class TestPlan2Fixes(unittest.TestCase):
         out = run(self.repo, "semantic", paths=["docs/a.md"])  # README excluded from --paths scope
         self.assertFalse(any(f["path"] == "docs/a.md" for f in out["findings"]))
 
+    def test_index_outside_docglobs_resolves_orphan_full_scan(self):
+        write(self.repo, "index.txt", "[target](docs/target.md)\n")
+        write(self.repo, "docs/target.md", "linked from external index\n")
+        out = run(self.repo, "semantic", config={"docGlobs": ["docs/**/*.md"],
+                                                   "indexFiles": ["./index.txt"]})
+        self.assertFalse(any(f["path"] == "docs/target.md" for f in out["findings"]))
+
+    def test_index_outside_docglobs_resolves_orphan_incremental_stdin(self):
+        write(self.repo, "index.txt", "[target](docs/target.md)\n")
+        write(self.repo, "docs/target.md", "linked from external index\n")
+        out = run(self.repo, "semantic", config={"docGlobs": ["docs/**/*.md"],
+                                                   "indexFiles": ["./index.txt"]},
+                  paths=["docs/target.md"])
+        self.assertFalse(any(f["path"] == "docs/target.md" for f in out["findings"]))
+
+    def test_invalid_index_files_warn_and_are_excluded(self):
+        os.makedirs(os.path.join(self.repo, "indexes"), exist_ok=True)
+        entries = ["missing.md", "../outside.md", os.path.join(self.repo, "absolute.md"), "indexes"]
+        write(self.repo, "docs/target.md", "target\n")
+        out = run(self.repo, "semantic", config={"docGlobs": ["docs/**/*.md"],
+                                                   "indexFiles": entries})
+        warns = [f for f in out["findings"] if f["severity"] == "WARN" and f["message"].startswith("indexFiles")]
+        self.assertEqual(len(warns), 4)
+        self.assertTrue(any("does not exist" in f["message"] for f in warns))
+        self.assertTrue(any("outside the repository" in f["message"] for f in warns))
+        self.assertTrue(any("regular file" in f["message"] for f in warns))
+
+    def test_index_symlink_resolving_outside_repo_warns_and_does_not_rescue_orphan(self):
+        outside = tempfile.mkdtemp()
+        write(outside, "index.md", "[target](docs/target.md)\n")
+        os.symlink(os.path.join(outside, "index.md"), os.path.join(self.repo, "index-link.md"))
+        write(self.repo, "docs/target.md", "target\n")
+        out = run(self.repo, "semantic", config={"docGlobs": ["docs/**/*.md"],
+                                                   "indexFiles": ["index-link.md"]})
+        warns = [f for f in out["findings"] if f["path"] == "index-link.md"]
+        self.assertTrue(any("resolves outside the repository" in f["message"] for f in warns))
+        self.assertTrue(any(f["path"] == "docs/target.md" and f["message"].startswith("orphan:")
+                            for f in out["findings"]))
+
     def test_hyphenated_frontmatter_field_found(self):
         write(self.repo, "docs/a.md", "---\nx-custom: y\n---\nbody\n")
         out = run(self.repo, "format", config={"docGlobs": ["docs/**/*.md", "*.md"],
