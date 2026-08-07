@@ -8,7 +8,8 @@ from real-world use.
 > 🌐 日本語版: [ADOPTION.ja.md](ADOPTION.ja.md)
 
 > **docaudit is report-only.** It maps what changed to the docs that describe it,
-> verifies them, drives `/code-review` + `/security-review`, and emits one
+> verifies them, runs `/security-review`, offers `/code-review` for the user to run
+> (it is not model-invocable), and emits one
 > **CONSISTENT / NEEDS FIX** verdict — but it **never edits your docs**. Every fix is
 > yours to make. The only thing it writes is its own config (via `init`), its audit
 > report, and the anchor state file.
@@ -52,7 +53,7 @@ running five phases on each audit:
 | 1 | **Baseline + diff** — read the anchor, compute the change set since it (merge-base diff + uncommitted + untracked), filtered by `diffGlobs`. No anchor ⇒ full mode. | `compute-baseline.sh` |
 | 2 | **Impact resolution** — map changed files → impacted docs (explicit `impactMap` ∪ heuristic), plus `ssotSources` to re-verify, plus a `truncated` flag. | `resolve-impact.py` |
 | 3 | **Change-impact verification** — one subagent per impacted doc adversarially checks *"does this doc still match the changed source?"* (PASS/WARN/FAIL). | Workflow fan-out + `doc-impact-verifier` agent |
-| 4 | **Existing layers + reviews** — run your project's doc checks (or the built-in generic fallback), the boundary command, then `/code-review` + `/security-review`. | delegated commands / `generic-layers.py` |
+| 4 | **Existing layers + reviews** — run your project's doc checks (or the built-in generic fallback), the boundary command, then `/security-review`; offer `/code-review` for the user to run because it is not model-invocable. | delegated commands / `generic-layers.py` |
 | 5 | **Synthesize + anchor** — roll up to one verdict, write the report, and (only if CONSISTENT) update the anchor. | `write-anchor.sh` |
 
 Key properties to internalize:
@@ -76,7 +77,7 @@ Key properties to internalize:
 | A **git repository** at the audit root | the engine diffs with git | yes (see §10 for sub-dirs) |
 | [Python 3](https://www.python.org/) (standard library only) | the engine scripts; no `pip install` needed | yes |
 | [`git`](https://git-scm.com/) | diff/anchor | yes |
-| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code built-in review skills (Phase 4) | optional — skipped + WARNed if absent |
+| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code built-in review skills (Phase 4); `/security-review` runs in the audit, while `/code-review` is user-invocation-only | optional — `/security-review` runs when available; `/code-review` is offered to the user and is not model-invocable |
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 whole-repo index + Phase 3 chunked doc reads (~90%+ savings on large docs; upstream bench 97–99%) | optional — auto-used when present (conditional-force); grep when absent |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 git diff + Phase 4 `/code-review`·`/security-review` output processed in its sandbox (only distilled summaries enter context) | optional — auto-used when its `ctx_*` tools are present (conditional-force); read in full when absent |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: lets doc-impact-verifier corroborate a doc's external-URL-dependent claims via a read-only, GET-only fetch (static HTML only — no JS-rendered SPA support) | optional — auto-used when installed (conditional-force); external-URL claims go unverified when absent |
@@ -97,8 +98,10 @@ Every audit prints an **mdq status line**: a 💡 install nudge when mdq is abse
 
 `context-mode` is mdq's complement, not a competitor: **mdq optimizes Markdown *reads*,
 context-mode optimizes the *processing of large machine output*.** When its `ctx_*` tools are
-present, the audit runs the Phase-1 git diff and the Phase-4 `/code-review` + `/security-review`
-results through context-mode's sandbox and pulls back only distilled summaries — the raw bytes
+present, the audit runs the Phase-1 git diff and the Phase-4 `/security-review`; `/code-review`
+is offered to the user because it is not model-invocable during autonomous runs. Interactive
+runs ask once whether to run it before continuing. The resulting review output flows
+through context-mode's sandbox and pulls back only distilled summaries — the raw bytes
 never enter context. It is conditional-force the same way (auto-used when available; opt out with
 `"contextMode": {"enabled": false}` even when installed) and degrades silently when absent — the
 engine needs no `bin`/`roots` for it because context-mode is a location-independent global plugin.

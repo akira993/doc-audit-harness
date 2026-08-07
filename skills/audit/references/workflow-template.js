@@ -1,13 +1,50 @@
 // docaudit phase-3: change-impact verification fan-out.
-// Launch with Workflow({scriptPath: "<this file>", args: {repoRoot, changeSummary, impacted:[{path,provenance}], runId, runDir}})
+// Launch with Workflow({scriptPath: "<this file>", args: {repoRoot, changeSummary, impacted:[{path,provenance}], runId, runDir, scriptsDir}})
 // Each verifier subagent ALSO persists its runid-stamped verdict to
 // `${runDir}/verdicts/<slug>.json` so the deterministic gate (decide-verdict.py)
 // reads verdicts authored by the harness-spawned subagent, not relayed prose.
+
 export const meta = {
   name: 'docaudit-impact-verify',
   description: 'Verify each impacted doc still matches the changed source (PASS/WARN/FAIL)',
   phases: [{ title: 'Verify' }],
 }
+
+// BEGIN PERSIST HELPERS
+function fnv1a(value, offsetBasis) {
+  let hash = offsetBasis >>> 0
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(16).padStart(8, '0')
+}
+
+function shellEscape(value) {
+  return "'" + String(value).replace(/'/g, "'\"'\"'") + "'"
+}
+
+function slug(path) {
+  const encoded = String(path).replace(/_/g, '_5f').replace(/[/\\]/g, '__')
+  if (encoded.length <= 200) return encoded
+
+  const digest = fnv1a(encoded, 0x811c9dc5) + fnv1a(encoded, 0x9e3779b9)
+  return encoded.slice(0, 200 - digest.length - 1) + '_' + digest
+}
+
+function buildPersistCmd(scriptsDir, runDir, runId, docPath) {
+  const script = `${scriptsDir}/write-verdict.py`
+  const out = `${runDir}/verdicts/${slug(docPath)}.json`
+  const delimiter = `DOCAUDIT_EOF_${runId}`
+  return [
+    `python3 ${shellEscape(script)} --run-dir ${shellEscape(runDir)} ` +
+      `--out ${shellEscape(out)} --runid ${shellEscape(runId)} ` +
+      `--path ${shellEscape(docPath)} --verdict <PASS|WARN|FAIL> <<${shellEscape(delimiter)}`,
+    '<rationale>',
+    delimiter,
+  ].join('\n')
+}
+// END PERSIST HELPERS
 
 const VERDICT = {
   type: 'object',
@@ -43,9 +80,10 @@ const repoRoot = a.repoRoot || '.'
 // gate would REFUSE for want of evidence, so fail loud here instead.
 const runId = a.runId
 const runDir = a.runDir
-if (!runId || !runDir) {
+const scriptsDir = a.scriptsDir
+if (!runId || !runDir || !scriptsDir) {
   throw new Error(
-    'docaudit Phase 3: runId/runDir missing from Workflow args — verdicts cannot ' +
+    'docaudit Phase 3: runId/runDir/scriptsDir missing from Workflow args — verdicts cannot ' +
     'be persisted for the deterministic gate (a plumbing failure, not a real run).'
   )
 }
@@ -65,7 +103,10 @@ const readInstruction = (docPath) => (mdqAvailable && mdqHealthy)
     `\`cd "${repoRoot}" && mdq search --q "<keywords>" --paths "${docPath}" --top-k 5 --max-tokens 800\` ` +
     `(add \`--mode grep\` for exact identifiers), then ` +
     `\`cd "${repoRoot}" && mdq get --chunk-id <ID>\` to pull ONLY the relevant heading chunks. ` +
-    `Do NOT Read the whole doc; use Read only for the specific changed SOURCE lines you must confirm.`
+    `Do NOT Read the whole doc. mdq may not reflect uncommitted edits, so before using a ` +
+    `contradiction as grounds for FAIL, you MUST confirm the relevant on-disk lines with a ` +
+    `targeted Read or grep. This targeted confirmation is the exception to the mdq-only rule; ` +
+    `the disk is authoritative. Use Read only for the specific SOURCE lines you must confirm.`
   : 'Use `grep -n` to pull only the relevant chunks of the doc; do not read unrelated files.'
 
 const cmNote = cmAvailable
@@ -96,8 +137,6 @@ const symbolGraphNote = symbolGraphAvailable
 
 phase('Verify')
 
-const slug = (p) => p.replace(/[/\\]/g, '__')
-
 const results = await parallel(
   impacted.map((d) => () =>
     agent(
@@ -106,10 +145,10 @@ const results = await parallel(
 CHANGED SOURCE (since last audit):
 ${changeSummary}
 
-TASK: Decide whether the doc at "${d.path}" (provenance: ${d.provenance}) still
+TASK: Investigate whether the doc at "${d.path}" (provenance: ${d.provenance}) still
 ACCURATELY describes the changed source above. ${readInstruction(d.path)}${cmNote}${axNote}${symbolGraphNote} Report-only on the DOC — do NOT edit the doc.
 
-Emit exactly one verdict:
+Decide exactly one verdict:
 - FAIL: the doc now states something contradicted by the change (must fix).
 - WARN: the doc is plausibly stale or under-specified given the change (should review).
 - PASS: the doc is unaffected or already consistent.
@@ -118,12 +157,18 @@ coupling: do not FAIL it without a cited contradiction, but still emit WARN when
 concrete staleness signal — do not downgrade a citable WARN to PASS.
 Give a one-sentence rationale citing file:line, and a suggestion when FAIL/WARN.
 
-THEN PERSIST your verdict so the deterministic gate can read it (this is the ONLY
-file you may write). Run exactly this, substituting your VERDICT and a one-line
-rationale with no embedded double-quotes or newlines:
-  mkdir -p "${runDir}/verdicts" && python3 -c 'import json,sys; json.dump({"runid":sys.argv[1],"path":sys.argv[2],"verdict":sys.argv[3],"rationale":sys.argv[4]}, open(sys.argv[5],"w"))' "${runId}" "${d.path}" "<PASS|WARN|FAIL>" "<rationale>" "${runDir}/verdicts/${slug(d.path)}.json"
-The verdict you write MUST equal the verdict you emit. Using python3 -c guarantees
-valid JSON. Then return the structured verdict.`,
+STEP A — PERSIST THE VERDICT BEFORE RETURNING IT. This is the ONLY file you may
+write. Run the command below after replacing only the <PASS|WARN|FAIL> token and
+the <rationale> heredoc body. Do not alter any path, argument, quoting, or delimiter:
+${buildPersistCmd(scriptsDir, runDir, runId, d.path)}
+The command reads the file back and echoes its JSON. Inspect that echo and confirm
+that its path, verdict, and rationale equal the values you decided.
+
+STEP B — RETURN THE STRUCTURED VERDICT. The verdict and rationale MUST equal the
+values confirmed in STEP A.
+
+Calling the structured-output tool ends this run immediately. Complete STEP A first.
+No steps execute after STEP B.`,
       { label: `verify:${d.path}`, phase: 'Verify', schema: VERDICT, agentType: 'docaudit:doc-impact-verifier' }
     )
   )

@@ -228,7 +228,44 @@ def check_semantic(repo_root, docs, cfg, all_docs=None):
     index_files = cfg.get("indexFiles")
     if index_files is None:
         index_files = [d for d in scan if os.path.basename(d).lower() == "readme.md"]
-    index_files = set(index_files)
+    valid_indexes = set()
+    repo_real = os.path.realpath(repo_root)
+    for raw_index in index_files:
+        if not isinstance(raw_index, str) or not raw_index:
+            findings.append({"layer": "semantic", "severity": "WARN", "path": str(raw_index),
+                             "line": 1, "message": "indexFiles entry is invalid and was excluded"})
+            continue
+        normalized = os.path.normpath(raw_index)
+        if os.path.isabs(raw_index) or normalized == ".." or normalized.startswith(".." + os.sep):
+            findings.append({"layer": "semantic", "severity": "WARN", "path": raw_index,
+                             "line": 1, "message": "indexFiles entry is outside the repository and was excluded"})
+            continue
+        full = os.path.join(repo_root, normalized)
+        if not os.path.exists(full):
+            findings.append({"layer": "semantic", "severity": "WARN", "path": normalized,
+                             "line": 1, "message": "indexFiles entry does not exist and was excluded"})
+            continue
+        # A path may be lexically inside the repository while resolving through
+        # a symlink to an external file.  Do not index external content.
+        try:
+            resolved = os.path.realpath(full)
+            if os.path.commonpath([repo_real, resolved]) != repo_real:
+                findings.append({"layer": "semantic", "severity": "WARN", "path": normalized,
+                                 "line": 1,
+                                 "message": "indexFiles entry resolves outside the repository and was excluded"})
+                continue
+        except ValueError:
+            findings.append({"layer": "semantic", "severity": "WARN", "path": normalized,
+                             "line": 1,
+                             "message": "indexFiles entry resolves outside the repository and was excluded"})
+            continue
+        if not os.path.isfile(full):
+            findings.append({"layer": "semantic", "severity": "WARN", "path": normalized,
+                             "line": 1, "message": "indexFiles entry is not a regular file and was excluded"})
+            continue
+        valid_indexes.add(normalized)
+    scan = sorted(set(scan) | valid_indexes)
+    index_files = valid_indexes
     referenced = set()
     for d in scan:  # build 'referenced' from ALL docs so index links always count
         text = _read(repo_root, d)
