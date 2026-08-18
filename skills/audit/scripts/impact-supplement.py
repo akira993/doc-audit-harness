@@ -27,6 +27,8 @@ passthrough (impact.json left byte-identical).
 """
 import argparse, json, os, re, subprocess, sys
 
+from docaudit_paths import validate_repo_path
+
 DEFAULT_DOC_GLOBS = ["docs/**/*.md", "*.md"]
 DEFAULT_MIN_SCORE = 0.4
 DEFAULT_MAX_IMPACTED_DOCS = 200
@@ -206,10 +208,20 @@ def main():
     semantic_admitted = []
     truncated_sources = []
 
+    def safe_candidates(values, source):
+        admitted = []
+        for value in sorted(values):
+            try:
+                admitted.append(validate_repo_path(args.repo_root, value))
+            except ValueError as exc:
+                warnings.append(f"{source} candidate dropped as unsafe: {value} ({exc})")
+        return admitted
+
     if args.graphify_bin:
         raw_candidates = graphify_candidates(
             args.graphify_bin, args.repo_root, changed, change_summary, doc_regexes)
-        new_candidates = sorted(p for p in raw_candidates if p not in existing_paths)
+        new_candidates = [p for p in safe_candidates(raw_candidates, "graphify")
+                          if p not in existing_paths]
         graphify_before_cap = len(new_candidates)
         residual = max(0, args.max_impacted_docs - len(impacted))
         admitted = new_candidates[:residual]
@@ -224,7 +236,8 @@ def main():
     if args.cocoindex_bin:
         raw_candidates = cocoindex_candidates(
             args.cocoindex_bin, args.repo_root, change_summary, args.min_score, doc_regexes)
-        new_candidates = sorted(p for p in raw_candidates if p not in existing_paths)
+        new_candidates = [p for p in safe_candidates(raw_candidates, "semantic")
+                          if p not in existing_paths]
         semantic_before_cap = len(new_candidates)
         residual = max(0, args.max_impacted_docs - len(impacted))
         admitted = new_candidates[:residual]

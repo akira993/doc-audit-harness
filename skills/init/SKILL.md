@@ -1,7 +1,7 @@
 ---
 name: init
-description: Bootstrap docaudit for a repo that has no .claude/doc-audit.json yet. Use when the user asks to set up docaudit, initialize the doc-audit harness, or run docaudit on a repo that lacks /check-docs / /review-docs / doc-lint. Inventories the repo, proposes a doc-audit.json config for approval, writes it, and points to the first audit. Generative (creates new config only); never edits existing docs.
-argument-hint: "[--scaffold]"
+description: Bootstrap docaudit for a repo, or add and refresh its optional local documentation harness. Use when the user asks to set up docaudit, initialize the doc-audit harness, or run docaudit on a repo that lacks /check-docs / /review-docs / doc-lint. Inventories the repo, proposes a doc-audit.json config for approval, writes it, and points to the first audit. Generative and additive by default; existing-tool adjustment requires a separate approved diff.
+argument-hint: "[--scaffold] [--harness] [--refresh] [--reask]"
 ---
 
 # docaudit:init — bootstrap a repo's doc-audit adapter
@@ -12,12 +12,21 @@ or rewrite any existing doc. Always propose the draft and get explicit user appr
 before writing. `SD="${CLAUDE_SKILL_DIR%/init}/audit"` (the audit skill dir holding
 the shared scripts).
 
-If `.claude/doc-audit.json` already exists, stop and tell the user (offer `/docaudit:audit` instead) — do not overwrite it.
+If `.claude/doc-audit.json` already exists, normally stop and tell the user (offer
+`/docaudit:audit` instead) — do not overwrite it. **Exception:** with `--harness`, continue through
+Step 1 and change only `harness` and, when required, `docAuditCommands`; preserve every other
+config key. `--refresh` is valid only with `--harness` and is delegated to
+`scaffold.py --harness --refresh`. `--reask` forces the harness choice even when `harness` is
+already configured. Without `--reask`, never ask again for an existing `harness` key. If its
+state is `installed`, `--harness` may create missing generated files; for any other configured
+state, explain the state and require `--reask` before changing the decision.
 
 ## Step 1 — inventory (deterministic)
 Run: `python3 "$SD/scripts/inventory.py" --repo-root "$CLAUDE_PROJECT_DIR"`.
 Parse the JSON: docDirs, docGlobs, frontMatter, suggestedFrontMatterFields, codeDirs,
-suggestedDiffGlobs, existingDocTools, boundaryCommandGuess, indexFiles, mentions.
+suggestedDiffGlobs, existingDocTools, existingDocToolCandidates, boundaryCommandGuess,
+indexFiles, mentions. `existingDocToolCandidates` contains display-only `{kind,path,name}`
+candidates; inventory never wires one automatically.
 (Optional enrichment: if `markdown-query`/CocoIndex/Serena are available you may use
 them to refine the impactMap couplings — they are NOT required; inventory.py alone
 suffices. CocoIndex needs `sentence_transformers`; skip it if unavailable.)
@@ -39,6 +48,59 @@ candidates — propose a `docGraph` block in Step 2; also check
 additionally supplement `mapGapCandidates` with semantic-search candidates — check
 whether `.cocoindex_code/` already exists in the repo (two different proposals in Step 2
 depending on the answer).
+
+### Step 1.5 — harness choice (MANDATORY once)
+
+Immediately after inventory, read `harness` from an existing config when present. If the key is
+absent, or `--reask` was supplied, call `AskUserQuestion` exactly once for the harness choice.
+If questions are unavailable (non-interactive), do not ask, generate, edit, or write config;
+say 「`/docaudit:init --harness` を実行してください」 and stop this flow.
+
+When `existingDocToolCandidates` is empty, ask with exactly these two choices:
+
+- **「ハーネス構造（`/check-docs` + `doc-lint` + 決定的エンジン）を一緒に入れる（推奨）」**
+- **「入れない」**
+
+When candidates exist, list every candidate's `kind`, `path`, and `name`, construct and show a
+concrete proposed `{format,existence,semantic}` mapping using only those candidate names, and ask
+with at most these four choices:
+
+- **「既存に統合」** — use the displayed mapping as `docAuditCommands`.
+- **「既存を調整」** — propose compatibility changes and use the displayed mapping.
+- **「そのまま」** — retain existing files and any already configured commands.
+- **「新規に入れる」** — install the three-file harness instead.
+
+Never set `integrated` unless all three `docAuditCommands` keys are written in the same config
+update. For `adjusted`, first prepare a diff that makes the selected existing tool emit docaudit-
+compatible `SUMMARY` and `VERDICT` lines, show that diff, and obtain explicit approval before
+editing the existing file. If approval is not given, do not edit and do not record `adjusted`.
+After an approved adjustment, wire all three command keys in the same config update. Adjustment
+is the only path here that may edit an existing tool; it remains outside `scaffold.py`.
+
+Map the accepted answer to exactly one state:
+
+| answer | state | required action |
+|---|---|---|
+| 入れる／新規に入れる | `installed` | run `python3 "$SD/scripts/scaffold.py" --repo-root "$CLAUDE_PROJECT_DIR" --harness [--refresh]`; parse its `docAuditCommands` |
+| 入れない | `declined` | generate nothing and omit a new `docAuditCommands` value |
+| 既存に統合 | `integrated` | write the displayed existing-tool mapping |
+| 既存を調整 | `adjusted` | only after the approved diff is applied, write its mapping |
+| そのまま | `existing-untouched` | do not edit or auto-wire the candidates |
+
+Read `<version>` from `$SD/../../.claude-plugin/plugin.json` and make the decision object
+`{"state":"…","decidedAt":"<current ISO-8601 timestamp>","engineVersion":"<version>"}`.
+For an existing config, record the decision with one atomic invocation, adding the second
+`--set` only for a state that requires wiring:
+
+`python3 "$SD/scripts/set-config-key.py" --config "$CFG" --set 'harness={"state":"…","decidedAt":"…","engineVersion":"<version>"}' [--set 'docAuditCommands={"format":"…","existence":"…","semantic":"…"}']`
+
+Here `CFG="$CLAUDE_PROJECT_DIR/.claude/doc-audit.json"`. For a new config, do not call
+`set-config-key.py`; include the accepted `harness` object and any required `docAuditCommands`
+directly in the Step-2 draft so Step 4 creates the complete approved JSON once. For `installed`,
+the scaffold return value must wire existence=`/check-docs --only existence`,
+format=`/check-docs --only format`, and semantic=`doc-lint`. Report every `created`, `skipped`,
+and `skipReasons` entry. If an existing config was the `--harness` exception, stop after this
+harness-only update; do not rebuild or rewrite the rest of the adapter.
 
 ## Step 2 — draft the config
 Build a `doc-audit.json` draft from the inventory:
@@ -94,8 +156,10 @@ Build a `doc-audit.json` draft from the inventory:
   `reportPath`: `docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md` (or repo-root if no docs/logs).
   `maxImpactedDocs`: 60.
 - `docAuditCommands`: if `existingDocTools` found project doc commands, wire them
-  (`{format,existence,semantic}`) to those; OTHERWISE **omit the key** so the audit
-  falls back to the built-in generic layers (Plan 2).
+  (`{format,existence,semantic}`) to those only when Step 1.5 selected `integrated` or
+  `adjusted`; when Step 1.5 selected `installed`, use `scaffold.py --harness`'s return value.
+  For `declined` or `existing-untouched`, preserve an existing value but do not invent a new one;
+  otherwise **omit the key** so the audit falls back to the built-in generic layers (Plan 2).
 - `impactMap`: propose a STARTER array from `mentions` (for each code dir/key file with
   mentions, `{changed: "<dir>/**" or "<file>", impacts: [the mentioned docs], note: "auto: from inventory mentions"}`).
   Tell the user this is a heuristic starter to PRUNE/EDIT; the engine's heuristic +
@@ -109,10 +173,16 @@ grounded in the inventory.
 
 ## Step 4 — write + next steps
 On approval, write `.claude/doc-audit.json` (create `.claude/` if needed). Then tell the
-user: review the impactMap, commit the config, and run `/docaudit:audit --full` to
-produce the first CONSISTENT verdict + anchor (that audit, not init, writes the anchor).
+user: review the impactMap and commit the config. When `harness.state` is `installed`, explicitly
+list and tell the user to commit all three generated files — `.claude/commands/check-docs.md`,
+`.claude/skills/doc-lint/SKILL.md`, and `scripts/check-docs.py` — together with the config before
+running `/docaudit:audit --full` to produce the first CONSISTENT verdict + anchor (that audit, not
+init, writes the anchor).
 If `mdq` is installed, no manual index step is needed — the first `/docaudit:audit`
 Phase 0 builds the mdq index under `.mdq/` automatically (add `.mdq/` to `.gitignore`).
+Do not generate a test skeleton for the harness. Suggest only one or two concrete lines, for
+example: place a unittest/pytest subprocess check under `tests/`, or a Vitest command-execution
+check beside the project's existing tests, covering both exit 0 and exit 1.
 
 ## Step 5 — --scaffold (opt-in; only when invoked with --scaffold)
 Generate project-tailored layer skill skeletons so this repo owns richer checks than
@@ -122,7 +192,9 @@ the generic baseline. Do this AFTER Step 3 approval and BEFORE the Step 4 config
    skeletons and NEVER overwrites existing files. Parse `{created, skipped, skillNames}`;
    report skipped files to the user.
 2. Set the config's `docAuditCommands` to `skillNames` (e.g.
-   `{format:"docaudit-format", existence:"docaudit-existence", semantic:"docaudit-semantic"}`)
+   `{format:"docaudit-format", existence:"docaudit-existence", semantic:"docaudit-semantic"}`),
+   except when combined with `--harness`: harness wins for `format`/`existence`, while
+   `docaudit-semantic` wins for `semantic`
    so the audit delegates to the tailored skills instead of the generic fallback. Then
    write the config (Step 4).
 3. Tailor each generated skeleton to THIS repo's real {layer} rules using the
@@ -131,10 +203,13 @@ the generic baseline. Do this AFTER Step 3 approval and BEFORE the Step 4 config
    optimize the `description` for triggering, and run the trigger tests. Keep every
    generated skill report-only (propose fixes; never edit docs).
 4. Tell the user to review + commit the new skills + config, then run `/docaudit:audit --full`.
-Additive only: scaffold.py creates NEW skill files; it never edits existing docs/ADRs.
+Additive only: scaffold.py creates NEW skill files; it never edits existing docs/ADRs. Its
+`--refresh` exception overwrites only generated harness files whose stamp and normalized body
+still match a shipped template; modified or unstamped files are skipped with a reason.
 
 ## Guardrails
-Additive only (new files). Never edit/rewrite existing docs or ADRs. MCP optional.
+Additive only (new files), except for an explicitly approved existing-tool adjustment and the
+safe `--refresh` rule above. Never edit/rewrite existing docs or ADRs. MCP optional.
 `--scaffold` (Step 5) generates project-tailored layer skill skeletons via
 `scripts/scaffold.py` (additive; never overwrites) and tailors them with
 skill-creator-max / writing-skills.

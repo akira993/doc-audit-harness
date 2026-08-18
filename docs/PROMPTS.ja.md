@@ -35,8 +35,6 @@ report-only です。ファイルは一切編集せず、verdict と findings �
 /docaudit:audit を実行してください
 ```
 
----
-
 ## 2. リリース前フルスイープ
 
 リリースタグを打つ前（または大きな変更をまとめて入れた後）に、anchor 以降の差分だけでなく
@@ -62,8 +60,9 @@ report-only です。ファイルは一切編集しないでください。
 ## 3. スコープ限定監査
 
 今は特定のサブシステムや一部のドキュメントだけを気にしたいときに使う。`/docaudit:audit` には
-スコープ／パス指定の引数はなく、常にその時点の変更集合に対する impacted set 全体
-（`impactMap` + heuristic）を解決する。そのためスコープ絞り込みはプロンプト側で行う ——
+スコープ／パス指定の引数はなく、常に impacted set 全体を解決する — incremental では
+`impactMap` の mapped と heuristic を合わせ、利用可能なら graphify/semantic 候補で補完し、
+`--full` では `docGlobs` の全文書を含める。そのためスコープ絞り込みはプロンプト側で行う ——
 `<scope>` に対象のドキュメント／サブシステムを名指しし、その verdict を要約で明示的に
 報告させる。
 
@@ -162,6 +161,63 @@ report-only です。ファイルは一切編集しないでください。.clau
 <report>
 roll-up verdict、impacted docs とその per-doc verdict、non-blocking な警告を簡潔に
 返してください。
+</report>
+
+/docaudit:audit を実行してください
+```
+
+---
+
+## 7. ハーネス構造を入れて初回監査まで進める
+
+docaudit の導入時に、リポジトリ内へ `/check-docs`、`doc-lint`、
+`scripts/check-docs.py` の構造も用意したい場合に使う。`init` は既存のドキュメントツールを
+調べ、統合・調整・そのまま利用・新規導入のどれにするかを質問する。
+
+```
+<task>
+このリポジトリに docaudit とローカルのドキュメントハーネスを導入し、初回の full 監査まで
+進めてください。
+</task>
+<context>
+既存のドキュメントツールを調べ、適切な構造が無ければ /check-docs、doc-lint、
+scripts/check-docs.py を新規に導入してください。
+</context>
+<constraints>
+書き込む前にハーネスの選択肢と config を提示し、承認を得てください。導入後は config と、
+コミットが必要な生成物 3 本を列挙してください。init 中に既存ドキュメントは変更しないでください。
+</constraints>
+<report>
+承認済みファイルを書き込んだ後、最初の全コーパス監査を実行し、verdict、pre-flight の結果、
+修正が必要なドキュメントを報告してください。
+</report>
+
+/docaudit:init --harness を実行し、その後 /docaudit:audit --full を実行してください
+```
+
+---
+
+## 8. pre-flight で修正してから監査する
+
+安価な全量チェックで修正可能な FAIL が見つかり、承認したドキュメントだけを直してから
+本監査へ進みたい場合に使う。
+
+```
+<task>
+docaudit を実行し、pre-flight で FAIL が見つかった場合は、本監査の前に修正を提案してください。
+</task>
+<context>
+ローカルのドキュメントハーネスは設定済みです。各ドキュメントの詳細検証より先に、決定論的な
+全量チェックを実行したいです。
+</context>
+<constraints>
+pre-flight が失敗した場合、findings と修正候補のドキュメントパスを示した後でのみ
+「修正して監査」を選んでください。docaudit の範囲検査で許可されたパスだけを編集し、ADR、
+decisions、logs、.claude 配下、承認集合外のファイルは変更しないでください。修正後に
+pre-flight を再実行し、範囲外変更が検出されたら停止してください。
+</constraints>
+<report>
+pre-flight での選択と最終 findings、その後の監査 verdict を報告してください。
 </report>
 
 /docaudit:audit を実行してください

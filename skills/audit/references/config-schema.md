@@ -12,22 +12,139 @@ live here; the plugin ships no project knowledge.
 | `indexFiles` | string[] | no | generic `semantic` layer treats these as link roots for orphan detection (default: any `README.md` within the doc tree) |
 | `impactMap` | object[] | yes | `{changed: path\|glob, impacts: docPath[], note?: string}` |
 | `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: (path\|path:line)[]}` — a URL `liveSource` (http/https) is not supported: it is never executed or fetched, and the audit emits a warning |
-| `docAuditCommands` | object | no | `{format, existence, semantic}` slash-command/skill names to delegate to |
+| `docAuditCommands` | object | no | `{format, existence, semantic}` slash-command/skill names used by active pre-flight and delegated Phase 4 |
 | `boundaryCommand` | string | no | shell command for project-boundary check |
 | `reviewCommands` | object | no | `{code, security}` review command strings (effort embedded, e.g. `/code-review high`) |
 | `reportPath` | string | no | output report path template (supports `<YYYY-MM-DD>` and `[_NN]`) |
 | `maxImpactedDocs` | number | no | cap on impacted docs (default 200); overflow sets `truncated` |
+| `harness` | object | no | `{state,decidedAt,engineVersion}` where state is `installed`, `declined`, `integrated`, `adjusted`, or `existing-untouched`; absence is the v0.9 `unset` state |
+| `verdictCache` | object | no | `{enabled:bool=true,minConsecutivePasses:int=2}`; values outside 2..10 disable cache and emit WARN |
+| `models.light` | object | no | deterministic light-run limits: `{enabled,maxChanged=10,maxImpacted=15,maxDiffLines=200,maxDiffBytes=65536,sensitiveTokens?}`; defaults are empirical, not measured service guarantees |
+| `digestExclude` | string[] | no | additional generated paths excluded from the sealed worktree digest; only `.claude/state/**`, `.mdq/`, `.codegraph/`, `graphify-out/`, and `.cocoindex_code/` are accepted |
+| `protectedGlobs` | string[] | no | additional pre-flight fix deny patterns; built-in ADR/decisions/logs/`.claude` denial cannot be removed |
 | `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:string[]}` |
 | `indexing` | object | no | `{enabled:bool=true, tool:string="mdq", bin:string="mdq", roots:string[]?}` — Phase-0 mdq preflight; `roots` overrides index roots (default: whole repo `.`, since mdq's own default roots miss `README.md`/`skills`/`agents`); `enabled:false` opts out even when mdq is installed (conditional-force) |
 | `contextMode` | object | no | `{enabled:bool=true}` — Phase-0 context-mode probe (by `ctx_*` tool availability + `ctx_doctor`); when context-mode is installed, large outputs (git diff, reviews) are processed in its sandbox instead of read in full. `enabled:false` opts out even when installed (conditional-force). No `bin`/`roots`/CLI — context-mode is a location-independent global plugin |
 | `webExtract` | object | no | `{enabled:bool=true, tool:string="ax", bin:string="ax"}` — Phase-0 `ax` CLI preflight; when `ax` is installed, doc-impact-verifier may corroborate a doc's external-URL-dependent claim by fetching it (read-only, GET-only). `enabled:false` opts out even when `ax` is installed (conditional-force) |
-| `codexReview` | object | no | `{enabled:bool=true, bin:string="codex", model?:string, timeoutMs?:number=300000}` — Phase-0 `codex` CLI preflight; when `codex` is installed, Phase 4 runs a fourth, adversarial review via plain `codex exec` and its `critical`/`high` findings CAN block the verdict (the one exception among the probe-style seams — see below). `enabled:false` opts out even when `codex` is installed (conditional-force) |
+| `codexReview` | object | no | `{enabled:bool=true, bin:string="codex", model?:string, timeoutMs?:number=300000}` — an explicit model is tried once; otherwise light uses `gpt-5.6-luna`, standard uses `gpt-5.6-terra`, and only the default light attempt may retry once as standard. Phase-0 probes the CLI and completed Phase-4 `critical`/`high` findings can block the verdict. |
 | `symbolGraph` | object | no | `{enabled:bool=true, tool:string="codegraph", bin:string="codegraph"}` — Phase-0 `codegraph` CLI preflight; when installed, doc-impact-verifier may corroborate a doc claim that depends on a changed file's own symbols via read-only `codegraph impact`/`node`. Report-only, never affects the verdict. `enabled:false` opts out even when `codegraph` is installed (conditional-force) |
 | `docGraph` | object | no | `{enabled:bool=true, tool:string="graphify", bin:string="graphify"}` — Phase-0 `graphify` CLI preflight; when installed, Phase 2 supplements `mapGapCandidates` with graph-adjacency candidates (provenance `graphify`). Report-only, never affects the verdict. `enabled:false` opts out even when `graphify` is installed (conditional-force) |
 | `semanticSearch` | object | no | `{enabled:bool=true, tool:string="cocoindex", bin:string="ccc", minScore?:number=0.4}` — Phase-0 `ccc` (CocoIndex) CLI preflight; when installed AND already initialized (`.cocoindex_code/` present), Phase 2 supplements `mapGapCandidates` with semantic-search candidates (provenance `semantic`) scoring `>= minScore`. **The audit itself never runs `ccc init`** — an uninitialized repo degrades to `reason:not-initialized`, distinct from `not-installed`; initialize via `/docaudit:init` (user-approved, discloses the `.gitignore` write). Report-only, never affects the verdict. `enabled:false` opts out even when `ccc` is installed (conditional-force) |
 
 `impacts` entries MUST be doc paths only; put commentary in `note`. `changed`
 accepts a single path or a glob.
+
+## Harness adoption state
+
+`harness` records one explicit adoption decision. `broken` and `unanswered` are derived runtime
+labels and MUST NOT be stored in config.
+
+| current state | trigger / answer | next stored state | required side effect |
+|---|---|---|---|
+| `unset` (key absent) | install / new install | `installed` | create the three harness files and atomically write their returned `docAuditCommands` |
+| `unset` (key absent) | decline (no candidates) | `declined` | no generated files and no new command mapping |
+| `unset` (key absent) | integrate existing | `integrated` | atomically write all three existing command names; this state is invalid without `docAuditCommands` |
+| `unset` (key absent) | adjust existing | `adjusted` | show a diff, obtain approval, edit, then atomically write all three command names |
+| `unset` (key absent) | keep existing untouched | `existing-untouched` | do not edit or automatically wire candidates |
+| any stored state | `/docaudit:init --reask` | any state above allowed by the current inventory | replace only the decision and its required command mapping after a new answer |
+| `installed` | a generated file is missing | no config change (`broken` is derived) | skip pre-flight and suggest `/docaudit:init --harness --refresh` |
+
+Every stored decision includes an ISO-8601 `decidedAt` value and the plugin version used as
+`engineVersion`. Existing config updates use one `set-config-key.py` invocation with multiple
+`--set` arguments when both `harness` and `docAuditCommands` change, preserving all other keys.
+New configs include both values in the approved draft and are written once.
+
+The Phase-0.5 firing rule is:
+
+| stored `harness.state` | `docAuditCommands` | pre-flight |
+|---|---|---|
+| `installed`, `integrated`, `adjusted` | present or absent | run |
+| `existing-untouched` or `unset` | present | run |
+| `declined` | any | skip (Phase 4 command delegation remains unchanged) |
+| any other combination | absent | skip |
+
+For `installed`, the required generated set is `.claude/commands/check-docs.md`,
+`.claude/skills/doc-lint/SKILL.md`, and `scripts/check-docs.py`. Its mapping is fixed to
+`{existence:"/check-docs --only existence",format:"/check-docs --only format",semantic:"doc-lint"}`.
+The copied engine accepts `--layer`, `--format json|text`, and `--exit-code`; text mode emits
+`SUMMARY pass=<n> warn=<n> fail=<n>` followed by `VERDICT CONSISTENT|NEEDS FIX`, and
+`--exit-code` returns 1 when any FAIL exists.
+
+## Init and scaffold flags
+
+- `/docaudit:init --harness` inventories even when config exists, then changes only harness files,
+  `harness`, and the required `docAuditCommands` mapping. The ordinary existing-config stop rule
+  still applies without this flag.
+- `/docaudit:init --harness --refresh` delegates to `scaffold.py --harness --refresh`. A stamped
+  file is overwritten only when its normalized body matches the shipped SHA for the version in
+  its stamp. Modified, unstamped, and unknown-version files are preserved and reported as skipped.
+- `/docaudit:init --reask` asks again even when `harness` is already stored. Without it, the
+  stored answer is not asked again.
+- `scaffold.py --dry-run` reports the same proposed `created`/`skipped` result without writing.
+- Legacy `--scaffold` continues to create `docaudit-{format,existence,semantic}` skill skeletons.
+
+When `--scaffold` and `--harness` are combined, the command mapping is deterministic:
+
+| layer | selected command |
+|---|---|
+| `existence` | `/check-docs --only existence` (harness wins) |
+| `format` | `/check-docs --only format` (harness wins) |
+| `semantic` | `docaudit-semantic` (legacy tailored scaffold wins) |
+
+Harness template stamps are excluded from the normalized SHA-256. Markdown stamps are the first
+line after front matter; the engine stamp is the first line after its shebang. Shipped hashes are
+versioned in `references/engine-shas.json` so refresh can distinguish an unchanged old template
+from user customization.
+
+## v0.10 run ledger and cache
+
+Each audit uses `.claude/state/docaudit-run/<runid>/`; the sibling `lock` file has
+no TTL and can be removed only by the matching `--release` or an explicit
+`--break-lock`. History and last-run state are
+`.claude/state/docaudit-history.json` and
+`.claude/state/docaudit-last-run.json`. Old flat run files are ignored (cold
+start). Full mode uses `HEAD` as its effective baseline, disables cache, and
+includes every `docGlobs` document without applying `maxImpactedDocs`.
+
+The orchestrator carries one `EVIDENCE` JSON object. Missing evidence uses the
+literal `none` only where absence is valid: cold-start history, an empty cached
+set, or an optional preflight/Phase 4 file. The gate accepts this object only via
+`--expect-json` and reads each evidence file once for both SHA-256 comparison and
+JSON parsing.
+
+During a run, history, anchor, lock, and config changes cause a fail-safe
+`REFUSED`. If the current run still owns the lock, corrupt history is renamed to
+`*.tainted-<runid>`, a changed anchor is removed, and a changed config is recorded
+in last-run state; the next open exits 6 until `--accept-config` explicitly
+acknowledges the change. A lock owned by a later run is never changed. Persistent
+verifier processes that survive beyond a run, orchestrator compromise, and
+transcript alteration remain outside the threat boundary, as does a verifier
+that can directly forge a future anchor before that run starts. Deleting the
+current lock is a residual denial of service: it prevents a false CONSISTENT
+but can force the current run to end as REFUSED.
+
+### Pre-flight, cache, and run class
+
+Phase 0.5 runs after `open-run.py` has acquired the lock and before baseline/seal. A FAIL asks an
+interactive user to fix and audit, continue without fixing, or stop. Only the first choice may
+edit: `fix-scope.py` permits finding paths that match `docGlobs`, denies ADR/decisions/logs and
+`.claude/**` case-insensitively, adds `protectedGlobs`, and verifies that no path outside the
+approved set changed. Non-interactive runs never edit. Pre-flight findings are gate evidence and
+therefore block CONSISTENT when they contain FAIL.
+
+`plan-dispatch.py` and `docaudit_cache.py` skip Phase 3 only for the most recent
+`minConsecutivePasses` records of a document when every record is PASS and its `contentSha`,
+`changeSetSha`, and `contractVersion` match the current run. The gate repeats the qualification.
+Only `decide-verdict.py` writes `.claude/state/docaudit-history.json`; absent history is a cold
+start, corrupt history disables cache and is quarantined by the gate, and full mode disables
+cache.
+
+`classify-run.py` deterministically selects `light` or `standard`. Full mode, disabled light
+routing, threshold overflow, a non-CONSISTENT previous run, or a changed path containing a
+configured/default sensitive token makes the run standard. Light Phase 3 uses
+`doc-impact-verifier-light` (Haiku); standard and every retry use Sonnet. Codex review honors an
+explicit `codexReview.model`; otherwise light uses `gpt-5.6-luna` and standard uses
+`gpt-5.6-terra`, both with medium reasoning effort.
 
 ## Indexing (mdq, Phase 0)
 

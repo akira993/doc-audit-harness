@@ -7,12 +7,12 @@ from real-world use.
 
 > 🌐 日本語版: [ADOPTION.ja.md](ADOPTION.ja.md)
 
-> **docaudit is report-only.** It maps what changed to the docs that describe it,
+> **docaudit is report-only by default.** It maps what changed to the docs that describe it,
 > verifies them, runs `/security-review`, offers `/code-review` for the user to run
 > (it is not model-invocable), and emits one
-> **CONSISTENT / NEEDS FIX** verdict — but it **never edits your docs**. Every fix is
-> yours to make. The only thing it writes is its own config (via `init`), its audit
-> report, and the anchor state file.
+> **CONSISTENT / NEEDS FIX / REFUSED** verdict. The sole documentation-edit exception is
+> a pre-flight FAIL that you explicitly choose to fix; `fix-scope.py` then limits edits
+> to approved doc paths and rejects changes elsewhere. Non-interactive runs never edit.
 
 ---
 
@@ -165,6 +165,10 @@ mid-run, so an absent `.cocoindex_code/` is its own silent `not-initialized` deg
 from "not installed"; initialization only happens inside `/docaudit:init`, behind explicit user
 approval that discloses the `.gitignore` write.
 
+Impact provenance is `mapped` for `impactMap` only, `heuristic` for heuristic only, `both` when
+both reach the same document, `graphify` or `semantic` for their optional supplement, and `full`
+for every `docGlobs` document in a no-anchor or explicit `--full` run.
+
 Every audit prints three further non-blocking status lines immediately after the codex-review one:
 **symbol-graph** (💡 not active / ✓ active / ⚠ index build failed), **doc-graph** (💡 not active /
 ✓ active + `graphify-out/` gitignored / ⚠ active but `graphify-out/` NOT gitignored — add it), and
@@ -194,7 +198,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.9.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.10.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -230,13 +234,22 @@ cd ~/code/my-project
 It will:
 1. **Inventory** the repo (doc dirs, front-matter convention, code dirs, existing doc tools,
    code→doc "mentions", index files) — deterministic, grep/find based.
-2. **Draft** a `.claude/doc-audit.json` proposal and show it to you with a one-line rationale
+2. **Ask once about the local harness.** With no existing candidates, choose whether to install
+   `/check-docs` + `doc-lint` + `scripts/check-docs.py`. With candidates, choose integrate,
+   adjust, keep untouched, or install new. The stored states are `installed`, `declined`,
+   `integrated`, `adjusted`, and `existing-untouched`.
+3. **Draft** a `.claude/doc-audit.json` proposal and show it to you with a one-line rationale
    per key.
-3. **Wait for your approval** (it never writes without it), then write the config.
-4. Point you at the first audit.
+4. **Wait for your approval** (it never writes without it), then write the config.
+5. Point you at the first audit.
 
 `init` is **additive**: it only creates new files; it never edits existing docs. Add
-`--scaffold` to also generate project-tailored layer-skill skeletons (§7).
+`--scaffold` to also generate project-tailored layer-skill skeletons (§7). Use
+`--harness` to operate on the harness when a config already exists, `--reask` to replace a
+stored decision, and `--harness --refresh` to refresh only unmodified stamped templates.
+When `installed` is selected, commit the config and all three generated files together:
+`.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
+`scripts/check-docs.py`.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
 > non-standard layouts (docs under `guide/`, `vps/`, …) are handled. Symlinked doc dirs and
@@ -270,6 +283,12 @@ none.** (Canonical schema: `skills/audit/references/config-schema.md`.)
 | `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:[string,…]}` — tune heuristic recall noise |
 | `frontMatterFields` | string[] | no | generic `format` layer requires these front-matter fields on every doc (WARN if missing); omit to skip |
 | `indexFiles` | string[] | no | generic `semantic` layer link-roots for orphan detection (default: any `README.md` in the doc tree) |
+| `harness` | object | no | `{state,decidedAt,engineVersion}`; state is one of the five decisions above. Absence is the compatible `unset` state. |
+| `verdictCache` | object | no | `{enabled:true,minConsecutivePasses:2}`; allowed pass count is 2..10, otherwise cache is disabled with a WARN. |
+| `models.light` | object | no | `{enabled,maxChanged,maxImpacted,maxDiffLines,maxDiffBytes,sensitiveTokens}` deterministic light-run limits. |
+| `codexReview` | object | no | `{enabled,bin,model?,timeoutMs?}`; explicit `model` wins, otherwise light uses `gpt-5.6-luna` and standard uses `gpt-5.6-terra`, both at medium effort. |
+| `digestExclude` | string[] | no | extra generated paths omitted from the seal; accepted only under `.claude/state/**` or known generated-data directories. |
+| `protectedGlobs` | string[] | no | extra paths denied to pre-flight fixes; built-in ADR/decisions/logs/`.claude` protection cannot be removed. |
 
 Rules: `impacts` entries are **doc paths only** — put commentary in `note`. `changed` is a
 single path or a glob. Glob semantics are the engine's own: `**`=any incl `/`, `*`=any excl
@@ -328,6 +347,17 @@ the audit emits a warning so you track that value manually.
   - `existence`: conservative repo-path-token resolution (non-resolving ⇒ WARN).
   - `semantic`: orphan detection (unlinked doc ⇒ WARN).
   The generic baseline is **intentionally weaker** than bespoke tools.
+- **If `init` installs the v0.10 harness,** it writes this fixed mapping, used by
+  pre-flight and Phase 4:
+  ```json
+  "docAuditCommands": {
+    "existence": "/check-docs --only existence",
+    "format": "/check-docs --only format",
+    "semantic": "doc-lint"
+  }
+  ```
+  The copied engine also supports `scripts/check-docs.py --format text --exit-code` and
+  emits machine-readable `SUMMARY` and `VERDICT` lines.
 - **`/docaudit:init --scaffold`** generates *project-tailored* layer-skill skeletons into your
   `.claude/skills/` and wires `docAuditCommands` to them, then helps you flesh them out with
   `skill-creator` / `writing-skills`. Opt-in; for projects that want richer, owned checks.
@@ -337,13 +367,37 @@ the audit emits a warning so you track that value manually.
 ## 8. Running audits — the verdict & anchor lifecycle
 
 - **`/docaudit:audit --full`** — whole-corpus deep audit. Use it for the first run, after big
-  changes, or periodically. Always used automatically when no anchor exists.
+  changes, or periodically. Always used automatically when no anchor exists. Full mode treats
+  every `docGlobs` document as impacted and disables the cache.
 - **`/docaudit:audit`** — incremental: scopes to docs impacted by changes since the anchor.
+- **Run ledger + lock:** the audit first creates `.claude/state/docaudit-run/<runid>/` and
+  exclusively creates the sibling `lock`. There is no TTL or automatic takeover. A stale lock
+  requires the explicit, stop-only `/docaudit:audit --break-lock` operation; a gate-held lock
+  cannot be broken.
+- **Pre-flight (Phase 0.5):** after the run opens and before baseline/seal, active harness
+  commands run across the whole tree. On FAIL, an interactive run asks “fix and audit”,
+  “continue without fixing”, or “stop”. Only the first choice may edit, and `fix-scope.py`
+  limits it to approved docs. Non-interactive runs retain the FAIL evidence and never edit.
+- **Sealed evidence:** the orchestrator carries one SHA-bearing `EVIDENCE` object. Before
+  verifier fan-out, `seal-run.py` fixes HEAD, the complete change-set hash, and the worktree
+  digest. `decide-verdict.py` reads each evidence file once, checks verifier returns against
+  assigned paths, and is the sole writer of history, last-run state, and the anchor. Old flat
+  files under `docaudit-run/` are ignored.
+- **Deterministic cache:** `plan-dispatch.py` skips Phase 3 only when a doc has the configured
+  number (default 2) of consecutive PASS records with identical doc content, `changeSetSha`,
+  and contract version. Missing/corrupt history is a cold start; `--full` bypasses cache.
+- **Run class:** `classify-run.py` chooses `light` or `standard` from mode, counts, diff size,
+  sensitive path tokens, and last-run verdict. Light uses `doc-impact-verifier-light` (Haiku),
+  while standard and every retry use Sonnet. Codex review defaults to Luna for light and Terra
+  for standard unless `codexReview.model` is set; both use medium effort.
 - **Verdict:** `FAIL` ⇒ **NEEDS FIX** (anchor not updated). Only `WARN`/`PASS` ⇒ **CONSISTENT**
-  (anchor updated). Severity mapping: Phase-3 verdicts are used directly; for Phase-4 tools,
-  high-severity → FAIL, medium → WARN.
+  (anchor updated). Invalid or changed evidence/state ⇒ **REFUSED**. Severity mapping:
+  Phase-3 verdicts are used directly; for Phase-4 tools, high-severity → FAIL, medium → WARN.
+  NEEDS FIX also runs `sibling-scan.py`, which searches all `docGlobs` documents for quoted
+  phrases carried in verifier rationale/suggestions and reports matching siblings.
 - **Anchor:** written **only on CONSISTENT**, recording the current HEAD SHA. **Commit it**
   (convention: a `docs(audit): …` commit) so the baseline is shared and survives squash-merges.
+  Existing anchors with only `sha` remain compatible; v0.10 adds run/digest metadata.
 
 **Correct anchor ordering** (so the anchor records the *consistent* state):
 1. Fix findings and **commit** them.
@@ -398,6 +452,20 @@ point.
   normalizes it). `/code-review` operates on the working diff; both are **no-ops on a clean,
   synced tree** (no pending diff) — that's expected, not a failure.
 - **The global install is a snapshot** — re-sync after updating the source (§3c).
+- **Locks are never taken over automatically.** Exit 4 means another run owns the lock. Verify
+  that run is dead before using `/docaudit:audit --break-lock`; the command releases the lock
+  and stops, so start the audit again afterward.
+- **Config changes are acknowledged, not guessed.** If a run detects that
+  `.claude/doc-audit.json` changed, it REFUSES and the next open exits 6 until you inspect the
+  diff and explicitly run `/docaudit:audit --accept-config`.
+- **Read `REFUSED` as “the run is invalid”, not “the docs are wrong”.** Common reasons include
+  missing/changed evidence, lock identity mismatch, an unsealed manifest, HEAD/worktree or
+  `changeSetSha` drift, return/path mismatch, and changed history/anchor/config. Restore or
+  inspect the named state, then start a fresh audit; never manufacture evidence or an anchor.
+- **`--refresh` uses shipped hashes.** `engine-shas.json` is keyed by the installed plugin
+  version. `/docaudit:init --harness --refresh` overwrites only a stamped generated file whose
+  normalized body still matches that version's shipped SHA; modified, unstamped, or unknown
+  versions are preserved and reported as skipped.
 - **Never fabricate a CONSISTENT anchor.** If you can't actually verify consistency (e.g. you
   skipped a layer), don't write the anchor. NEEDS FIX with an honest report is the correct
   outcome.
@@ -432,6 +500,10 @@ point.
 | Incremental misses changes in a sub-dir | sub-dir is not a git root | use full-mode-only or fold into the parent (§10) |
 | `/code-review` / `/security-review` "did nothing" | clean, synced tree (no pending diff) | expected — commit/leave changes to review, or ignore |
 | Updated the plugin but behavior unchanged | global install is a snapshot | re-sync (§3c) |
+| Audit open exits 4 / reports `locked:true` | another run owns `.claude/state/docaudit-run/lock` | inspect the reported holder; if it is definitely stale, run `/docaudit:audit --break-lock`, then start a new audit |
+| Audit open exits 6 / `config-change-unaccepted` | a prior run detected a config change | inspect `git diff .claude/doc-audit.json`; after approving it, run `/docaudit:audit --accept-config` |
+| Verdict is `REFUSED` | gate could not validate the run snapshot | follow `reason`; representative values include evidence SHA mismatch, lock/run identity mismatch, manifest not sealed, HEAD/worktree drift, `changeSetSha` mismatch, return mismatch, or changed history/anchor/config |
+| Installed harness is `broken` or refresh skips files | one of the three generated files is absent, modified, unstamped, or has an unknown template version | restore intentionally, or run `/docaudit:init --harness --refresh`; review `created`, `skipped`, and `skipReasons` |
 
 ---
 
@@ -455,24 +527,50 @@ point.
 
 ```
 doc-audit-harness/
-├── .claude-plugin/plugin.json          # manifest (name: docaudit)
-├── skills/
-│   ├── audit/SKILL.md                  # /docaudit:audit [--full] — 5-phase orchestrator
-│   │   ├── scripts/compute-baseline.sh # Phase 1: anchor → change set (merge-base)
-│   │   ├── scripts/resolve-impact.py   # Phase 2: change set → impacted docs (UNION)
-│   │   ├── scripts/write-anchor.sh     # Phase 5: anchor write (CONSISTENT only)
-│   │   ├── scripts/generic-layers.py   # Phase 4 fallback: format/existence/semantic
-│   │   ├── scripts/inventory.py        # init: deterministic repo inventory
-│   │   ├── scripts/scaffold.py         # init --scaffold: tailored layer skeletons
-│   │   └── references/{config-schema,default-heuristics,workflow-template}.*
-│   └── init/SKILL.md                   # /docaudit:init [--scaffold]
-│                                        #   (generic format/existence/semantic layers are
-│                                        #    realized as generic-layers.py above, NOT skill dirs)
-├── agents/doc-impact-verifier.md       # per-doc verification subagent
-├── docs/ADOPTION.md                    # ← this guide (English)
-├── docs/ADOPTION.ja.md                 # Japanese translation
-├── docs/examples/doc-audit.example.json # copy-paste config template (see §4b)
-└── tests/                              # engine unit tests (python3 -m unittest discover -s tests -t .)
+├── .claude-plugin/plugin.json
+├── skills/audit/SKILL.md
+├── skills/init/SKILL.md
+├── skills/audit/scripts/ax-probe.sh
+├── skills/audit/scripts/change-set-sha.py
+├── skills/audit/scripts/check-verdicts.py
+├── skills/audit/scripts/classify-run.py
+├── skills/audit/scripts/cocoindex-probe.sh
+├── skills/audit/scripts/codegraph-probe.sh
+├── skills/audit/scripts/codex-probe.sh
+├── skills/audit/scripts/compute-baseline.sh
+├── skills/audit/scripts/decide-verdict.py
+├── skills/audit/scripts/docaudit_cache.py
+├── skills/audit/scripts/docaudit_paths.py
+├── skills/audit/scripts/fix-scope.py
+├── skills/audit/scripts/generic-layers.py
+├── skills/audit/scripts/graphify-probe.sh
+├── skills/audit/scripts/impact-supplement.py
+├── skills/audit/scripts/inventory.py
+├── skills/audit/scripts/mdq-health.py
+├── skills/audit/scripts/mdq-index.sh
+├── skills/audit/scripts/open-run.py
+├── skills/audit/scripts/plan-dispatch.py
+├── skills/audit/scripts/resolve-impact.py
+├── skills/audit/scripts/scaffold.py
+├── skills/audit/scripts/seal-run.py
+├── skills/audit/scripts/set-config-key.py
+├── skills/audit/scripts/sibling-scan.py
+├── skills/audit/scripts/start-run.py
+├── skills/audit/scripts/tree-digest.py
+├── skills/audit/scripts/write-anchor.sh
+├── skills/audit/scripts/write-evidence.py
+├── skills/audit/scripts/write-verdict.py
+├── skills/audit/references/codex-review-output.schema.json
+├── skills/audit/references/config-schema.md
+├── skills/audit/references/default-heuristics.md
+├── skills/audit/references/engine-shas.json
+├── skills/audit/references/workflow-template.js
+├── agents/doc-impact-verifier-light.md
+├── agents/doc-impact-verifier.md
+├── docs/ADOPTION.md
+├── docs/ADOPTION.ja.md
+├── docs/examples/doc-audit.example.json
+└── tests/
 ```
 
 For the full design rationale (why each decision was made), see the originating project's

@@ -28,8 +28,8 @@ class TestTreeDigest(unittest.TestCase):
         git(self.repo, "config", "user.name", "t")
         self.write("tracked.txt", "tracked\n")
         self.write("staged.txt", "staged\n")
-        self.write("excluded/tracked.txt", "excluded\n")
-        self.write("also-excluded/tracked.txt", "also excluded\n")
+        self.write(".mdq/tracked.txt", "excluded\n")
+        self.write(".codegraph/tracked.txt", "also excluded\n")
         git(self.repo, "add", "-A")
         git(self.repo, "commit", "-m", "init")
 
@@ -50,35 +50,42 @@ class TestTreeDigest(unittest.TestCase):
         return digest
 
     def test_excluded_new_and_changed_files_do_not_change_digest(self):
-        before = self.digest("excluded", "also-excluded")
-        self.write("excluded/tracked.txt", "changed\n")
-        self.write("excluded/new.txt", "new\n")
-        self.write("also-excluded/tracked.txt", "changed\n")
-        self.write("also-excluded/new.txt", "new\n")
-        after = self.digest("excluded", "also-excluded")
+        before = self.digest(".mdq", ".codegraph")
+        self.write(".mdq/tracked.txt", "changed\n")
+        self.write(".mdq/new.txt", "new\n")
+        self.write(".codegraph/tracked.txt", "changed\n")
+        self.write(".codegraph/new.txt", "new\n")
+        after = self.digest(".mdq", ".codegraph")
         self.assertEqual(after, before)
 
+    def test_claude_worktrees_are_allowlisted_and_excluded(self):
+        before = self.digest(".claude/worktrees")
+        self.write(".claude/worktrees/agent/copy.py", "first\n")
+        self.assertEqual(self.digest(".claude/worktrees"), before)
+        self.write(".claude/worktrees/agent/copy.py", "second\n")
+        self.assertEqual(self.digest(".claude/worktrees"), before)
+
     def test_tracked_unstaged_change_changes_digest(self):
-        before = self.digest("excluded")
+        before = self.digest(".mdq")
         self.write("tracked.txt", "changed unstaged\n")
-        self.assertNotEqual(self.digest("excluded"), before)
+        self.assertNotEqual(self.digest(".mdq"), before)
 
     def test_tracked_staged_change_changes_digest(self):
-        before = self.digest("excluded")
+        before = self.digest(".mdq")
         self.write("staged.txt", "changed staged\n")
         git(self.repo, "add", "staged.txt")
-        self.assertNotEqual(self.digest("excluded"), before)
+        self.assertNotEqual(self.digest(".mdq"), before)
 
     def test_untracked_content_change_changes_digest(self):
         self.write("new.txt", "one\n")
-        before = self.digest("excluded")
+        before = self.digest(".mdq")
         self.write("new.txt", "two\n")
-        self.assertNotEqual(self.digest("excluded"), before)
+        self.assertNotEqual(self.digest(".mdq"), before)
 
     def test_without_excludes_changes_inside_excluded_directory_are_visible(self):
         before = self.digest()
-        self.write("excluded/tracked.txt", "changed without exclusion\n")
-        self.write("excluded/new.txt", "new without exclusion\n")
+        self.write(".mdq/tracked.txt", "changed without exclusion\n")
+        self.write(".mdq/new.txt", "new without exclusion\n")
         self.assertNotEqual(self.digest(), before)
 
     def test_external_diff_driver_is_ignored(self):
@@ -88,9 +95,9 @@ class TestTreeDigest(unittest.TestCase):
         os.chmod(external, 0o755)
         git(self.repo, "config", "diff.external", external)
         self.write("tracked.txt", "first change\n")
-        before = self.digest("excluded")
+        before = self.digest(".mdq")
         self.write("tracked.txt", "second change\n")
-        self.assertNotEqual(self.digest("excluded"), before)
+        self.assertNotEqual(self.digest(".mdq"), before)
 
     def test_untracked_symlink_target_change_changes_digest(self):
         target_a = os.path.join(self.repo, "target-a.txt")
@@ -99,17 +106,17 @@ class TestTreeDigest(unittest.TestCase):
         self.write("target-b.txt", "b\n")
         link = os.path.join(self.repo, "link.txt")
         os.symlink("target-a.txt", link)
-        before = self.digest("excluded")
+        before = self.digest(".mdq")
         os.unlink(link)
         os.symlink("target-b.txt", link)
-        self.assertNotEqual(self.digest("excluded"), before)
+        self.assertNotEqual(self.digest(".mdq"), before)
 
     def test_untracked_directory_symlink_contributes_to_digest(self):
         os.makedirs(os.path.join(self.repo, "real-dir"))
         os.symlink("real-dir", os.path.join(self.repo, "dir-link"))
-        before = self.digest("excluded")
+        before = self.digest(".mdq")
         os.unlink(os.path.join(self.repo, "dir-link"))
-        self.assertNotEqual(self.digest("excluded"), before)
+        self.assertNotEqual(self.digest(".mdq"), before)
 
 
 if __name__ == "__main__":

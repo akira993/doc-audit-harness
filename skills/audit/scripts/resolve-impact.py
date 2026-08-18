@@ -29,6 +29,8 @@ Rules:
 """
 import argparse, json, os, re, sys
 
+from docaudit_paths import list_doc_files as safe_list_doc_files, validate_repo_path
+
 DEFAULT_MIN_IDENT = 5
 DEFAULT_EXCLUDE_BASENAMES = {
     "readme.md", "index.md", "changelog.md", "license", "license.md",
@@ -99,6 +101,7 @@ def main():
     ap.add_argument("--config", required=True)
     ap.add_argument("--changed", required=True)
     ap.add_argument("--repo-root", default=os.getcwd())
+    ap.add_argument("--mode", choices=["incremental", "full"], default="incremental")
     args = ap.parse_args()
 
     try:
@@ -124,29 +127,43 @@ def main():
     min_len = int(heur.get("minIdentifierLength", DEFAULT_MIN_IDENT))
     exclude = {b.lower() for b in heur.get("excludeBasenames", [])} | DEFAULT_EXCLUDE_BASENAMES
     max_docs = int(cfg.get("maxImpactedDocs", 200))
+    if max_docs < 1:
+        print("error: maxImpactedDocs must be at least 1", file=sys.stderr); sys.exit(2)
 
     prov = {}  # path -> set of provenances
+    warnings = []
 
     def exists(rel):
-        return os.path.isfile(os.path.join(repo, rel))
+        try:
+            validate_repo_path(repo, rel)
+            return True
+        except ValueError:
+            return False
 
-    # --- mapped ---
-    for entry in cfg.get("impactMap", []):
-        pat = entry.get("changed", "")
-        if not any(matches(c, pat) for c in changed):
-            continue
-        for doc in entry.get("impacts", []):
-            if exists(doc):
-                prov.setdefault(doc, set()).add("mapped")
-            else:
-                print(f"warn: mapped impact path missing on disk: {doc}", file=sys.stderr)
+    if args.mode == "full":
+        for doc in safe_list_doc_files(
+                repo, cfg.get("docGlobs", ["docs/**/*.md", "*.md"]), warnings):
+            prov.setdefault(doc, set()).add("full")
+    else:
+        # --- mapped ---
+        for entry in cfg.get("impactMap", []):
+            pat = entry.get("changed", "")
+            if not any(matches(c, pat) for c in changed):
+                continue
+            for doc in entry.get("impacts", []):
+                if exists(doc):
+                    prov.setdefault(doc, set()).add("mapped")
+                else:
+                    warnings.append(f"mapped impact path dropped as missing/unsafe: {doc}")
+                    print(f"warn: mapped impact path missing/unsafe: {doc}", file=sys.stderr)
 
     # --- heuristic ---
-    doc_files = list_doc_files(repo, cfg.get("docGlobs", ["docs/**/*.md", "*.md"]))
+    doc_files = safe_list_doc_files(
+        repo, cfg.get("docGlobs", ["docs/**/*.md", "*.md"]), warnings)
     all_tokens = set()
     for c in changed:
         all_tokens |= tokens_for(c, min_len, exclude)
-    if all_tokens:
+    if args.mode != "full" and all_tokens:
         token_list = sorted(all_tokens, key=len, reverse=True)
         for doc in doc_files:
             try:
@@ -162,7 +179,6 @@ def main():
     # reason="docsThatCite" if any changed path ∈ docsThatCite (strip ':line').
     # reason="liveSource"   if any changed path ∈ file paths extracted from liveSource.
     ssot = []
-    warnings = []
     for s in cfg.get("ssotSources", []):
         cite_paths = {c.split(":", 1)[0] for c in s.get("docsThatCite", [])}
         live = s.get("liveSource", "")
@@ -187,13 +203,15 @@ def main():
     # --- assemble with provenance + cap (mapped first) ---
     def provenance(p):
         s = prov[p]
+        if "full" in s:
+            return "full"
         return "both" if {"mapped", "heuristic"} <= s else next(iter(s))
 
-    mapped_paths = sorted(p for p in prov if "mapped" in prov[p])
-    heur_only = sorted(p for p in prov if "mapped" not in prov[p])
+    mapped_paths = sorted(p for p in prov if "mapped" in prov[p] or "full" in prov[p])
+    heur_only = sorted(p for p in prov if "mapped" not in prov[p] and "full" not in prov[p])
     ordered = mapped_paths + heur_only
     candidates_before_cap = len(mapped_paths) + len(heur_only)
-    truncated = len(ordered) > max_docs
+    truncated = args.mode != "full" and len(ordered) > max_docs
     if truncated:
         dropped = len(ordered) - max_docs
         print(f"warn: {dropped} impacted docs dropped by maxImpactedDocs={max_docs}", file=sys.stderr)
@@ -209,7 +227,7 @@ def main():
         "impacted": impacted,
         "mapGapCandidates": map_gap,
         "ssotRecheck": ssot,
-        "warnings": warnings,
+        "warnings": list(dict.fromkeys(warnings)),
         "truncated": truncated,
         "counts": {"changed": len(changed), "impacted": len(impacted),
                    "mapped": mapped_n, "heuristicOnly": heur_n,

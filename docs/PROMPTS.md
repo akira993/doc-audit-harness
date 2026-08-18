@@ -36,8 +36,6 @@ Report-only. Do not edit any files — just produce the verdict and findings.
 Run /docaudit:audit
 ```
 
----
-
 ## 2. Pre-release full sweep
 
 Use this before tagging a release (or after a large batch of changes) to validate the
@@ -64,7 +62,9 @@ Run /docaudit:audit --full
 
 Use this when you only care about one subsystem or a handful of docs right now.
 `/docaudit:audit` has no scope/path flag — it always resolves the full impacted set for
-the current change set (`impactMap` + heuristic) — so scoping happens on the prompt side:
+the current change set: incremental mode combines mapped `impactMap` and heuristic hits,
+supplements them with graphify/semantic candidates when available, and `--full` includes every
+`docGlobs` document — so scoping happens on the prompt side:
 name the docs/subsystem in `<scope>` and ask for their verdicts to be called out
 explicitly in the summary.
 
@@ -161,6 +161,63 @@ the report instead of trying to create one.
 <report>
 Return the roll-up verdict, the impacted docs with their per-doc verdicts, and any
 non-blocking warnings. Keep it concise.
+</report>
+
+Run /docaudit:audit
+```
+
+---
+
+## 7. Install the local harness, then run the first audit
+
+Use this when adopting docaudit and you want the repository-local `/check-docs`,
+`doc-lint`, and `scripts/check-docs.py` structure. `init` will inventory existing doc
+tools and ask whether to integrate, adjust, keep, or install new ones.
+
+```
+<task>
+Set up docaudit with its local documentation harness, then run the first full audit.
+</task>
+<context>
+Inventory this repository's existing documentation tools. If there is no suitable
+existing structure, install /check-docs, doc-lint, and scripts/check-docs.py.
+</context>
+<constraints>
+Show and obtain approval for the harness choice and config before writing. After setup,
+list the config and all three generated harness files that must be committed. Do not
+change existing documentation during init.
+</constraints>
+<report>
+After the approved files are written, run the first whole-corpus audit and report its
+verdict, pre-flight result, and any files that need documentation fixes.
+</report>
+
+Run /docaudit:init --harness, then run /docaudit:audit --full
+```
+
+---
+
+## 8. Approve pre-flight fixes before the audit
+
+Use this when the cheap whole-tree checks find repairable documentation failures and you
+want to fix only those approved files before the deeper audit continues.
+
+```
+<task>
+Run docaudit and, if pre-flight finds FAIL results, offer to fix them before continuing.
+</task>
+<context>
+The local documentation harness is configured. I want the deterministic whole-tree
+checks to run before the deep per-document verification.
+</context>
+<constraints>
+If pre-flight fails, choose “fix and audit” only after showing the findings and proposed
+documentation paths. Edit only paths authorized by docaudit's fix-scope check. Do not
+edit ADRs, decisions, logs, .claude files, or any path outside the approved set. Re-run
+pre-flight after the fix and stop if the scope check detects another change.
+</constraints>
+<report>
+Report the pre-flight decision and final findings, followed by the audit verdict.
 </report>
 
 Run /docaudit:audit

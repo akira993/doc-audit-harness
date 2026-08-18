@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Compute a deterministic SHA-256 digest of a repository worktree.
-
-The digest covers filtered ``git status --porcelain`` output, filtered
-``git diff HEAD`` output, and the ordered path/content-hash list of untracked
-files.  This helper is read-only; it never changes the repository.
-"""
+"""Compute a fail-closed deterministic worktree digest."""
 
 import argparse
 import hashlib
@@ -14,105 +9,74 @@ import subprocess
 import sys
 
 
-def run_git(repo_root, *args):
-    return subprocess.run(
-        ["git", "-C", repo_root, *args],
-        capture_output=True,
-        check=True,
-    ).stdout
+KNOWN_ROOTS = {".mdq", ".codegraph", "graphify-out", ".cocoindex_code"}
 
 
-def normalize_exclude(value):
-    value = value.replace("\\", "/").strip()
-    if value in ("", ".") or value.startswith("/"):
-        raise ValueError(f"invalid repo-relative exclude: {value!r}")
-    value = value.rstrip("/")
-    if not value:
-        raise ValueError("invalid repo-relative exclude")
-    parts = value.split("/")
-    if any(part in ("", ".", "..") for part in parts):
-        raise ValueError(f"invalid repo-relative exclude: {value!r}")
-    return "/".join(parts)
+def git(root, *args):
+    return subprocess.run(["git", "-C", root, *args], capture_output=True, check=True).stdout
 
 
-def excluded(path, excludes):
-    return any(path == prefix or path.startswith(prefix + "/") for prefix in excludes)
+def normalize(value):
+    value = value.replace("\\", "/").rstrip("/")
+    if not value or value.startswith("/") or any(p in ("", ".", "..") for p in value.split("/")):
+        raise ValueError(f"invalid exclude: {value!r}")
+    if any(char in value for char in "*?["):
+        raise ValueError("digest excludes may not contain globs")
+    if not (value == ".claude/state" or value.startswith(".claude/state/")
+            or value == ".claude/worktrees" or value.startswith(".claude/worktrees/")
+            or value.split("/", 1)[0] in KNOWN_ROOTS):
+        raise ValueError(f"digest exclude is not allowlisted: {value}")
+    return value
 
 
-def porcelain_path(line):
-    """Return the path(s) represented by one ordinary porcelain line."""
-    if len(line) < 4:
-        return []
-    value = line[3:]
-    if b" -> " in value:
-        old, new = value.split(b" -> ", 1)
-        return [os.fsdecode(old), os.fsdecode(new)]
-    return [os.fsdecode(value)]
+def is_excluded(path, excludes):
+    path = path.replace(os.sep, "/")
+    return any(path == item or path.startswith(item + "/") for item in excludes)
 
 
-def filtered_status(raw, excludes):
-    lines = raw.splitlines(keepends=True)
-    kept = []
-    for line in lines:
+def compute(root, excludes, include_head=False):
+    status_lines = git(root, "status", "--porcelain", "--untracked-files=all").splitlines(True)
+    status = bytearray()
+    for line in status_lines:
         text = line.rstrip(b"\r\n")
-        paths = porcelain_path(text)
-        if paths and all(excluded(path, excludes) for path in paths):
+        value = os.fsdecode(text[3:]) if len(text) >= 4 else ""
+        paths = value.split(" -> ")
+        if paths and all(is_excluded(path, excludes) for path in paths):
             continue
-        kept.append(line)
-    return b"".join(kept)
-
-
-def filtered_diff(repo_root, excludes):
-    args = ["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--", "."]
-    args.extend(":!" + prefix for prefix in excludes)
-    return run_git(repo_root, *args)
-
-
-def untracked_hash_list(repo_root, excludes):
-    raw = run_git(repo_root, "ls-files", "--others", "--exclude-standard")
-    lines = raw.splitlines()
-    entries = []
-    for path_bytes in lines:
-        path = os.fsdecode(path_bytes)
-        if excluded(path, excludes):
+        status.extend(line)
+    command = ["diff", "--no-ext-diff", "--no-textconv", "HEAD", "--", "."]
+    command.extend(":!" + item for item in excludes)
+    diff = git(root, *command)
+    untracked = bytearray()
+    for raw_path in git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0"):
+        if not raw_path:
             continue
-        full = os.path.join(repo_root, *path.split("/"))
+        path = os.fsdecode(raw_path)
+        if is_excluded(path, excludes):
+            continue
+        full = os.path.join(root, path)
         if os.path.islink(full):
-            target = os.fsencode(os.readlink(full))
-            entries.append(
-                path.encode("utf-8", "surrogateescape") + b"\tSYMLINK\0" +
-                len(target).to_bytes(8, "big") + target + b"\n"
-            )
+            content = os.fsencode(os.readlink(full))
+        elif os.path.isfile(full):
+            with open(full, "rb") as handle:
+                content = handle.read()
+        else:
             continue
-        if os.path.isdir(full):
-            continue
-        with open(full, "rb") as f:
-            content_hash = hashlib.sha256(f.read()).hexdigest()
-        entries.append(path.encode("utf-8", "surrogateescape") + b"\t" +
-                       content_hash.encode("ascii") + b"\n")
-    return b"".join(entries)
-
-
-def compute(repo_root, excludes):
-    status = filtered_status(run_git(repo_root, "status", "--porcelain"), excludes)
-    diff = filtered_diff(repo_root, excludes)
-    untracked = untracked_hash_list(repo_root, excludes)
-    digest = hashlib.sha256(status + diff + untracked).hexdigest()
-    return "sha256:" + digest
+        untracked.extend(raw_path + b"\0" + hashlib.sha256(content).digest())
+    head = git(root, "rev-parse", "HEAD").strip() + b"\0" if include_head else b""
+    return "sha256:" + hashlib.sha256(head + bytes(status) + diff + bytes(untracked)).hexdigest()
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Compute a deterministic worktree digest.")
-    ap.add_argument("--repo-root", required=True)
-    ap.add_argument("--exclude", action="append", default=[],
-                    help="repo-relative path prefix to exclude (repeatable)")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--repo-root", required=True)
+    parser.add_argument("--exclude", action="append", default=[])
+    parser.add_argument("--include-head", action="store_true")
+    args = parser.parse_args()
     try:
-        repo_root = os.path.realpath(args.repo_root)
-        excludes = [normalize_exclude(value) for value in args.exclude]
-        digest = compute(repo_root, excludes)
-    except (OSError, subprocess.CalledProcessError, ValueError) as e:
-        print(f"tree-digest: {e}", file=sys.stderr)
+        digest = compute(os.path.realpath(args.repo_root), [normalize(item) for item in args.exclude], args.include_head)
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
+        print(f"tree-digest: {exc}", file=sys.stderr)
         return 2
     print(json.dumps({"digest": digest}, sort_keys=True))
     return 0

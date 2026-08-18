@@ -1,98 +1,144 @@
 #!/usr/bin/env python3
-"""start-run.py — open an audit run by writing the evidence manifest.
+"""Create the complete unsealed run manifest from impact and dispatch plans."""
 
-The manifest is the "expected work" contract that decide-verdict.py later checks
-the evidence against. It is derived from the deterministic Phase-2 output
-(resolve-impact.py), NOT from anything the orchestrator narrates:
-
-  - impacted : the exact list of doc paths that MUST each get a Phase-3 verdict
-  - head     : the commit the verdicts are valid for (defeats replayed evidence)
-  - phase4Expected : whether the SKILL Phase-4 gate opens (impacted non-empty OR
-                     ssotRecheck non-empty OR mode==full) — so a required Phase 4
-                     cannot be silently skipped
-
-It also creates the verdicts/ directory each Phase-3 subagent writes into.
-
-This script is plumbing run by the orchestrator; it is NOT a trust anchor (an
-orchestrator with shell access could fake a manifest). Its integrity is the job
-of the Layer-3 CI re-derivation. What it buys locally is that the honest path is
-turn-key and every downstream omission becomes a hard REFUSE in the gate.
-"""
 import argparse
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
-import uuid
+import tempfile
+
+from docaudit_paths import list_doc_files, validate_repo_path
 
 
-def impacted_paths(impacted):
-    out = []
-    for d in impacted:
-        if isinstance(d, str):
-            out.append(d)
-        elif isinstance(d, dict) and "path" in d:
-            out.append(d["path"])
-        else:
-            sys.exit(f"start-run: malformed impacted entry: {d!r}")
-    return out
+RUNID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
+BUILTIN_EXCLUDES = [".claude/state/docaudit-run", ".claude/state/docaudit-history.json",
+                    ".claude/state/docaudit-last-run.json", ".claude/state/last-doc-audit.json",
+                    ".claude/worktrees", ".mdq", ".codegraph", "graphify-out",
+                    ".cocoindex_code"]
+
+
+def atomic_write(path, raw):
+    fd, temporary = tempfile.mkstemp(prefix=".manifest.", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def impacted_paths(impact, repo):
+    entries = impact.get("impacted")
+    if not isinstance(entries, list):
+        raise ValueError("impact.impacted must be an array")
+    paths = []
+    for entry in entries:
+        path = entry if isinstance(entry, str) else entry.get("path") if isinstance(entry, dict) else None
+        if not isinstance(path, str):
+            raise ValueError("malformed impacted entry")
+        paths.append(validate_repo_path(repo, path))
+    if len(paths) != len(set(paths)):
+        raise ValueError("duplicate impacted paths")
+    return paths
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Write the docaudit run manifest.")
-    ap.add_argument("--run-dir", required=True)
-    ap.add_argument("--repo-root", required=True)
-    ap.add_argument("--impact-json", required=True,
-                    help="resolve-impact.py output: a file path, or - for stdin")
-    ap.add_argument("--mode", default="incremental", choices=["incremental", "full"])
-    ap.add_argument("--runid", default=None, help="override (default: generated)")
-    args = ap.parse_args()
-
-    raw = sys.stdin.read() if args.impact_json == "-" else open(args.impact_json).read()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--run-dir", required=True)
+    parser.add_argument("--runid", required=True)
+    parser.add_argument("--repo-root", required=True)
+    parser.add_argument("--impact-json", required=True)
+    parser.add_argument("--dispatch-json", required=True)
+    parser.add_argument("--run-class", required=True, choices=["light", "standard"])
+    parser.add_argument("--mode", required=True, choices=["incremental", "full"])
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--evidence", required=True)
+    args = parser.parse_args()
     try:
-        impact = json.loads(raw)
-    except Exception as e:
-        sys.exit(f"start-run: --impact-json is not valid JSON: {e}")
-
-    impacted = impacted_paths(impact.get("impacted", []))
-    if len(set(impacted)) != len(impacted):
-        sys.exit("start-run: resolve-impact produced duplicate impacted paths")
-    ssot_recheck = impact.get("ssotRecheck", [])
-
-    head = subprocess.run(
-        ["git", "-C", args.repo_root, "rev-parse", "HEAD"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip()
-
-    phase4_expected = bool(impacted) or bool(ssot_recheck) or args.mode == "full"
-    runid = args.runid or "run-" + uuid.uuid4().hex[:12]
-
-    # Start clean: stale evidence from a previous run carries a different runid
-    # (the gate would REFUSE on it). Clear it so the honest path just works.
-    vdir = os.path.join(args.run_dir, "verdicts")
-    os.makedirs(vdir, exist_ok=True)
-    for name in os.listdir(vdir):
-        if name.endswith(".json"):
-            os.remove(os.path.join(vdir, name))
-    p4 = os.path.join(args.run_dir, "phase4.json")
-    if os.path.isfile(p4):
-        os.remove(p4)
-
-    manifest = {
-        "runid": runid,
-        "head": head,
-        "mode": args.mode,
-        "impacted": impacted,
-        "phase4Expected": phase4_expected,
-    }
-    with open(os.path.join(args.run_dir, "manifest.json"), "w") as f:
-        json.dump(manifest, f, indent=2)
-        f.write("\n")
-
-    print(json.dumps({"runid": runid, "runDir": args.run_dir,
-                      "impactedCount": len(impacted), "phase4Expected": phase4_expected},
-                     sort_keys=True))
+        if not RUNID_RE.match(args.runid) or os.path.basename(os.path.realpath(args.run_dir)) != args.runid:
+            raise ValueError("runid is invalid or does not match RUN_DIR basename")
+        evidence = json.loads(args.evidence)
+        if (not isinstance(evidence, dict) or evidence.get("runid") != args.runid
+                or os.path.realpath(str(evidence.get("runDir"))) != os.path.realpath(args.run_dir)):
+            raise ValueError("EVIDENCE run identity mismatch")
+        repo = os.path.realpath(args.repo_root)
+        expected_run_dir = os.path.join(repo, ".claude", "state", "docaudit-run", args.runid)
+        if os.path.realpath(args.run_dir) != os.path.realpath(expected_run_dir):
+            raise ValueError("RUN_DIR is outside the run ledger")
+        with open(args.impact_json, encoding="utf-8") as handle:
+            impact = json.load(handle)
+        with open(args.dispatch_json, "rb") as handle:
+            dispatch_raw = handle.read()
+        if "sha256:" + hashlib.sha256(dispatch_raw).hexdigest() != evidence.get("dispatch"):
+            raise ValueError("dispatch sha does not match EVIDENCE")
+        dispatch = json.loads(dispatch_raw.decode("utf-8"))
+        with open(args.config, "rb") as handle:
+            config_raw = handle.read()
+        if "sha256:" + hashlib.sha256(config_raw).hexdigest() != evidence.get("config"):
+            raise ValueError("config changed after open-run")
+        config = json.loads(config_raw.decode("utf-8"))
+        paths = impacted_paths(impact, repo)
+        for field in ("dispatch", "cached", "changedSet"):
+            if not isinstance(dispatch.get(field), list):
+                raise ValueError(f"dispatch.{field} must be an array")
+        if set(dispatch["dispatch"]) | set(dispatch["cached"]) != set(paths):
+            raise ValueError("dispatch union cached does not equal impacted")
+        if set(dispatch["dispatch"]) & set(dispatch["cached"]):
+            raise ValueError("dispatch and cached overlap")
+        head = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        baseline = head if args.mode == "full" else dispatch.get("baselineSha")
+        if not isinstance(baseline, str):
+            raise ValueError("baselineSha is missing")
+        harness = config.get("harness", {})
+        state = harness.get("state") if isinstance(harness, dict) else None
+        commands = config.get("docAuditCommands")
+        preflight_required = state in {"installed", "integrated", "adjusted"} or (
+            state in {None, "existing-untouched"} and bool(commands))
+        if state == "installed":
+            generated = [".claude/commands/check-docs.md",
+                         ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+            if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                preflight_required = False
+        phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                           or args.mode == "full" or preflight_required)
+        digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+        doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+        corpus = list_doc_files(repo, doc_globs)
+        if args.mode == "full" and not paths and corpus:
+            raise ValueError("full mode requires impacted documents unless the corpus is empty")
+        manifest = {"runid": args.runid, "head": head, "mode": args.mode,
+                    "baselineSha": baseline, "changedSet": dispatch["changedSet"],
+                    "changeSetSha": dispatch.get("changeSetSha"), "impacted": paths,
+                    "dispatch": dispatch["dispatch"], "cached": dispatch["cached"],
+                    "runClass": args.run_class, "phase4Required": phase4_required,
+                    "preflightRequired": preflight_required,
+                    "contractVersion": dispatch.get("contractVersion"),
+                    "digestExclude": digest_exclude, "sealed": False,
+                    "emptyCorpus": not corpus, "docGlobs": doc_globs}
+        if not isinstance(manifest["changeSetSha"], str) or not isinstance(manifest["contractVersion"], str):
+            raise ValueError("dispatch cache contract fields are missing")
+        raw = (json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
+        os.makedirs(os.path.join(args.run_dir, "verdicts"), exist_ok=True)
+        atomic_write(os.path.join(args.run_dir, "manifest.json"), raw)
+        impact_target = os.path.join(args.run_dir, "impact.json")
+        if os.path.realpath(args.impact_json) != os.path.realpath(impact_target):
+            with open(args.impact_json, "rb") as handle:
+                impact_raw = handle.read()
+            atomic_write(impact_target, impact_raw)
+        evidence["manifest"] = "sha256:" + hashlib.sha256(raw).hexdigest()
+    except (OSError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
+        print(f"start-run: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(evidence, ensure_ascii=False, sort_keys=True))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

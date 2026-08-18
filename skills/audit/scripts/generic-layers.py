@@ -301,6 +301,9 @@ def main():
     ap.add_argument("--layer", choices=["format", "existence", "semantic", "all"], default="all")
     ap.add_argument("--paths", default=None,
                     help="file with newline doc paths, or '-' for stdin; default = all docGlobs docs")
+    ap.add_argument("--format", choices=["json", "text"], default="json")
+    ap.add_argument("--exit-code", action="store_true",
+                    help="exit 1 when at least one FAIL finding exists")
     args = ap.parse_args()
     try:
         with open(args.config, encoding="utf-8") as f:
@@ -332,9 +335,20 @@ def main():
     counts = {"docs": len(docs), "findings": len(findings),
               "fail": sum(1 for f in findings if f["severity"] == "FAIL"),
               "warn": sum(1 for f in findings if f["severity"] == "WARN")}
-    json.dump({"findings": findings, "counts": counts}, sys.stdout, ensure_ascii=False, indent=2)
-    sys.stdout.write("\n")
+    if args.format == "json":
+        json.dump({"findings": findings, "counts": counts}, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+    else:
+        for finding in findings:
+            print("HIT {severity} {path}:{line} {message}".format(**finding))
+        finding_paths = {finding["path"] for finding in findings}
+        passed = max(0, len(docs) - len(finding_paths))
+        print(f"SUMMARY pass={passed} warn={counts['warn']} fail={counts['fail']}")
+        print("VERDICT " + ("NEEDS FIX" if counts["fail"] else "CONSISTENT"))
+    if args.exit_code and counts["fail"]:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
