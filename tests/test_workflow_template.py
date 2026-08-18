@@ -13,6 +13,8 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_TEMPLATE = ROOT / "skills" / "audit" / "references" / "workflow-template.js"
 WRITE_VERDICT = ROOT / "skills" / "audit" / "scripts" / "write-verdict.py"
+STANDARD_AGENT = ROOT / "agents" / "doc-impact-verifier.md"
+LIGHT_AGENT = ROOT / "agents" / "doc-impact-verifier-light.md"
 TEMPLATE_ENV = "DOCAUDIT_WORKFLOW_TEMPLATE"
 HELPERS_BEGIN = "// BEGIN PERSIST HELPERS"
 HELPERS_END = "// END PERSIST HELPERS"
@@ -75,6 +77,62 @@ process.stdout.write(buildPersistCmd(values[0], values[1], values[2], values[3])
         )
         return self.run_node(program, env=env)
 
+    def run_template(self, verifier_model, outcomes, parallel_null_indexes=None):
+        source = self.source.replace("export ", "", 1)
+        program = r"""
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+const source = process.env.DOCAUDIT_TEMPLATE_SOURCE
+const input = JSON.parse(process.env.DOCAUDIT_TEMPLATE_ARGS)
+const outcomes = JSON.parse(process.env.DOCAUDIT_TEMPLATE_OUTCOMES)
+const parallelNullIndexes = new Set(
+  JSON.parse(process.env.DOCAUDIT_PARALLEL_NULL_INDEXES)
+)
+const agentTypes = []
+let index = 0
+const execute = new AsyncFunction('args', 'phase', 'parallel', 'agent', source)
+;(async () => {
+  const result = await execute(
+    JSON.stringify(input),
+    () => {},
+    async (tasks) => {
+      const values = await Promise.all(tasks.map((task) => task()))
+      return values.map((value, i) => parallelNullIndexes.has(i) ? null : value)
+    },
+    async (_prompt, opts) => {
+      agentTypes.push(opts.agentType)
+      const value = outcomes[index]
+      index += 1
+      return value
+    },
+  )
+  process.stdout.write(JSON.stringify({ result, agentTypes }))
+})().catch((error) => {
+  process.stderr.write(String(error.stack || error))
+  process.exitCode = 1
+})
+"""
+        env = os.environ.copy()
+        env["DOCAUDIT_TEMPLATE_SOURCE"] = source
+        input_value = {
+            "repoRoot": "/repo",
+            "changeSummary": "changed",
+            "impacted": [
+                {"path": "docs/a.md", "provenance": "mapped"},
+                {"path": "docs/b.md", "provenance": "heuristic"},
+            ],
+            "runId": "20260818T000000Z-1234abcd",
+            "runDir": "/repo/.claude/state/docaudit-run/20260818T000000Z-1234abcd",
+            "scriptsDir": "/plugin/skills/audit/scripts",
+        }
+        if verifier_model is not None:
+            input_value["verifierModel"] = verifier_model
+        env["DOCAUDIT_TEMPLATE_ARGS"] = json.dumps(input_value)
+        env["DOCAUDIT_TEMPLATE_OUTCOMES"] = json.dumps(outcomes)
+        env["DOCAUDIT_PARALLEL_NULL_INDEXES"] = json.dumps(
+            parallel_null_indexes or []
+        )
+        return json.loads(self.run_node(program, env=env))
+
     @staticmethod
     def render_command(command, verdict, rationale):
         if not rationale.endswith("\n"):
@@ -109,7 +167,73 @@ new AsyncFunction(process.env.DOCAUDIT_TEMPLATE_SOURCE)
         self.assertIn("JSON.parse(a)", self.source)
         self.assertIn("const scriptsDir = a.scriptsDir", self.source)
         self.assertIn("if (!runId || !runDir || !scriptsDir)", self.source)
-        self.assertIn("agentType: 'docaudit:doc-impact-verifier'", self.source)
+        self.assertIn("'docaudit:doc-impact-verifier-light'", self.source)
+        self.assertIn("'docaudit:doc-impact-verifier'", self.source)
+        self.assertIn("verifierModel === 'haiku'", self.source)
+        self.assertIn("assignedPath: d.path", self.source)
+        self.assertNotIn("results.filter(Boolean)", self.source)
+        self.assertNotIn("--source", extract_helpers(self.source))
+
+    def test_verifier_model_selects_namespaced_agent_type(self):
+        outcomes = [
+            {"path": "docs/a.md", "verdict": "PASS", "rationale": "ok"},
+            {"path": "docs/b.md", "verdict": "WARN", "rationale": "check"},
+        ]
+        light = self.run_template("haiku", outcomes)
+        self.assertEqual(
+            light["agentTypes"],
+            ["docaudit:doc-impact-verifier-light"] * 2,
+        )
+        standard = self.run_template("sonnet", outcomes)
+        self.assertEqual(
+            standard["agentTypes"],
+            ["docaudit:doc-impact-verifier"] * 2,
+        )
+        defaulted = self.run_template(None, outcomes)
+        self.assertEqual(
+            defaulted["agentTypes"],
+            ["docaudit:doc-impact-verifier"] * 2,
+        )
+
+    def test_null_return_is_retained_with_assigned_path(self):
+        executed = self.run_template(
+            "sonnet",
+            [None, {"path": "docs/b.md", "verdict": "PASS", "rationale": "ok"}],
+        )
+        self.assertEqual(
+            executed["result"][0],
+            {
+                "assignedPath": "docs/a.md",
+                "returnedPath": None,
+                "verdict": None,
+                "rationale": None,
+                "suggestion": None,
+            },
+        )
+        self.assertEqual(executed["result"][1]["assignedPath"], "docs/b.md")
+        self.assertEqual(executed["result"][1]["returnedPath"], "docs/b.md")
+
+    def test_parallel_null_element_is_filled_with_assigned_path(self):
+        executed = self.run_template(
+            "sonnet",
+            [
+                {"path": "docs/a.md", "verdict": "PASS", "rationale": "ok"},
+                {"path": "docs/b.md", "verdict": "PASS", "rationale": "ok"},
+            ],
+            parallel_null_indexes=[0],
+        )
+        self.assertEqual(
+            executed["result"][0],
+            {
+                "assignedPath": "docs/a.md",
+                "returnedPath": None,
+                "verdict": None,
+                "rationale": None,
+                "suggestion": None,
+            },
+        )
+        self.assertEqual(executed["result"][1]["assignedPath"], "docs/b.md")
+        self.assertEqual(executed["result"][1]["returnedPath"], "docs/b.md")
 
     def test_slug_is_injective_for_underscore_and_separator_and_bounded(self):
         helpers = extract_helpers(self.source)
@@ -203,6 +327,43 @@ process.stdout.write(JSON.stringify(values.map(slug)))
             self.assertEqual(record["path"], "docs/self.md")
             self.assertEqual(record["verdict"], "PASS")
             self.assertEqual(record["rationale"], "kept before delimiter\n")
+
+
+class TestVerifierAgentDefinitions(unittest.TestCase):
+    @staticmethod
+    def split_definition(path):
+        raw = path.read_bytes()
+        parts = raw.split(b"---\n", 2)
+        if len(parts) != 3 or parts[0] != b"":
+            raise AssertionError(f"invalid front matter in {path}")
+        fields = {}
+        for line in parts[1].decode("utf-8").splitlines():
+            if ":" in line:
+                key, value = line.split(":", 1)
+                fields[key.strip()] = value.strip()
+        return fields, parts[2]
+
+    def test_frontmatter_models_and_names(self):
+        standard, _ = self.split_definition(STANDARD_AGENT)
+        light, _ = self.split_definition(LIGHT_AGENT)
+        self.assertEqual(standard["name"], "doc-impact-verifier")
+        self.assertEqual(standard["model"], "sonnet")
+        self.assertEqual(light["name"], "doc-impact-verifier-light")
+        self.assertEqual(light["model"], "haiku")
+        self.assertTrue(light["description"].startswith(standard["description"]))
+        self.assertIn("Haiku", light["description"])
+
+    def test_agent_bodies_are_byte_identical(self):
+        _, standard_body = self.split_definition(STANDARD_AGENT)
+        _, light_body = self.split_definition(LIGHT_AGENT)
+        self.assertEqual(light_body, standard_body)
+
+    def test_agent_documents_all_current_provenance_values(self):
+        _, body = self.split_definition(STANDARD_AGENT)
+        text = body.decode("utf-8")
+        for value in ("mapped", "heuristic", "both", "full", "graphify", "semantic"):
+            self.assertIn(f"`{value}`", text)
+        self.assertIn("`full` means a\n   full-corpus run and is not an impactMap-gap candidate", text)
 
 
 if __name__ == "__main__":

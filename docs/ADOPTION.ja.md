@@ -6,12 +6,12 @@ docaudit ハーネスを一度インストールし、任意のリポジトリ�
 
 > 🌐 English version: [ADOPTION.md](ADOPTION.md)
 
-> **docaudit は report-only（報告専用）。** 変更内容を、それを説明するドキュメントへマッピング
+> **docaudit は原則 report-only（報告専用）。** 変更内容を、それを説明するドキュメントへマッピング
 > し、検証し、`/security-review` を実行し、`/code-review` はユーザー実行を提案して
 > （モデルからは起動できない）、単一の
-> **CONSISTENT / NEEDS FIX** verdict を出す — が、**あなたのドキュメントを編集することは一切
-> ない**。修正はすべてあなたの手で行う。ツールが書き込むのは自身の config（`init` 経由）、
-> 監査レポート、anchor 状態ファイルのみ。
+> **CONSISTENT / NEEDS FIX / REFUSED** verdict を出す。唯一の文書編集例外は、pre-flight の
+> FAIL に対して利用者が明示的に「修正して監査」を選んだ場合である。`fix-scope.py` が承認済みの
+> 文書パスだけに制限し、非対話実行では編集しない。
 
 ---
 
@@ -150,6 +150,10 @@ exit 0・limit 件を、目に見えて低いスコア帯で返す）。どち�
 扱う。初期化は `/docaudit:init` の中でのみ、`.gitignore` への書き込みを明示したユーザー承認を
 経て行われる。
 
+impact provenance は、`impactMap` のみなら `mapped`、heuristic のみなら `heuristic`、両方が同じ
+文書へ到達した場合は `both`、任意の補完元なら `graphify` / `semantic`、anchor が無いか明示的な
+`--full` の全文書 run では各 `docGlobs` 文書が `full` になる。
+
 各 audit は codex-review 行の直後にさらに3つの非ブロッキング状態行を出力する:
 **symbol-graph**（💡 未導入 / ✓ 稼働 / ⚠ 索引構築失敗）、**doc-graph**（💡 未導入 / ✓ 稼働 +
 `graphify-out/` gitignore 済み / ⚠ 稼働だが `graphify-out/` が gitignore されていない —
@@ -179,7 +183,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.9.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.10.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -215,12 +219,20 @@ cd ~/code/my-project
 実行内容:
 1. repo を **inventory**（doc ディレクトリ、front-matter 規約、code ディレクトリ、既存
    ドキュメントツール、code→doc の「言及」、index ファイル）— grep/find ベースで決定論的。
-2. `.claude/doc-audit.json` の提案を **ドラフト** し、各キーの 1 行根拠付きで提示。
-3. **承認を待つ**（承認なしには書かない）。承認後に config を書き込む。
-4. 初回監査へ誘導。
+2. **ローカルハーネスについて一度質問する。** 既存候補が無ければ `/check-docs` +
+   `doc-lint` + `scripts/check-docs.py` を入れるか選ぶ。候補があれば、統合・調整・そのまま・
+   新規導入から選ぶ。保存される状態は `installed`、`declined`、`integrated`、`adjusted`、
+   `existing-untouched` の 5 つ。
+3. `.claude/doc-audit.json` の提案を **ドラフト** し、各キーの 1 行根拠付きで提示。
+4. **承認を待つ**（承認なしには書かない）。承認後に config を書き込む。
+5. 初回監査へ誘導。
 
 `init` は **追加のみ**: 新規ファイルを作るだけで、既存ドキュメントは編集しない。
-`--scaffold` を付けるとプロジェクト固有のレイヤスキル雛形も生成する（§7）。
+`--scaffold` を付けるとプロジェクト固有のレイヤスキル雛形も生成する（§7）。config が既に
+ある場合のハーネス操作は `--harness`、判断の聞き直しは `--reask`、変更されていない生成物だけの
+更新は `--harness --refresh` を使う。`installed` を選んだら、config と次の 3 本をまとめて
+コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
+`scripts/check-docs.py`。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
 > 非標準レイアウト（`guide/`、`vps/` … 配下の docs）にも対応する。symlink された doc ディレクトリ
@@ -254,6 +266,12 @@ cd ~/code/my-project
 | `heuristics` | object | いいえ | `{minIdentifierLength:int, excludeBasenames:[string,…]}` — heuristic の recall ノイズを調整 |
 | `frontMatterFields` | string[] | いいえ | generic `format` レイヤが全ドキュメントに要求する front-matter フィールド（欠落で WARN）。省略でスキップ |
 | `indexFiles` | string[] | いいえ | generic `semantic` レイヤの orphan 検出のリンク根（既定: doc ツリー内の任意の `README.md`） |
+| `harness` | object | いいえ | `{state,decidedAt,engineVersion}`。state は上記 5 状態のいずれか。未設定は互換用の `unset`。 |
+| `verdictCache` | object | いいえ | `{enabled:true,minConsecutivePasses:2}`。連続 PASS 数は 2..10。範囲外なら WARN とともに cache 無効。 |
+| `models.light` | object | いいえ | `{enabled,maxChanged,maxImpacted,maxDiffLines,maxDiffBytes,sensitiveTokens}`。light run の決定論的な上限。 |
+| `codexReview` | object | いいえ | `{enabled,bin,model?,timeoutMs?}`。`model` 指定を優先し、未指定なら light=Luna、standard=Terra。effort は両方 medium。 |
+| `digestExclude` | string[] | いいえ | seal から除外する追加生成パス。`.claude/state/**` または既知の生成データディレクトリだけ許可。 |
+| `protectedGlobs` | string[] | いいえ | pre-flight 修正を禁止する追加パス。組込みの ADR/decisions/logs/`.claude` 保護は解除不可。 |
 
 規則: `impacts` のエントリは **ドキュメントパスのみ** — 注釈は `note` に置く。`changed` は単一パス
 または glob。glob はエンジン独自の意味論: `**`=`/` を含む任意、`*`=`/` を含まない任意、`?`=`/` 以外 1 文字。
@@ -310,6 +328,17 @@ impact map こそが監査を *change-driven* にする。各エントリは
   - `existence`: 保守的な repo-path-token 解決（解決不能 ⇒ WARN）。
   - `semantic`: orphan 検出（どこからもリンクされないドキュメント ⇒ WARN）。
   generic ベースラインは固有ツールより **意図的に弱い**。
+- **v0.10 ハーネスを `init` で導入した場合** は、pre-flight と Phase 4 で使う次の固定配線を
+  書き込む:
+  ```json
+  "docAuditCommands": {
+    "existence": "/check-docs --only existence",
+    "format": "/check-docs --only format",
+    "semantic": "doc-lint"
+  }
+  ```
+  複製されたエンジンは `scripts/check-docs.py --format text --exit-code` にも対応し、機械処理可能な
+  `SUMMARY` と `VERDICT` 行を出力する。
 - **`/docaudit:init --scaffold`** は *プロジェクト固有* のレイヤスキル雛形をあなたの
   `.claude/skills/` に生成し、`docAuditCommands` をそれらに配線し、`skill-creator` /
   `writing-skills` で肉付けを助ける。オプトイン。より richで自前のチェックを持ちたいプロジェクト向け。
@@ -319,13 +348,33 @@ impact map こそが監査を *change-driven* にする。各エントリは
 ## 8. 監査の実行 — verdict & anchor ライフサイクル
 
 - **`/docaudit:audit --full`** — 全コーパスの深掘り監査。初回・大きな変更後・定期実行に使う。
-  anchor が無いときは常に自動でこのモード。
+  anchor が無いときは常に自動でこのモード。`docGlobs` の全文書を impacted とし、cache は無効。
 - **`/docaudit:audit`** — incremental: anchor 以降の変更で影響を受けたドキュメントに絞る。
+- **run 台帳と lock:** 監査の最初に `.claude/state/docaudit-run/<runid>/` を作り、隣の `lock` を
+  排他的に作成する。TTL や自動奪取はない。古い lock は、停止だけを行う明示操作
+  `/docaudit:audit --break-lock` で解除する。gate が保持中の lock は解除できない。
+- **pre-flight（Phase 0.5）:** run を開いた後、baseline と seal より前に、稼働中のハーネスを
+  全ツリーへ実行する。FAIL 時は「修正して監査／修正せず続行／停止」から選ぶ。編集できるのは
+  最初の選択だけで、`fix-scope.py` が承認済み文書へ限定する。非対話実行は FAIL を evidence に
+  残すだけで編集しない。
+- **seal 済み evidence:** orchestrator は SHA を含む 1 個の `EVIDENCE` を保持する。fan-out 前に
+  `seal-run.py` が HEAD、変更集合全体の hash、worktree digest を固定する。`decide-verdict.py` は
+  evidence を各 1 回だけ読み、verifier の返却と割当パスを突き合わせ、history、last-run、anchor を
+  書く唯一の処理になる。旧式の flat な `docaudit-run/` ファイルは無視する。
+- **決定論的 cache:** `plan-dispatch.py` は、同じ文書内容・`changeSetSha`・契約版で、設定数
+  （既定 2）の連続 PASS がある文書だけ Phase 3 を省略する。history が無い／壊れている場合は
+  cold start。`--full` は常に cache を使わない。
+- **run class:** `classify-run.py` が mode、件数、diff サイズ、機密パストークン、前回 verdict から
+  `light` / `standard` を決める。light は `doc-impact-verifier-light`（Haiku）、standard と全 retry は
+  Sonnet。Codex review は `codexReview.model` 未指定時に light=Luna、standard=Terra、effort は medium。
 - **verdict:** `FAIL` ⇒ **NEEDS FIX**（anchor は更新しない）。`WARN`/`PASS` のみ ⇒ **CONSISTENT**
-  （anchor 更新）。severity マッピング: Phase-3 の verdict はそのまま使用。Phase-4 ツールは
-  high-severity → FAIL、medium → WARN。
+  （anchor 更新）。evidence や状態を検証できなければ **REFUSED**。severity マッピング:
+  Phase-3 の verdict はそのまま使用。Phase-4 ツールは high-severity → FAIL、medium → WARN。
+  NEEDS FIX では `sibling-scan.py` が verifier の rationale/suggestion に含まれる引用句を
+  `docGlobs` 全体から探し、同じ記述を持つ sibling を報告する。
 - **anchor:** **CONSISTENT のときのみ**書かれ、現在の HEAD SHA を記録する。**コミットする**
   （慣習: `docs(audit): …` コミット）ことで baseline が共有され、squash merge も乗り越える。
+  `sha` だけの旧 anchor と互換で、v0.10 は run/digest 情報を追加する。
 
 **正しい anchor の順序**（anchor が *整合した* 状態を記録するように）:
 1. 指摘を修正して **コミット**。
@@ -377,6 +426,18 @@ impact map こそが監査を *change-driven* にする。各エントリは
   `/code-review` は working diff に対して動作する。両者ともクリーンで同期済みのツリーでは
   **no-op**（保留 diff なし） — これは失敗ではなく想定どおり。
 - **グローバルインストールはスナップショット** — ソース更新後は再 sync する（§3c）。
+- **lock は自動で奪わない。** exit 4 は別 run が lock を所有している意味。holder を確認し、その
+  run が確実に終了済みの場合だけ `/docaudit:audit --break-lock` を使う。この操作は lock を解除して
+  停止するので、その後に監査をもう一度開始する。
+- **config 変更は明示承認する。** run 中の `.claude/doc-audit.json` 変更を検知すると REFUSED になり、
+  次の open は exit 6 になる。差分を確認し、承認した場合だけ `/docaudit:audit --accept-config` を使う。
+- **`REFUSED` は「文書が誤り」ではなく「この run は無効」と読む。** 代表例は evidence の欠落／
+  変更、lock の識別不一致、未 seal manifest、HEAD/worktree や `changeSetSha` の drift、返却パス不一致、
+  history/anchor/config の変更。reason が示す状態を確認・復元して新しい監査を始める。evidence や
+  anchor を手作業で捏造しない。
+- **`--refresh` は同梱 hash を使う。** `engine-shas.json` は導入済みプラグイン版ごとに管理される。
+  `/docaudit:init --harness --refresh` が上書きするのは、stamp があり、正規化後の本文がその版の
+  同梱 SHA と一致する生成物だけ。変更済み・stamp 無し・未知版は保持して skip 理由を報告する。
 - **CONSISTENT anchor を捏造しない。** 整合を実際に検証できない場合（例: あるレイヤをスキップ
   した）は anchor を書かない。正直なレポート付きの NEEDS FIX が正しい結果。
 
@@ -409,6 +470,10 @@ impact map こそが監査を *change-driven* にする。各エントリは
 | サブディレクトリの変更を incremental が拾わない | サブディレクトリが git ルートでない | full-mode 専用にするか親へ畳み込む（§10） |
 | `/code-review` / `/security-review` が「何もしなかった」 | クリーンで同期済みのツリー（保留 diff なし） | 想定どおり — review 対象の変更を残す/コミットする、または無視 |
 | プラグインを更新したのに挙動が変わらない | グローバルインストールはスナップショット | 再 sync（§3c） |
+| audit open が exit 4 / `locked:true` | 別 run が `.claude/state/docaudit-run/lock` を所有 | holder を確認。確実に stale なら `/docaudit:audit --break-lock` の後、新しい監査を開始 |
+| audit open が exit 6 / `config-change-unaccepted` | 前 run が config 変更を検知 | `git diff .claude/doc-audit.json` を確認し、承認後に `/docaudit:audit --accept-config` |
+| verdict が `REFUSED` | gate が run の snapshot を検証できなかった | `reason` に従う。代表例: evidence SHA、lock/run 識別、未 seal manifest、HEAD/worktree、`changeSetSha`、return、history/anchor/config の不一致 |
+| installed harness が `broken` / refresh が skip | 生成物 3 本の欠落、変更、stamp 無し、未知の template 版 | 意図を確認して復元、または `/docaudit:init --harness --refresh`。`created`、`skipped`、`skipReasons` を確認 |
 
 ---
 
@@ -432,24 +497,50 @@ impact map こそが監査を *change-driven* にする。各エントリは
 
 ```
 doc-audit-harness/
-├── .claude-plugin/plugin.json          # manifest (name: docaudit)
-├── skills/
-│   ├── audit/SKILL.md                  # /docaudit:audit [--full] — 5-phase orchestrator
-│   │   ├── scripts/compute-baseline.sh # Phase 1: anchor → change set (merge-base)
-│   │   ├── scripts/resolve-impact.py   # Phase 2: change set → impacted docs (UNION)
-│   │   ├── scripts/write-anchor.sh     # Phase 5: anchor write (CONSISTENT only)
-│   │   ├── scripts/generic-layers.py   # Phase 4 fallback: format/existence/semantic
-│   │   ├── scripts/inventory.py        # init: deterministic repo inventory
-│   │   ├── scripts/scaffold.py         # init --scaffold: tailored layer skeletons
-│   │   └── references/{config-schema,default-heuristics,workflow-template}.*
-│   └── init/SKILL.md                   # /docaudit:init [--scaffold]
-│                                        #   (generic な format/existence/semantic レイヤは
-│                                        #    上の generic-layers.py で実装。skill dir ではない)
-├── agents/doc-impact-verifier.md       # per-doc verification subagent
-├── docs/ADOPTION.md                    # 英語版ガイド
-├── docs/ADOPTION.ja.md                 # ← 本ガイド（日本語版）
-├── docs/examples/doc-audit.example.json # コピー用 config テンプレート（§4b）
-└── tests/                              # engine unit tests (python3 -m unittest discover -s tests -t .)
+├── .claude-plugin/plugin.json
+├── skills/audit/SKILL.md
+├── skills/init/SKILL.md
+├── skills/audit/scripts/ax-probe.sh
+├── skills/audit/scripts/change-set-sha.py
+├── skills/audit/scripts/check-verdicts.py
+├── skills/audit/scripts/classify-run.py
+├── skills/audit/scripts/cocoindex-probe.sh
+├── skills/audit/scripts/codegraph-probe.sh
+├── skills/audit/scripts/codex-probe.sh
+├── skills/audit/scripts/compute-baseline.sh
+├── skills/audit/scripts/decide-verdict.py
+├── skills/audit/scripts/docaudit_cache.py
+├── skills/audit/scripts/docaudit_paths.py
+├── skills/audit/scripts/fix-scope.py
+├── skills/audit/scripts/generic-layers.py
+├── skills/audit/scripts/graphify-probe.sh
+├── skills/audit/scripts/impact-supplement.py
+├── skills/audit/scripts/inventory.py
+├── skills/audit/scripts/mdq-health.py
+├── skills/audit/scripts/mdq-index.sh
+├── skills/audit/scripts/open-run.py
+├── skills/audit/scripts/plan-dispatch.py
+├── skills/audit/scripts/resolve-impact.py
+├── skills/audit/scripts/scaffold.py
+├── skills/audit/scripts/seal-run.py
+├── skills/audit/scripts/set-config-key.py
+├── skills/audit/scripts/sibling-scan.py
+├── skills/audit/scripts/start-run.py
+├── skills/audit/scripts/tree-digest.py
+├── skills/audit/scripts/write-anchor.sh
+├── skills/audit/scripts/write-evidence.py
+├── skills/audit/scripts/write-verdict.py
+├── skills/audit/references/codex-review-output.schema.json
+├── skills/audit/references/config-schema.md
+├── skills/audit/references/default-heuristics.md
+├── skills/audit/references/engine-shas.json
+├── skills/audit/references/workflow-template.js
+├── agents/doc-impact-verifier-light.md
+├── agents/doc-impact-verifier.md
+├── docs/ADOPTION.md
+├── docs/ADOPTION.ja.md
+├── docs/examples/doc-audit.example.json
+└── tests/
 ```
 
 設計判断の根拠（なぜ各決定をしたか）は、トップレベル `README.md` が参照する元プロジェクトの

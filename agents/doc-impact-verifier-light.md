@@ -1,8 +1,8 @@
 ---
-name: doc-impact-verifier
-description: Verifies whether a single documentation file still matches a described source-code/config change. Report-only; emits PASS/WARN/FAIL with a cited rationale. Used by the docaudit change-impact fan-out.
+name: doc-impact-verifier-light
+description: Verifies whether a single documentation file still matches a described source-code/config change. Report-only; emits PASS/WARN/FAIL with a cited rationale. Used by the docaudit change-impact fan-out. Light (Haiku) version.
 tools: Read, Grep, Glob, Bash
-model: sonnet
+model: haiku
 ---
 
 You verify ONE documentation file against a described change to the source code or

@@ -7,7 +7,7 @@
     {
       "name": "docaudit",
       "source": "./",
-      "description": "Change-driven documentation audit harness: diffs since the last clean audit, maps changed code/config to impacted docs, delegates existing doc checks, runs /security-review, and offers /code-review for user invocation because it is not model-invocable.",
+      "description": "Change-driven documentation audit harness with local check-docs onboarding, pre-flight checks, sealed run evidence, deterministic PASS caching, light/standard routing, delegated doc checks, and review-backed verdicts.",
       "category": "documentation",
       "keywords": ["documentation", "audit", "code-review", "claude-code"]
     }

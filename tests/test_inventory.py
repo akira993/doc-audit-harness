@@ -53,6 +53,59 @@ class TestInventory(unittest.TestCase):
         out = run(self.repo)
         self.assertIn(".claude/commands/check-docs.md", out["existingDocTools"]["commands"])
 
+    def test_existing_doc_tool_candidates_cover_all_supported_sources(self):
+        write(self.repo, ".claude/commands/lint-content.md", "# command\n")
+        write(self.repo, ".claude/commands/release.md", "# unrelated\n")
+        write(self.repo, ".claude/skills/docs-review/SKILL.md", "---\nname: docs-review\n---\n")
+        write(self.repo, "package.json", json.dumps({"scripts": {
+            "check-docs": "node docs.js", "docs:build": "x", "lint:docs": "x",
+            "test": "x"
+        }}))
+        write(self.repo, "Makefile", "check-boundary:\n\ttrue\nlint-docs:\n\ttrue\n")
+        write(self.repo, "Taskfile.yml", "version: '3'\ntasks:\n  docs:check:\n    cmds: [echo ok]\n")
+        write(self.repo, "Justfile", "doc-lint:\n    echo ok\n")
+        write(self.repo, "pyproject.toml", """
+[project.scripts]
+docs-check = "pkg:main"
+serve = "pkg:serve"
+[tool.poetry.scripts]
+lint = "pkg:lint"
+""")
+        write(self.repo, ".github/workflows/docs.yml", """
+name: CI
+jobs:
+  docs:
+    steps:
+      - name: Build documentation
+        run: make docs
+      - name: Tests
+        run: markdownlint docs
+""")
+        write(self.repo, "scripts/check-docs-ci", "#!/bin/sh\n")
+
+        out = run(self.repo)
+        candidates = out["existingDocToolCandidates"]
+        triples = {(c["kind"], c["path"], c["name"]) for c in candidates}
+        expected = {
+            ("claude-command", ".claude/commands/check-docs.md", "check-docs"),
+            ("claude-command", ".claude/commands/lint-content.md", "lint-content"),
+            ("claude-skill", ".claude/skills/docs-review/SKILL.md", "docs-review"),
+            ("package-script", "package.json", "check-docs"),
+            ("package-script", "package.json", "docs:build"),
+            ("package-script", "package.json", "lint:docs"),
+            ("make-target", "Makefile", "lint-docs"),
+            ("taskfile-target", "Taskfile.yml", "docs:check"),
+            ("just-target", "Justfile", "doc-lint"),
+            ("pyproject-script", "pyproject.toml", "docs-check"),
+            ("pyproject-script", "pyproject.toml", "lint"),
+            ("github-workflow-step", ".github/workflows/docs.yml", "Build documentation"),
+            ("github-workflow-step", ".github/workflows/docs.yml", "Tests"),
+            ("script", "scripts/check-docs-ci", "check-docs-ci"),
+        }
+        self.assertTrue(expected.issubset(triples), expected - triples)
+        self.assertNotIn(("claude-command", ".claude/commands/release.md", "release"), triples)
+        self.assertTrue(all(set(item) == {"kind", "path", "name"} for item in candidates))
+
     def test_mentions_and_index_and_skip(self):
         out = run(self.repo)
         self.assertIn("docs/a.md", out["mentions"].get("apps", []))

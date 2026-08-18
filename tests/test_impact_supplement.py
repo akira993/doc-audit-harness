@@ -118,6 +118,12 @@ class TestImpactSupplement(unittest.TestCase):
         self.repo = tempfile.mkdtemp()
         self.impact_path = os.path.join(self.repo, "impact.json")
         self.bindir = tempfile.mkdtemp()
+        # Supplement candidates must be real, contained, non-symlink documents.
+        for rel in ("docs/x.md", "docs/mapped.md", "docs/a.md", "docs/b.md",
+                    "docs/exactly.md", "docs/below.md", "docs/above.md", "docs/bare.md",
+                    "docs/m1.md", "docs/h1.md", "docs/g1.md", "docs/g2.md",
+                    "docs/s1.md", "docs/s2.md", "docs/noise1.md", "docs/noise2.md"):
+            write(os.path.join(self.repo, rel), "# doc\n")
 
     def stub(self, name, body):
         path = os.path.join(self.bindir, name)

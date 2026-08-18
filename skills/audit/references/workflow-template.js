@@ -1,5 +1,5 @@
 // docaudit phase-3: change-impact verification fan-out.
-// Launch with Workflow({scriptPath: "<this file>", args: {repoRoot, changeSummary, impacted:[{path,provenance}], runId, runDir, scriptsDir}})
+// Launch with Workflow({scriptPath: "<this file>", args: {repoRoot, changeSummary, impacted:[{path,provenance}], verifierModel, runId, runDir, scriptsDir}})
 // Each verifier subagent ALSO persists its runid-stamped verdict to
 // `${runDir}/verdicts/<slug>.json` so the deterministic gate (decide-verdict.py)
 // reads verdicts authored by the harness-spawned subagent, not relayed prose.
@@ -92,6 +92,11 @@ const mdqHealthy = a.mdqHealthy === true || a.mdqHealthy === 'true'
 const cmAvailable = a.cmAvailable === true || a.cmAvailable === 'true'
 const axAvailable = a.axAvailable === true || a.axAvailable === 'true'
 const symbolGraphAvailable = a.symbolGraphAvailable === true || a.symbolGraphAvailable === 'true'
+const verifierModel = a.verifierModel === 'haiku' ? 'haiku' : 'sonnet'
+// Agent definitions own their model selection. Do not depend on opts.model precedence.
+const agentType = verifierModel === 'haiku'
+  ? 'docaudit:doc-impact-verifier-light'
+  : 'docaudit:doc-impact-verifier'
 // No hardcoded --db: mdq resolves its own default DB relative to the CWD (new mdq:
 // .mdq/index-<lang>-<strategy>.sqlite, old mdq: .mdq/index.sqlite), so running from
 // repoRoot reads the SAME DB the Phase-0 indexer wrote (which also cd's to the root).
@@ -138,8 +143,8 @@ const symbolGraphNote = symbolGraphAvailable
 phase('Verify')
 
 const results = await parallel(
-  impacted.map((d) => () =>
-    agent(
+  impacted.map((d) => async () => {
+    const v = await agent(
       `Repo root: ${repoRoot}. A documentation-impact check.
 
 CHANGED SOURCE (since last audit):
@@ -169,9 +174,22 @@ values confirmed in STEP A.
 
 Calling the structured-output tool ends this run immediately. Complete STEP A first.
 No steps execute after STEP B.`,
-      { label: `verify:${d.path}`, phase: 'Verify', schema: VERDICT, agentType: 'docaudit:doc-impact-verifier' }
+      { label: `verify:${d.path}`, phase: 'Verify', schema: VERDICT, agentType }
     )
-  )
+    return {
+      assignedPath: d.path,
+      returnedPath: v?.path ?? null,
+      verdict: v?.verdict ?? null,
+      rationale: v?.rationale ?? null,
+      suggestion: v?.suggestion ?? null,
+    }
+  })
 )
 
-return results.filter(Boolean)
+return results.map((r, i) => r ?? {
+  assignedPath: impacted[i].path,
+  returnedPath: null,
+  verdict: null,
+  rationale: null,
+  suggestion: null,
+})

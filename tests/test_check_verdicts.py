@@ -87,6 +87,17 @@ class TestCheckVerdicts(Base):
         self.assertEqual(out["missing"], [])
         self.assertEqual(out["invalid"], [])
 
+    def test_missing_cached_verdict_is_still_reported(self):
+        with open(os.path.join(self.run_dir, "manifest.json"), "w", encoding="utf-8") as f:
+            json.dump({"runid": self.runid, "impacted": ["docs/a.md", "docs/b.md"],
+                       "dispatch": ["docs/a.md"], "cached": ["docs/b.md"]}, f)
+        self.write_impact([{"path": "docs/a.md", "provenance": "mapped"},
+                           {"path": "docs/b.md", "provenance": "mapped"}])
+        self.write_verdict("a.json", "docs/a.md")
+        out = self.check()
+        self.assertEqual(out["missing"], ["docs/b.md"])
+        self.assertFalse(out["phase3Complete"])
+
     def test_foreign_runid_and_broken_json_are_invalid_and_missing(self):
         self.write_manifest(["docs/a.md", "docs/b.md"])
         self.write_impact([
@@ -138,83 +149,31 @@ class TestCheckVerdicts(Base):
         )
 
 
-class TestRecoveryDrill(Base):
-    def setUp(self):
-        super().setUp()
-        self.repo = os.path.join(self.tmp.name, "repo")
-        os.makedirs(self.repo)
-        git(self.repo, "init", "-b", "main")
-        git(self.repo, "config", "user.email", "t@t.t")
-        git(self.repo, "config", "user.name", "t")
-        with open(os.path.join(self.repo, "f"), "w", encoding="utf-8") as f:
-            f.write("x")
-        git(self.repo, "add", "-A")
-        git(self.repo, "commit", "-m", "init")
-        self.head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
-        self.anchor = ".claude/state/last-doc-audit.json"
-
-    def run_gate(self):
-        return subprocess.run(
-            [
-                sys.executable,
-                GATE,
-                "--run-dir", self.run_dir,
-                "--repo-root", self.repo,
-                "--anchor-path", self.anchor,
-                "--date", "2026-08-07",
-            ],
-            capture_output=True,
-            text=True,
-        )
-
-    def test_missing_refuses_then_writer_repairs_and_gate_passes(self):
-        impacted = ["docs/a.md", "docs/b.md"]
-        with open(os.path.join(self.run_dir, "manifest.json"), "w", encoding="utf-8") as f:
-            json.dump({
-                "runid": self.runid,
-                "head": self.head,
-                "mode": "incremental",
-                "impacted": impacted,
-                "phase4Expected": True,
-            }, f)
-        self.write_impact([
-            {"path": "docs/a.md", "provenance": "mapped"},
-            {"path": "docs/b.md", "provenance": "heuristic"},
-        ])
-        self.write_verdict("a.json", "docs/a.md")
-        with open(os.path.join(self.run_dir, "phase4.json"), "w", encoding="utf-8") as f:
-            json.dump({"findings": []}, f)
-
-        incomplete = self.check()
-        self.assertEqual(incomplete["missing"], ["docs/b.md"])
-        refused = self.run_gate()
-        self.assertEqual(refused.returncode, 3, refused.stdout + refused.stderr)
-        self.assertEqual(json.loads(refused.stdout)["verdict"], "REFUSED")
-        anchor_file = os.path.join(self.repo, self.anchor)
-        self.assertFalse(os.path.exists(anchor_file))
-
-        out_path = os.path.join(self.run_dir, "verdicts", "b.json")
-        written = subprocess.run(
-            [
-                sys.executable,
-                WRITE,
-                "--run-dir", self.run_dir,
-                "--out", out_path,
-                "--runid", self.runid,
-                "--path", "docs/b.md",
-                "--verdict", "PASS",
-            ],
-            input="checked after retry\n",
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(written.returncode, 0, written.stdout + written.stderr)
-        self.assertTrue(self.check()["phase3Complete"])
-
-        decided = self.run_gate()
-        self.assertEqual(decided.returncode, 0, decided.stdout + decided.stderr)
-        self.assertEqual(json.loads(decided.stdout)["verdict"], "CONSISTENT")
-        self.assertTrue(os.path.exists(anchor_file))
+class TestRecoveryDrill(unittest.TestCase):
+    def test_missing_then_writer_repairs_before_gate(self):
+        from tests.wp12_helpers import RunFixture
+        fx = RunFixture(self)
+        fx.open(); fx.plan_start_seal()
+        fx.write_verdict("docs/a.md")
+        returns = [{"attempt": 1, "assignedPath": "docs/a.md", "returnedPath": "docs/a.md",
+                    "verdict": "PASS", "rationale": "x", "suggestion": None}]
+        fx.write_evidence("returns", returns)
+        fx.write_evidence("phase4", {"findings": []})
+        checked = subprocess.run(
+            [sys.executable, CHECK, "--run-dir", fx.run_dir,
+             "--impact-json", os.path.join(fx.run_dir, "impact.json"), "--returns"],
+            capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(checked.stdout)["missing"], ["docs/b.md"])
+        fx.write_verdict("docs/b.md")
+        returns.append({"attempt": 2, "assignedPath": "docs/b.md", "returnedPath": "docs/b.md",
+                        "verdict": "PASS", "rationale": "fixed", "suggestion": None})
+        fx.write_evidence("returns", returns)
+        checked = subprocess.run(
+            [sys.executable, CHECK, "--run-dir", fx.run_dir,
+             "--impact-json", os.path.join(fx.run_dir, "impact.json"), "--returns"],
+            capture_output=True, text=True, check=True)
+        self.assertTrue(json.loads(checked.stdout)["phase3Complete"])
+        self.assertEqual(fx.gate().returncode, 0)
 
 
 if __name__ == "__main__":

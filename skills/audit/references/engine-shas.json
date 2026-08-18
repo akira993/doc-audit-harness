@@ -1,0 +1,7 @@
+{
+  "0.10.0": {
+    "check-docs": "a5c1efbcbe1bdbece74cb188228fd676d4c6c0446a42f27d6514afe40c5f1ab8",
+    "doc-lint": "847d1b3320187101c08144df378cd223a0f1a01e546918af6028641d540e4815",
+    "check-docs-engine": "4dc97df6e2d31ced9ec267039c5a75f2c4c989ec8bbdee57ac55203cbe76c5eb"
+  }
+}

@@ -48,8 +48,12 @@ def unique_paths(entries, warnings, source):
 def main():
     ap = argparse.ArgumentParser(description="Report docaudit Phase-3 verdict completeness.")
     ap.add_argument("--run-dir", required=True)
-    ap.add_argument("--impact-json", required=True)
+    ap.add_argument("--impact-json")
+    ap.add_argument("--returns", nargs="?", const="__RUN_DIR__",
+                    help="validate final workflow returns (default RUN_DIR/returns.json)")
     args = ap.parse_args()
+    if args.impact_json is None:
+        args.impact_json = os.path.join(args.run_dir, "impact.json")
 
     warnings = []
     invalid = []
@@ -116,6 +120,7 @@ def main():
         )
 
     valid_counts = {}
+    valid_records = {}
     verdict_dir = os.path.join(args.run_dir, "verdicts")
     try:
         names = sorted(os.listdir(verdict_dir)) if os.path.isdir(verdict_dir) else []
@@ -156,16 +161,61 @@ def main():
             invalid.append(f"{filename}: {'; '.join(reasons)}")
             continue
         valid_counts[path] = valid_counts.get(path, 0) + 1
+        valid_records[path] = record
 
     duplicates = sorted(path for path, count in valid_counts.items() if count > 1)
+    return_required_paths = manifest.get("dispatch", manifest_paths)
+    if not isinstance(return_required_paths, list):
+        return_required_paths = manifest_paths
+        warnings.append("manifest.dispatch is not a list")
+        manifest_ok = False
     missing = [path for path in manifest_paths if valid_counts.get(path, 0) == 0]
     missing_impacted = [
         {"path": path, "provenance": impact_provenance.get(path, "unknown")}
         for path in missing
     ]
     extra_list = sorted(extra)
+    return_missing = []
+    mismatch = []
+    if args.returns is not None:
+        returns_path = (os.path.join(args.run_dir, "returns.json")
+                        if args.returns == "__RUN_DIR__" else args.returns)
+        try:
+            returned = load_json(returns_path)
+            if not isinstance(returned, list):
+                raise ValueError("returns is not an array")
+            final = {}
+            seen = set()
+            for index, item in enumerate(returned):
+                if not isinstance(item, dict):
+                    raise ValueError(f"returns[{index}] is not an object")
+                attempt = item.get("attempt")
+                assigned = item.get("assignedPath")
+                if (isinstance(attempt, bool) or not isinstance(attempt, int)
+                        or not 1 <= attempt <= 3 or not isinstance(assigned, str)):
+                    raise ValueError(f"returns[{index}] has invalid attempt/assignedPath")
+                if (attempt, assigned) in seen:
+                    raise ValueError("returns has duplicate (attempt,assignedPath)")
+                seen.add((attempt, assigned))
+                if (assigned in return_required_paths
+                        and (assigned not in final or attempt > final[assigned]["attempt"])):
+                    final[assigned] = item
+            for path in return_required_paths:
+                if path not in final:
+                    return_missing.append(path)
+                    continue
+                item = final[path]
+                disk = valid_records.get(path)
+                if (item.get("returnedPath") != path or disk is None
+                        or item.get("verdict") != disk.get("verdict")):
+                    mismatch.append(path)
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as e:
+            invalid.append(f"returns.json: {e}")
+            return_missing = list(return_required_paths)
+
     phase3_complete = not (
         missing or invalid or extra_list or duplicates or manifest_mismatch
+        or return_missing or mismatch
     )
 
     json.dump(
@@ -178,6 +228,8 @@ def main():
             "duplicates": duplicates,
             "warnings": warnings,
             "manifestMismatch": manifest_mismatch,
+            "returnMissing": return_missing,
+            "mismatch": mismatch,
         },
         sys.stdout,
         ensure_ascii=False,

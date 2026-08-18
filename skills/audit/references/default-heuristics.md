@@ -6,8 +6,8 @@ a changed file's identifier. Tuning lives in `config.heuristics`:
 - `minIdentifierLength` (default **5**): shorter basenames/stems are ignored to
   avoid noise (`sw.js` stem `sw` is too short, skipped).
 - `excludeBasenames` (merged with built-ins): generic filenames that match too
-  much — `readme.md`, `index.md`, `changelog.md`, `license`, `__init__.py`,
-  `makefile`, `main.md`, `test.md`.
+  much — `readme.md`, `index.md`, `changelog.md`, `license`, `license.md`,
+  `__init__.py`, `makefile`, `main.md`, `test.md`, `skill`, `skill.md`.
 - Cap: `maxImpactedDocs` (default 200). Mapped docs are kept first; heuristic-only
   docs fill the remainder; overflow is dropped and reported (never silent).
 
