@@ -72,8 +72,10 @@ with at most these four choices:
 
 Never set `integrated` unless all three `docAuditCommands` keys are written in the same config
 update. For `adjusted`, first prepare a diff that makes the selected existing tool emit docaudit-
-compatible `SUMMARY` and `VERDICT` lines, show that diff, and obtain explicit approval before
-editing the existing file. If approval is not given, do not edit and do not record `adjusted`.
+compatible `SUMMARY` and `VERDICT` lines (a semantic command must also emit strict
+`path:line - FAIL|WARN - message` finding lines followed by a final standalone model `VERDICT`
+line), show that diff, and obtain explicit approval before editing the existing file. If approval
+is not given, do not edit and do not record `adjusted`.
 After an approved adjustment, wire all three command keys in the same config update. Adjustment
 is the only path here that may edit an existing tool; it remains outside `scaffold.py`.
 

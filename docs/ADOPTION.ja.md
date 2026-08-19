@@ -183,7 +183,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.10.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.10.1  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -233,6 +233,9 @@ cd ~/code/my-project
 更新は `--harness --refresh` を使う。`installed` を選んだら、config と次の 3 本をまとめて
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
+
+変更されていない stamp 付きの 0.10.0 `doc-lint` テンプレートは、`/docaudit:init --harness --refresh`
+で 0.10.1 に更新できる。利用者が変更したテンプレートはそのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
 > 非標準レイアウト（`guide/`、`vps/` … 配下の docs）にも対応する。symlink された doc ディレクトリ
@@ -353,8 +356,8 @@ impact map こそが監査を *change-driven* にする。各エントリは
 - **run 台帳と lock:** 監査の最初に `.claude/state/docaudit-run/<runid>/` を作り、隣の `lock` を
   排他的に作成する。TTL や自動奪取はない。古い lock は、停止だけを行う明示操作
   `/docaudit:audit --break-lock` で解除する。gate が保持中の lock は解除できない。
-- **pre-flight（Phase 0.5）:** run を開いた後、baseline と seal より前に、稼働中のハーネスを
-  全ツリーへ実行する。FAIL 時は「修正して監査／修正せず続行／停止」から選ぶ。編集できるのは
+- **pre-flight（Phase 0.5）:** run を開いた後、baseline と seal より前に script-backed の稼働中
+  ハーネスを全ツリーへ実行する。model-driven は `preflight.commands` に skip として記録し、Phase 4 で一度だけ実行する。FAIL 時は「修正して監査／修正せず続行／停止」から選ぶ。編集できるのは
   最初の選択だけで、`fix-scope.py` が承認済み文書へ限定する。非対話実行は FAIL を evidence に
   残すだけで編集しない。
 - **seal 済み evidence:** orchestrator は SHA を含む 1 個の `EVIDENCE` を保持する。fan-out 前に
@@ -370,8 +373,8 @@ impact map こそが監査を *change-driven* にする。各エントリは
 - **verdict:** `FAIL` ⇒ **NEEDS FIX**（anchor は更新しない）。`WARN`/`PASS` のみ ⇒ **CONSISTENT**
   （anchor 更新）。evidence や状態を検証できなければ **REFUSED**。severity マッピング:
   Phase-3 の verdict はそのまま使用。Phase-4 ツールは high-severity → FAIL、medium → WARN。
-  NEEDS FIX では `sibling-scan.py` が verifier の rationale/suggestion に含まれる引用句を
-  `docGlobs` 全体から探し、同じ記述を持つ sibling を報告する。
+  CONSISTENT と NEEDS FIX の両方で、30 秒上限・non-blocking の `sibling-scan.py` が verifier 所見、
+  Phase 4 title、変更集合の削除行から句を取り、status line で sibling 候補を報告する。
 - **anchor:** **CONSISTENT のときのみ**書かれ、現在の HEAD SHA を記録する。**コミットする**
   （慣習: `docs(audit): …` コミット）ことで baseline が共有され、squash merge も乗り越える。
   `sha` だけの旧 anchor と互換で、v0.10 は run/digest 情報を追加する。
@@ -514,6 +517,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/fix-scope.py
 ├── skills/audit/scripts/generic-layers.py
 ├── skills/audit/scripts/graphify-probe.sh
+├── skills/audit/scripts/harness-command-kind.py
 ├── skills/audit/scripts/impact-supplement.py
 ├── skills/audit/scripts/inventory.py
 ├── skills/audit/scripts/mdq-health.py

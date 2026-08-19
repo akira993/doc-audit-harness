@@ -222,18 +222,28 @@ with the installed plugin version; an older stamp remains runnable but adds a ha
 and the same `--refresh` guidance. Then run the target repository's copied
 engine directly, never through a slash command:
 `python3 "$CLAUDE_PROJECT_DIR/scripts/check-docs.py" --layer all --format json --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`.
-For `adjusted`, run each configured `docAuditCommands` entry and parse its `SUMMARY` and `VERDICT`
-lines. For `integrated` or `existing-untouched`, run the configured commands, show their output,
-and parse `SUMMARY`/`VERDICT` when present; without either marker record `parsed:false`. For an
-active non-installed state whose configured command is unavailable, use
+Record this installed run as one `commands[]` entry `{layer:"all", command:"<the exact engine command run>", kind:"script-backed", ran:true, exitCode:<its exit code>, parsed:<true when its JSON parsed>, skippedReason:null}`; do not list the three configured `docAuditCommands` values for `installed`, because those are Phase-4 names rather than pre-flight commands.
+For every non-installed configured command, classify the configured mapping with
+`python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("docAuditCommands")))' "$CFG" | python3 "$SD/scripts/harness-command-kind.py" --stdin`.
+The result is always three records keyed by `layer` (`format`, `existence`, `semantic`); pair each `kind` by `layer`, never by position. A missing, non-string, or empty value yields `kind:"invalid"`, a blocking `FAIL: docAuditCommands.<layer> is invalid` that is never executed. A `model-driven` command is not run in pre-flight
+and is run once in Phase 4; record `ran:false`, `exitCode:null`, and its skip reason. A
+`script-backed` command runs and its `SUMMARY`/`VERDICT` lines are parsed. If an active
+non-installed script-backed command is unavailable, use
 `python3 "$SD/scripts/generic-layers.py" --layer all --format json --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`
-and record that fallback. A non-zero command exit or `VERDICT NEEDS FIX` creates a `FAIL` finding;
-an unparseable non-zero result creates `FAIL: harness command failed`. Collect all findings and
-counts without editing anything yet.
+and record that fallback. An `invalid` command is never run and creates
+`FAIL: docAuditCommands.<layer> is invalid`. A non-zero command exit or `VERDICT NEEDS FIX` creates
+a FAIL finding; an unparseable non-zero result creates `FAIL: harness command failed`. A command
+with no VERDICT line records `parsed:false` and
+`⚠ harness: <layer> command printed no VERDICT line — wiring may be inert [non-blocking]`. Collect
+all findings and counts without editing anything yet.
 
-If no command ran under the firing table, bind `PREFLIGHT_STATE=skipped`; `preflightRequired` will
-be false and no `preflight.json` is written. Preserve the `preflight:"none"` sentinel supplied by
-the evidence lifecycle — never add it by hand. Otherwise, if there are no FAIL findings, bind
+If the firing table does not require pre-flight, bind `PREFLIGHT_STATE=skipped`; `preflightRequired`
+will be false and no `preflight.json` is written. Only when pre-flight is required, every command is
+`model-driven` with `ran:false`, and there are no FAIL findings, bind `PREFLIGHT_STATE=no-command-ran`
+and write `preflight.json` with `findings:[]`, `userDecision:null`, `parsed:false`, and the command
+records. If any command is `invalid`, retain its `FAIL: docAuditCommands.<layer> is invalid` finding;
+the state follows the normal FAIL flow (`failed`/`non-interactive`/fix loop), and invalid findings
+are never dropped. Otherwise, if there are no FAIL findings, bind
 `PREFLIGHT_STATE=passed`. If FAIL findings exist and the session is interactive, call
 `AskUserQuestion` with exactly **「修正して監査（推奨）」**, **「修正せず続行」**, and
 **「停止」**:
@@ -256,7 +266,7 @@ the evidence lifecycle — never add it by hand. Otherwise, if there are no FAIL
 
 If FAIL findings require a decision but questions are unavailable or explicitly disabled, never
 edit; bind `PREFLIGHT_STATE=non-interactive` and keep all findings. For every required pre-flight, send exactly
-`{state,findings[],userDecision,parsed}` (additional command exit details may be retained) on stdin
+`{state,findings[],userDecision,parsed,commands:[{layer,command,kind,ran,exitCode,parsed,skippedReason}]}` on stdin
 to
 `python3 "$SD/scripts/write-evidence.py" --run-dir "$RUN_DIR" --name preflight --stdin --evidence "$EVIDENCE"`
 and replace `EVIDENCE` with the complete stdout JSON. When pre-flight is not required, do not call
@@ -266,15 +276,16 @@ unchanged. All pre-flight work occurs under the lock and before sealing.
 ## Phase 1 — baseline + diff
 Run: `bash "$SD/scripts/compute-baseline.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`.
 Do NOT pass `--full` to this script (it only accepts `--config`/`--repo-root`; an unknown flag makes it `exit 2`). `--full` is a skill-level argument only: after parsing the script output, if the skill was invoked with `--full`, set the effective `MODE` to `full` in memory. Bind `MODE` to the effective mode for use in Phase 5.
-Parse `{mode, baselineSha, changed[], filteredOutCount, filteredOutSample[]}`. If `--full` was passed, treat mode as `full`.
+Parse `{mode, baselineSha, changed[], filteredOutCount, filteredOutSample[], machineryExcludedCount, machineryExcludedSample[]}`. If `--full` was passed, treat mode as `full`.
 If `mode=full` (no or invalid anchor), tell the user this is a full run and proceed
 with the whole doc corpus as the change set context. Bind `MODE=full` and
 `EFFECTIVE_BASELINE_SHA` to current `HEAD` for Phase-2 scripts, and pass `--mode full` to every later script that
 accepts a mode; `resolve-impact.py` must therefore emit the complete `docGlobs` corpus even on a
 clean tree. In incremental mode bind both `BASELINE_SHA` and `EFFECTIVE_BASELINE_SHA` to the
-returned `baselineSha`. `.claude/state/**` paths are
-always excluded from the deterministic `changedSet`/`changeSetSha` used for dispatch, seal, cache,
-and gate checks.
+returned `baselineSha`. `.claude/state/**` paths are always excluded from the deterministic
+`changedSet`/`changeSetSha` used for dispatch, seal, cache, and gate checks. `changed[]` receives the
+same machinery exclusions as `changedSet`, including state, worktrees, probe roots, and the report
+pattern.
 `filteredOutCount` is how many changed paths `diffGlobs` dropped before `changed` was built (`filteredOutSample` holds up to 5 of them); carry both to the Phase-5 **diffGlobs filter status line** — never silently discard them.
 
 ## Phase 2 — impact resolution
@@ -384,13 +395,21 @@ Global gate: run this phase's delegated checks **iff** sealed `manifest.json` ha
 1. From config `docAuditCommands`, run `existence` then `semantic` then `format`
    (e.g. `/check-docs`, `doc-lint`, `/review-docs`) — whole-tree (no per-file arg).
    Invoke each exactly as the config value names it (a skill like `doc-lint` is
-   invoked by name, not with a leading slash). **Fallback:** if `docAuditCommands`
+   invoked by name, not with a leading slash). A command classified `invalid` by Phase 0.5 is never
+   invoked here either; retain its pre-flight FAIL finding and run the built-in generic layer for
+   that layer instead, using the same fallback as an unavailable command. **Fallback:** if `docAuditCommands`
    is absent, or a given layer's command is unavailable in this environment, run the
    built-in generic layer instead:
    `python3 "$SD/scripts/generic-layers.py" --layer <format|existence|semantic> --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`
    (in incremental mode you may add `--paths -` and pipe the impacted-doc list to scope it;
    the semantic layer always scans the full repo for orphan-reference resolution regardless).
    Fold its `findings[]` into the verdict: `severity:"FAIL"` -> NEEDS FIX, `severity:"WARN"` -> report only.
+   For the stamped `doc-lint` template in `installed`, and any adjusted command whose adjustment
+   explicitly adopted that contract, parse strict `path:line - FAIL|WARN - message` finding lines and
+   fold those severities. For every other model-driven delegated command, fold every reported finding
+   regardless of layout, normalizing `FAIL`/`HIGH`/`CRITICAL` to blocking and `WARN`/`MEDIUM`/`LOW`/`INFO`
+   to non-blocking. A final `VERDICT` line, when present, is a consistency check only; missing,
+   ambiguous, or contradictory output adds a non-blocking WARN and `parsed:false`.
 2. If `boundaryCommand` set and gate open, run it.
 3. Handle `reviewCommands.code` (e.g. `/code-review high`) on the working diff, then
    `reviewCommands.security` (e.g. `/security-review`). Normalize any
@@ -475,7 +494,7 @@ it and is the SOLE writer of the anchor. Invoke it before writing any human repo
 `python3 "$SD/scripts/decide-verdict.py" --run-dir "$RUN_DIR" --repo-root "$CLAUDE_PROJECT_DIR" --config "$CFG" --anchor-path "$ANCHOR_PATH" --runid "$RUNID" --expect-json "$EVIDENCE"`.
 The gate validates the sealed immutable evidence snapshot, updates persistent state when allowed,
 and releases the lock. Parse stdout `verdict` (`CONSISTENT`, `NEEDS_FIX`, or `REFUSED`), `reason`,
-`counts`, `historyStatus`, `warnings`, and `siblingScan`; never replace any of them with an
+`counts`, `historyStatus`, `warnings`, and `siblingScan` (always an object for CONSISTENT and NEEDS_FIX); never replace any of them with an
 orchestrator judgment. `CONSISTENT` means the anchor advanced, `NEEDS_FIX` means blocking evidence
 was found and the anchor did not advance, and exit 3 `REFUSED` means the run is invalid. Never
 override `NEEDS_FIX`/`REFUSED`, hand-write an anchor, fabricate evidence, or retry the gate with a
@@ -559,6 +578,12 @@ permitted Codex light fallback ran; report a configured model exactly as configu
 deterministic and never pass through an LLM; use the manifest/gate counts, not estimates.
 
 **diffGlobs filter status line** — if Phase 1's `filteredOutCount > 0`, include one line immediately after the cache line: `⚠ diffGlobs excluded <filteredOutCount> changed path(s) from this audit (sample: <filteredOutSample joined by ", ">). If these are source roots you expect to affect docs, widen diffGlobs. [non-blocking]`. It is **non-blocking** (never changes the verdict) — a deliberately docs-only scope is legitimate. Omit the line entirely when `filteredOutCount` is 0.
+
+Append ` (+<machineryExcludedCount> machinery excluded)` to that line when the machinery count is non-zero.
+When `filteredOutCount` is zero but `machineryExcludedCount` is non-zero, emit one standalone line
+at the same position: `ℹ changed-set machinery exclusion: <machineryExcludedCount> path(s) (sample: <machineryExcludedSample joined by ", ">) [non-blocking]`.
+
+**siblingScan status line** — for CONSISTENT and NEEDS_FIX include exactly one; it is non-blocking. For REFUSED, omit the line (the gate returns no `siblingScan` on REFUSED; never fabricate one). If `skipped` is set, write `⚠ siblingScan: skipped (<reason>) — no cross-document phrase sweep ran; grep the changed terms by hand. [non-blocking]`. If matches are present, write `⚠ siblingScan: <P> phrases / <M> matches — possible stale siblings (sources: findings <a>, phase4 <b>, changeSet <c>; truncated <t>) [non-blocking]`. Otherwise write `✓ siblingScan: <P> phrases / 0 matches — clean (sources: findings <a>, phase4 <b>, changeSet <c>; truncated <t>)`.
 
 **impact warning lines** — if the Phase-2 `warnings[]` is non-empty, include one `⚠ <warning> [non-blocking]` line per entry, immediately after the diffGlobs filter line; they are **non-blocking** (never change the verdict).
 

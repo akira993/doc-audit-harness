@@ -113,9 +113,12 @@ First run this deterministic semantic check and quote its output verbatim:
 `python3 scripts/check-docs.py --layer semantic --format text --config .claude/doc-audit.json --repo-root .`
 
 Then inspect the repository documentation for contradictions, stale claims, orphan
-pages, and missing cross-references. Report each finding with its path, line, severity,
-and a proposed fix. This skill is report-only: never edit a file and never replace or
-reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
+pages, and missing cross-references. List every finding on one line exactly as
+`path:line - FAIL|WARN - message`, including a proposed fix in the message. After all
+findings, print one final standalone line: `VERDICT CONSISTENT` when there are no FAIL
+findings, or `VERDICT NEEDS FIX` when there is at least one FAIL finding. This skill is
+report-only: never edit a file and never replace or reinterpret the deterministic
+engine's `SUMMARY` or `VERDICT` lines.
 """
 
 STAMP_RE = re.compile(

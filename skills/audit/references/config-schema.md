@@ -112,6 +112,25 @@ set, or an optional preflight/Phase 4 file. The gate accepts this object only vi
 `--expect-json` and reads each evidence file once for both SHA-256 comparison and
 JSON parsing.
 
+When Phase 0.5 is required, `preflight.json` retains `{state,findings[],userDecision,parsed}`
+and adds `commands[]` records with `{layer,command,kind,ran,exitCode,parsed,skippedReason}`.
+Non-installed classification always returns fixed `format`, `existence`, and `semantic` layer records;
+missing or non-string command values are `invalid` and are paired by `layer`, never by position.
+Model-driven commands are recorded as skipped before their single Phase-4 execution; invalid
+commands are not executed.
+`state:"no-command-ran"` with empty findings is valid only when every command is model-driven and
+skipped with no FAIL; every invalid-command FAIL remains in `findings[]` and follows the normal FAIL flow.
+For `installed`, `commands[]` contains only the copied engine's direct `--layer all` invocation as
+one `layer:"all"`, `kind:"script-backed"` record; the three Phase-4 command names are not listed.
+
+Phase 1 baseline output includes `machineryExcludedCount` and up to five paths in
+`machineryExcludedSample`, separately from `filteredOut*`. These cover the same audit machinery
+paths excluded from the sealed change set.
+
+The gate always returns `siblingScan` for CONSISTENT and NEEDS_FIX. It has `phrases`, `matches`,
+`sources:{findings,phase4,changeSet,notes}`, `truncated`, `truncatedTotal`, and
+`phraseTruncated`; a local scan failure also has `skipped` and otherwise keeps the same shape.
+
 During a run, history, anchor, lock, and config changes cause a fail-safe
 `REFUSED`. If the current run still owns the lock, corrupt history is renamed to
 `*.tainted-<runid>`, a changed anchor is removed, and a changed config is recorded

@@ -101,6 +101,9 @@ class TestScaffold(unittest.TestCase):
                          r"^<!-- docaudit-template: doc-lint@[^ ]+ sha256:[0-9a-f]{64} -->$")
         self.assertIn("--layer semantic --format text", skill)
         self.assertIn("report-only", skill.lower())
+        self.assertIn("`path:line - FAIL|WARN - message`", skill)
+        self.assertIn("`VERDICT CONSISTENT`", skill)
+        self.assertIn("`VERDICT NEEDS FIX`", skill)
 
         engine = read(os.path.join(self.repo, "scripts", "check-docs.py"))
         self.assertTrue(engine.startswith("#!/usr/bin/env python3\n# docaudit-template:"))
@@ -137,13 +140,61 @@ class TestScaffold(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(outside.name, "check-docs.py")))
 
     def test_refresh_updates_unmodified_historical_template(self):
-        self.assertEqual(run(self.repo, "--harness").returncode, 0)
-        path = os.path.join(self.repo, ".claude", "commands", "check-docs.md")
-        current = read(path)
-        write(self.repo, ".claude/commands/check-docs.md", current.replace("@0.9.0 ", "@0.10.0 "))
+        spec = importlib.util.spec_from_file_location("scaffold_under_test", SCRIPT)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        old = """---
+name: doc-lint
+description: Report-only semantic documentation review for contradictions, stale claims, orphan pages, and missing cross-references after the deterministic check.
+---
+
+# doc-lint
+
+First run this deterministic semantic check and quote its output verbatim:
+
+`python3 scripts/check-docs.py --layer semantic --format text --config .claude/doc-audit.json --repo-root .`
+
+Then inspect the repository documentation for contradictions, stale claims, orphan
+pages, and missing cross-references. Report each finding with its path, line, severity,
+and a proposed fix. This skill is report-only: never edit a file and never replace or
+reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
+"""
+        shipped = json.loads(read(SHAS))["0.10.0"]["doc-lint"]
+        self.assertEqual(module._normalized_sha(old), shipped)
+        path = os.path.join(self.repo, ".claude", "skills", "doc-lint", "SKILL.md")
+        write(self.repo, ".claude/skills/doc-lint/SKILL.md",
+              module._markdown_with_stamp(old, "doc-lint", "0.10.0", shipped))
         out = json.loads(run(self.repo, "--harness", "--refresh").stdout)
-        self.assertIn(".claude/commands/check-docs.md", out["created"])
+        self.assertIn(".claude/skills/doc-lint/SKILL.md", out["created"])
         self.assertIn(f"@{out['stampVersion']} ", read(path))
+
+    def test_refresh_preserves_modified_historical_doc_lint(self):
+        spec = importlib.util.spec_from_file_location("scaffold_under_test", SCRIPT)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        old = """---
+name: doc-lint
+description: Report-only semantic documentation review for contradictions, stale claims, orphan pages, and missing cross-references after the deterministic check.
+---
+
+# doc-lint
+
+First run this deterministic semantic check and quote its output verbatim:
+
+`python3 scripts/check-docs.py --layer semantic --format text --config .claude/doc-audit.json --repo-root .`
+
+Then inspect the repository documentation for contradictions, stale claims, orphan
+pages, and missing cross-references. Report each finding with its path, line, severity,
+and a proposed fix. This skill is report-only: never edit a file and never replace or
+reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
+"""
+        shipped = json.loads(read(SHAS))["0.10.0"]["doc-lint"]
+        path = os.path.join(self.repo, ".claude", "skills", "doc-lint", "SKILL.md")
+        historical = module._markdown_with_stamp(old, "doc-lint", "0.10.0", shipped)
+        modified = historical + "user customization\n"
+        write(self.repo, ".claude/skills/doc-lint/SKILL.md", modified)
+        out = json.loads(run(self.repo, "--harness", "--refresh").stdout)
+        self.assertIn(".claude/skills/doc-lint/SKILL.md", out["skipped"])
+        self.assertEqual(read(path), modified)
+        self.assertIn("@0.10.0 ", read(path))
 
     def test_refresh_does_not_overwrite_modified_or_unstamped_file(self):
         self.assertEqual(run(self.repo, "--harness").returncode, 0)

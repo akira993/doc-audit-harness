@@ -198,7 +198,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.10.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.10.1  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -250,6 +250,9 @@ stored decision, and `--harness --refresh` to refresh only unmodified stamped te
 When `installed` is selected, commit the config and all three generated files together:
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
+
+Existing unmodified stamped 0.10.0 `doc-lint` templates can be updated with
+`/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
 > non-standard layouts (docs under `guide/`, `vps/`, …) are handled. Symlinked doc dirs and
@@ -374,8 +377,9 @@ the audit emits a warning so you track that value manually.
   exclusively creates the sibling `lock`. There is no TTL or automatic takeover. A stale lock
   requires the explicit, stop-only `/docaudit:audit --break-lock` operation; a gate-held lock
   cannot be broken.
-- **Pre-flight (Phase 0.5):** after the run opens and before baseline/seal, active harness
-  commands run across the whole tree. On FAIL, an interactive run asks “fix and audit”,
+- **Pre-flight (Phase 0.5):** after the run opens and before baseline/seal, script-backed active
+  harness commands run across the whole tree; model-driven commands are recorded in
+  `preflight.commands` as skipped and run once in Phase 4. On FAIL, an interactive run asks “fix and audit”,
   “continue without fixing”, or “stop”. Only the first choice may edit, and `fix-scope.py`
   limits it to approved docs. Non-interactive runs retain the FAIL evidence and never edit.
 - **Sealed evidence:** the orchestrator carries one SHA-bearing `EVIDENCE` object. Before
@@ -393,8 +397,8 @@ the audit emits a warning so you track that value manually.
 - **Verdict:** `FAIL` ⇒ **NEEDS FIX** (anchor not updated). Only `WARN`/`PASS` ⇒ **CONSISTENT**
   (anchor updated). Invalid or changed evidence/state ⇒ **REFUSED**. Severity mapping:
   Phase-3 verdicts are used directly; for Phase-4 tools, high-severity → FAIL, medium → WARN.
-  NEEDS FIX also runs `sibling-scan.py`, which searches all `docGlobs` documents for quoted
-  phrases carried in verifier rationale/suggestions and reports matching siblings.
+  Both CONSISTENT and NEEDS FIX run the non-blocking, 30-second `sibling-scan.py`: it checks phrases
+  from verifier findings, Phase-4 titles, and removed change-set lines, then reports one status line.
 - **Anchor:** written **only on CONSISTENT**, recording the current HEAD SHA. **Commit it**
   (convention: a `docs(audit): …` commit) so the baseline is shared and survives squash-merges.
   Existing anchors with only `sha` remain compatible; v0.10 adds run/digest metadata.
@@ -544,6 +548,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/fix-scope.py
 ├── skills/audit/scripts/generic-layers.py
 ├── skills/audit/scripts/graphify-probe.sh
+├── skills/audit/scripts/harness-command-kind.py
 ├── skills/audit/scripts/impact-supplement.py
 ├── skills/audit/scripts/inventory.py
 ├── skills/audit/scripts/mdq-health.py
