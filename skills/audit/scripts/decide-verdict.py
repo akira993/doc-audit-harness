@@ -5,6 +5,7 @@ import argparse
 import datetime
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -27,6 +28,47 @@ FAIL_SEVERITIES = {"FAIL", "HIGH", "CRITICAL"}
 
 class Refused(Exception):
     pass
+
+
+def sibling_skipped(reason):
+    return {"skipped": reason, "phrases": [], "matches": [],
+            "sources": {"findings": 0, "phase4": 0, "changeSet": 0, "notes": [reason]},
+            "truncated": {}, "truncatedTotal": 0, "phraseTruncated": 0}
+
+
+def report_pattern(config):
+    spec = importlib.util.spec_from_file_location("change_set_sha", os.path.join(HERE, "change-set-sha.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.report_pattern(config)
+
+
+def run_sibling_scan(payload, repo, timeout_s=30):
+    try:
+        proc = subprocess.run([sys.executable, os.path.join(HERE, "sibling-scan.py"), "--stdin"],
+                              input=json.dumps(payload, ensure_ascii=False), capture_output=True,
+                              text=True, timeout=timeout_s)
+        if proc.returncode:
+            return sibling_skipped("sibling scan exited " + str(proc.returncode))
+        value = json.loads(proc.stdout)
+        if not isinstance(value, dict):
+            return sibling_skipped("sibling scan returned invalid JSON")
+        return value
+    except subprocess.TimeoutExpired:
+        return sibling_skipped("sibling scan timed out")
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return sibling_skipped("sibling scan failed: " + str(exc))
+
+
+def run_sibling_step(manifest, returns, phase4, config, repo):
+    try:
+        scan_manifest = {key: manifest.get(key) for key in
+                         ("mode", "head", "baselineSha", "changedSet", "docGlobs")}
+        payload = {"repoRoot": repo, "manifest": scan_manifest, "returns": returns,
+                   "phase4": phase4, "reportPattern": report_pattern(config)}
+        return run_sibling_scan(payload, repo)
+    except Exception as exc:
+        return sibling_skipped("sibling scan failed: " + str(exc))
 
 
 def atomic(path, value):
@@ -479,11 +521,8 @@ def main():
         os.close(lock_fd)
         lock_fd = None
         sibling = None
-        if verdict == "NEEDS_FIX":
-            proc = subprocess.run([sys.executable, os.path.join(HERE, "sibling-scan.py"),
-                                   "--run-dir", run_dir], capture_output=True, text=True)
-            if proc.returncode == 0:
-                sibling = json.loads(proc.stdout)
+        if verdict in {"CONSISTENT", "NEEDS_FIX"}:
+            sibling = run_sibling_step(manifest, returns, phase4, config, repo)
         print(json.dumps({"verdict": verdict, "anchorWritten": anchor_written,
                           "runid": args.runid, "counts": {"impacted": len(impacted),
                           "dispatch": len(dispatched), "cached": len(cached)},

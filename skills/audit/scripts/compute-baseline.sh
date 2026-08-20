@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # compute-baseline.sh — change set since the audit anchor (spec §5.1).
 # Output JSON: {"mode":"full|incremental","baselineSha":str|null,"changed":[...],
-#               "filteredOutCount":int,"filteredOutSample":[...]}
+#               "filteredOutCount":int,"filteredOutSample":[...],
+#               "machineryExcludedCount":int,"machineryExcludedSample":[...]}
 # filteredOutCount/filteredOutSample surface changed paths that diffGlobs dropped
 # (see issue #7): a stale/too-narrow diffGlobs must not silently hide code changes.
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 CONFIG=""; REPO_ROOT="$(pwd)"
 while [[ $# -gt 0 ]]; do
@@ -56,7 +59,11 @@ fi
 # Paths dropped by the filter are not discarded silently (issue #7): filteredOutCount
 # is the full dropped count, filteredOutSample is capped at 5 for a readable report line.
 py '
-import json,sys,re
+import importlib.util,json,sys,re
+sys.path.insert(0, sys.argv[5])
+spec=importlib.util.spec_from_file_location("change_set_sha", sys.argv[5]+"/change-set-sha.py")
+module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+config=json.load(open(sys.argv[6]))
 def g2r(p):
     out=[];i=0;n=len(p)
     while i<n:
@@ -71,9 +78,13 @@ globs=[g2r(x) for x in json.loads(sys.argv[1])]
 paths=[l.strip() for l in open(sys.argv[2]) if l.strip()]
 def kept(p):
     return (not globs) or any(rx.match(p) for rx in globs)
-changed=sorted(set(p for p in paths if kept(p)))
-dropped=sorted(set(p for p in paths if not kept(p)))
+machinery=sorted(set(p for p in paths if module.excluded(p, config)))
+machinery_set=set(machinery)
+remaining=[p for p in paths if p not in machinery_set]
+changed=sorted(set(p for p in remaining if kept(p)))
+dropped=sorted(set(p for p in remaining if not kept(p)))
 out={"mode":sys.argv[3],"baselineSha":json.loads(sys.argv[4]),"changed":changed,
-     "filteredOutCount":len(dropped),"filteredOutSample":dropped[:5]}
+     "filteredOutCount":len(dropped),"filteredOutSample":dropped[:5],
+     "machineryExcludedCount":len(machinery),"machineryExcludedSample":machinery[:5]}
 print(json.dumps(out))
-' "$GLOBS_JSON" "$TMPFILE" "$MODE" "$BASELINE"
+' "$GLOBS_JSON" "$TMPFILE" "$MODE" "$BASELINE" "$SCRIPT_DIR" "$CONFIG"
