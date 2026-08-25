@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 
-from docaudit_paths import list_doc_files, matches_glob
+from docaudit_paths import list_doc_files
 
 
 QUOTE_RE = re.compile(r'"([^"\n\r]{2,200})"|`([^`\n\r]{2,80})`')
@@ -154,7 +154,8 @@ def scan(payload):
     report_pattern = payload.get("reportPattern")
     docs = []
     for path in list_doc_files(repo, manifest.get("docGlobs", []), result["sources"]["notes"]):
-        if path.startswith(".claude/state/") or (isinstance(report_pattern, str) and matches_glob(path, report_pattern)):
+        if path.startswith(".claude/state/") or (isinstance(report_pattern, str)
+                                                   and re.fullmatch(report_pattern, path)):
             continue
         docs.append(path)
     counts = {}

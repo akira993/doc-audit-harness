@@ -29,7 +29,7 @@ Rules:
 """
 import argparse, json, os, re, sys
 
-from docaudit_paths import list_doc_files as safe_list_doc_files, validate_repo_path
+from docaudit_paths import list_doc_files as safe_list_doc_files, matches_glob, validate_repo_path
 
 DEFAULT_MIN_IDENT = 5
 DEFAULT_EXCLUDE_BASENAMES = {
@@ -89,6 +89,42 @@ def list_doc_files(repo_root, doc_globs):
     return docs
 
 
+def report_pattern(config):
+    value = config.get("reportPath")
+    globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+    if not isinstance(value, str) or not value.endswith(".md"):
+        return None
+    sample = value.replace("<YYYY-MM-DD>", "2000-01-01").replace("[_NN]", "_01")
+    if not any(matches_glob(sample, item) for item in globs if isinstance(item, str)):
+        return None
+    directory, name = os.path.split(value)
+    marker = "<YYYY-MM-DD>"
+    suffix_marker = "[_NN]"
+    if marker not in name:
+        return None
+    prefix = name.split(marker, 1)[0]
+    if not prefix:
+        return None
+    suffix_at = None
+    if suffix_marker not in value:
+        suffix_at = len(value) - len(name) + name.find(marker) + len(marker)
+    out = []
+    i = 0
+    while i < len(value):
+        if value.startswith(marker, i):
+            out.append("[0-9]{4}-[0-9]{2}-[0-9]{2}")
+            i += len(marker)
+            if suffix_at == i:
+                out.append("(_[0-9]{2,})?")
+        elif value.startswith(suffix_marker, i):
+            out.append("(_[0-9]{2,})?")
+            i += len(suffix_marker)
+        else:
+            out.append(re.escape(value[i]))
+            i += 1
+    return "^" + "".join(out) + "$"
+
+
 def tokens_for(changed_path, min_len, exclude):
     base = os.path.basename(changed_path)
     stem = base.rsplit(".", 1)[0] if "." in base else base
@@ -132,6 +168,8 @@ def main():
 
     prov = {}  # path -> set of provenances
     warnings = []
+    doc_globs = cfg.get("docGlobs", ["docs/**/*.md", "*.md"])
+    report_rx = None if cfg.get("auditReportsInCorpus") is True else report_pattern(cfg)
 
     def exists(rel):
         try:
@@ -141,8 +179,9 @@ def main():
             return False
 
     if args.mode == "full":
-        for doc in safe_list_doc_files(
-                repo, cfg.get("docGlobs", ["docs/**/*.md", "*.md"]), warnings):
+        for doc in safe_list_doc_files(repo, doc_globs, warnings):
+            if report_rx and re.fullmatch(report_rx, doc):
+                continue
             prov.setdefault(doc, set()).add("full")
     else:
         # --- mapped ---
@@ -158,8 +197,8 @@ def main():
                     print(f"warn: mapped impact path missing/unsafe: {doc}", file=sys.stderr)
 
     # --- heuristic ---
-    doc_files = safe_list_doc_files(
-        repo, cfg.get("docGlobs", ["docs/**/*.md", "*.md"]), warnings)
+    doc_files = [doc for doc in safe_list_doc_files(repo, doc_globs, warnings)
+                 if not (report_rx and re.fullmatch(report_rx, doc))]
     all_tokens = set()
     for c in changed:
         all_tokens |= tokens_for(c, min_len, exclude)

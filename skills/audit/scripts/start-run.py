@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from docaudit_paths import list_doc_files, validate_repo_path
+from docaudit_paths import list_doc_files, matches_glob, validate_repo_path
 
 
 RUNID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
@@ -18,6 +18,42 @@ BUILTIN_EXCLUDES = [".claude/state/docaudit-run", ".claude/state/docaudit-histor
                     ".claude/state/docaudit-last-run.json", ".claude/state/last-doc-audit.json",
                     ".claude/worktrees", ".mdq", ".codegraph", "graphify-out",
                     ".cocoindex_code"]
+
+
+def report_pattern(config):
+    value = config.get("reportPath")
+    globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+    if not isinstance(value, str) or not value.endswith(".md"):
+        return None
+    sample = value.replace("<YYYY-MM-DD>", "2000-01-01").replace("[_NN]", "_01")
+    if not any(matches_glob(sample, item) for item in globs if isinstance(item, str)):
+        return None
+    directory, name = os.path.split(value)
+    marker = "<YYYY-MM-DD>"
+    suffix_marker = "[_NN]"
+    if marker not in name:
+        return None
+    prefix = name.split(marker, 1)[0]
+    if not prefix:
+        return None
+    suffix_at = None
+    if suffix_marker not in value:
+        suffix_at = len(value) - len(name) + name.find(marker) + len(marker)
+    out = []
+    i = 0
+    while i < len(value):
+        if value.startswith(marker, i):
+            out.append("[0-9]{4}-[0-9]{2}-[0-9]{2}")
+            i += len(marker)
+            if suffix_at == i:
+                out.append("(_[0-9]{2,})?")
+        elif value.startswith(suffix_marker, i):
+            out.append("(_[0-9]{2,})?")
+            i += len(suffix_marker)
+        else:
+            out.append(re.escape(value[i]))
+            i += 1
+    return "^" + "".join(out) + "$"
 
 
 def atomic_write(path, raw):
@@ -111,6 +147,10 @@ def main():
         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
         corpus = list_doc_files(repo, doc_globs)
+        if config.get("auditReportsInCorpus") is not True:
+            report_rx = report_pattern(config)
+            corpus = [path for path in corpus
+                      if not (report_rx and re.fullmatch(report_rx, path))]
         if args.mode == "full" and not paths and corpus:
             raise ValueError("full mode requires impacted documents unless the corpus is empty")
         manifest = {"runid": args.runid, "head": head, "mode": args.mode,

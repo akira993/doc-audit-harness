@@ -298,7 +298,7 @@ Parse `$RUN_DIR/impact.json` for `{impacted[], mapGapCandidates[], ssotRecheck[]
 When `DOC_GRAPH_AVAILABLE` or `SEMANTIC_SEARCH_AVAILABLE` is true, supplement `impact.json` with
 graphify/CocoIndex candidates before classification and dispatch (either or both — each is an independent,
 optional source): `python3 "$SD/scripts/impact-supplement.py" --impact-json "$RUN_DIR/impact.json"
---changed - --change-summary "$changeSummary" --repo-root "$CLAUDE_PROJECT_DIR"
+--changed - --change-summary "$changeSummary" --repo-root "$CLAUDE_PROJECT_DIR" --config "$CFG"
 --max-impacted-docs <config maxImpactedDocs, default 200> --doc-globs <config docGlobs, comma-joined>
 [--graphify-bin "$DOC_GRAPH_BIN"] [--cocoindex-bin "$SEMANTIC_SEARCH_BIN" --min-score <config
 semanticSearch.minScore, default 0.4>]`, piping the Phase-1 `changed` list to stdin — include
@@ -512,6 +512,10 @@ the gate's `counts`, `historyStatus`, and `siblingScan`, the **mdq status line**
 verdict/reason. Because the report is written after gate and report paths are mechanically
 excluded from the change-set contract, it cannot invalidate the sealed digest. Do NOT edit any existing doc and do NOT auto-edit
 `docs/README.md` — list "add report to index" as a manual follow-up.
+
+Never overwrite an existing report. On a collision, start with the zero-padded two-digit suffix
+`_02`, then increment it; `_99` is followed by `_100`. Insert the suffix at `[_NN]` when that
+placeholder is present, otherwise immediately after the rendered date.
 
 **mdq status line** — always include exactly one; it is **non-blocking** (never changes the verdict). If Phase 0's confirmation gate fired, append the matching `MDQ_DEGRADE` suffix below to whichever base line applies (omit the suffix when `MDQ_DEGRADE` is `n/a`):
 - `MDQ_AVAILABLE` false → `💡 mdq: not active — docs read in full. Install mdq for Phase-0 indexed, chunked reads (~90%+ token savings on large docs): clone github.com/dahatake/skills and run its ./setup/setup-markdown-query.sh`

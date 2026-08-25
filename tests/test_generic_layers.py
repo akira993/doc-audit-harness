@@ -1,4 +1,5 @@
 import importlib.util, json, os, subprocess, sys, tempfile, unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "generic-layers.py")
@@ -25,6 +26,21 @@ def run(repo, layer="all", config=None, paths=None):
     os.unlink(cf.name)
     assert p.returncode == 0, p.stderr
     return json.loads(p.stdout)
+
+
+def run_text(repo, layer="all", config=None, paths=None):
+    cfg = config or {"docGlobs": ["docs/**/*.md", "*.md"]}
+    cf = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
+    json.dump(cfg, cf); cf.close()
+    argv = [sys.executable, SCRIPT, "--config", cf.name, "--repo-root", repo,
+            "--layer", layer, "--format", "text"]
+    inp = None
+    if paths is not None:
+        argv += ["--paths", "-"]; inp = "\n".join(paths)
+    p = subprocess.run(argv, input=inp, capture_output=True, text=True)
+    os.unlink(cf.name)
+    assert p.returncode == 0, p.stderr
+    return p.stdout
 
 
 def write(repo, rel, content):
@@ -103,6 +119,12 @@ class TestExistenceLayer(unittest.TestCase):
     def test_file_symbol_locator_with_existing_base_no_warn(self):
         write(self.repo, "apps/worker/src/index.ts", "x\n")
         write(self.repo, "docs/a.md", "see `apps/worker/src/index.ts:SYMBOL`\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(out["findings"], [])
+
+    def test_existing_filename_with_colon_resolves_before_locator_split(self):
+        write(self.repo, "docs/foo:bar", "x\n")
+        write(self.repo, "docs/a.md", "see `docs/foo:bar`\n")
         out = run(self.repo, "existence")
         self.assertEqual(out["findings"], [])
 
@@ -326,6 +348,320 @@ class TestLinksInsideCodeIgnored(unittest.TestCase):
         paths = {f["path"] for f in out["findings"]}
         self.assertIn("docs/orphan.md", paths)
         self.assertNotIn("docs/a.md", paths)
+
+
+class TestIssue33Paths(unittest.TestCase):
+    def setUp(self):
+        self.repo = tempfile.mkdtemp()
+
+    def test_four_reference_forms_have_exact_severity_path_and_line(self):
+        write(self.repo, "docs/README.md",
+              "[link](./gone-link.md)\n"
+              "`docs/gone-code.md`\n"
+              "docs/gone-bare.md — 説明\n"
+              "`docs/gone-dir/`\n")
+        out = run(self.repo, "all")
+        self.assertEqual(
+            [(f["layer"], f["severity"], f["path"], f["line"]) for f in out["findings"]],
+            [("format", "FAIL", "docs/README.md", 1),
+             ("existence", "FAIL", "docs/README.md", 2),
+             ("existence", "WARN", "docs/README.md", 4),
+             ("existence", "WARN", "docs/README.md", 3)])
+        self.assertIn("bare path reference", out["findings"][3]["message"])
+        self.assertEqual(out["counts"], {"docs": 1, "findings": 4, "fail": 2, "warn": 2})
+
+    def test_bare_positive_boundaries_and_command_destination(self):
+        cases = [
+            ("「docs/gone.md」\n", 1),
+            ("intro\ndocs/gone.mdを参照\n", 2),
+            ("intro\nmore\n- docs/logs/gone.md — 説明\n", 3),
+            ("cp docs/source.md docs/new.md\n", 1),
+        ]
+        for content, line in cases:
+            with self.subTest(content=content):
+                repo = tempfile.mkdtemp()
+                write(repo, "docs/a.md", content)
+                if content.startswith("cp "):
+                    write(repo, "docs/source.md", "source\n")
+                out = run(repo, "existence")
+                self.assertEqual(len(out["findings"]), 1)
+                finding = out["findings"][0]
+                self.assertEqual((finding["severity"], finding["path"], finding["line"]),
+                                 ("WARN", "docs/a.md", line))
+                self.assertIn("bare path reference", finding["message"])
+
+    def test_bare_false_positives_are_masked_or_resolve(self):
+        write(self.repo, "docs/api.md", "api\n")
+        write(self.repo, "docs/foo+bar.md", "plus\n")
+        write(self.repo, "docs/foo bar.md", "space\n")
+        write(self.repo, "docs/a.md",
+              "docs/api.md（旧版）\n"
+              "docs/api.md?raw=1\n"
+              "docs/foo+bar.md\n"
+              "docs/foo%20bar.md\n"
+              "https://example.comを参照。docs/api.md\n"
+              "https://docs/gone.md\n"
+              "//docs/gone.md\n"
+              "https://example.com/?next=docs/gone.md\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(out["findings"], [])
+
+    def test_non_ascii_bare_is_not_harvested_but_backtick_is_fail(self):
+        write(self.repo, "docs/a.md", "docs/旧概要.md\n`docs/旧概要.md`\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(
+            [(f["severity"], f["path"], f["line"]) for f in out["findings"]],
+            [("FAIL", "docs/a.md", 2)])
+
+    def test_percent_decode_safety_inputs_do_not_stop_audit(self):
+        write(self.repo, "docs/a.md", "`docs/%00.md`\n`docs/%2e%2e/x.md`\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(
+            [(f["severity"], f["path"], f["line"]) for f in out["findings"]],
+            [("FAIL", "docs/a.md", 1), ("FAIL", "docs/a.md", 2)])
+
+    def test_filesystem_exception_skips_token(self):
+        mod = load_script_module()
+        os.makedirs(os.path.join(self.repo, "docs"), exist_ok=True)
+        original = mod.os.path.exists
+
+        def raising(path):
+            if "bad.md" in path:
+                raise ValueError("injected")
+            return original(path)
+
+        with mock.patch.object(mod.os.path, "exists", side_effect=raising):
+            self.assertEqual(mod._resolve_path_token("docs/bad.md", self.repo), (None, None))
+        self.assertEqual(mod._resolve_path_token("docs/bad\x00.md", self.repo), (None, None))
+
+    def test_normalization_order_drives_fail_classification(self):
+        write(self.repo, "docs/a.md",
+              "`docs/gone.md?raw=1`\n"
+              "`docs/gone.md#x`\n"
+              "`docs/gone.md:12`\n"
+              "`docs/gone%2Emd`\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(
+            [(f["severity"], f["path"], f["line"]) for f in out["findings"]],
+            [("FAIL", "docs/a.md", 1), ("FAIL", "docs/a.md", 2),
+             ("FAIL", "docs/a.md", 3), ("FAIL", "docs/a.md", 4)])
+
+    def test_existence_masks_all_specified_code_forms(self):
+        write(self.repo, "docs/a.md",
+              "```\n`docs/fenced.md`\n```\n"
+              "    `docs/indented.md`\n"
+              "> ```\n> `docs/quoted.md`\n> ```\n"
+              "- ```\n- `docs/list.md`\n- ```\n"
+              "- > ```\n- > `docs/nested.md`\n- > ```\n"
+              "1) ```\n1) `docs/ordered.md`\n1) ```\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(out["findings"], [])
+
+    def test_file_directory_boundary_is_exact(self):
+        write(self.repo, "docs/a.md",
+              "`docs/LICENSE`\n`docs/v1.2`\n`docs/schema.d`\n`docs/gone/`\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(
+            [(f["severity"], f["path"], f["line"]) for f in out["findings"]],
+            [("WARN", "docs/a.md", 1), ("WARN", "docs/a.md", 2),
+             ("FAIL", "docs/a.md", 3), ("WARN", "docs/a.md", 4)])
+
+    def test_parent_segments_and_external_symlink_are_skipped(self):
+        outside = tempfile.mkdtemp()
+        os.makedirs(os.path.join(outside, "target"), exist_ok=True)
+        os.makedirs(os.path.join(self.repo, "docs"), exist_ok=True)
+        os.symlink(os.path.join(outside, "target"), os.path.join(self.repo, "docs", "external"))
+        write(self.repo, "docs/a.md",
+              "`docs/../secret.md`\n"
+              "docs/../secret.md\n"
+              "`docs/external/gone.md`\n"
+              "docs/external/gone.md\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(out["findings"], [])
+
+    def test_backtick_and_bare_are_disjoint_and_shorthand_order_is_stable(self):
+        write(self.repo, "docs/a.md",
+              "`docs/gone.md`\n"
+              "docs/gone.md.\n"
+              "docs/.../gone.md.\n"
+              "docs/*.md.\n"
+              "docs/{a,b}.md.\n")
+        out = run(self.repo, "existence")
+        self.assertEqual(
+            [(f["severity"], f["path"], f["line"]) for f in out["findings"]],
+            [("FAIL", "docs/a.md", 1), ("WARN", "docs/a.md", 2)])
+
+
+class TestIssue34LayerConfiguration(unittest.TestCase):
+    def setUp(self):
+        self.repo = tempfile.mkdtemp()
+
+    def test_layer_excludes_apply_inside_each_check(self):
+        cfg = {"docGlobs": ["docs/**/*.md"],
+               "layerGlobs": {
+                   "format": {"exclude": ["docs/format.md"]},
+                   "existence": {"exclude": ["docs/existence.md"]},
+                   "semantic": {"exclude": ["docs/orphan.md"]}}}
+        write(self.repo, "docs/format.md", "[gone](./gone.md)\n")
+        write(self.repo, "docs/existence.md", "`docs/gone.md`\n")
+        write(self.repo, "docs/README.md", "index\n")
+        write(self.repo, "docs/orphan.md", "orphan\n")
+        self.assertEqual(run(self.repo, "format", cfg, paths=["docs/format.md"])["findings"], [])
+        self.assertEqual(run(self.repo, "existence", cfg, paths=["docs/existence.md"])["findings"], [])
+        semantic = run(self.repo, "semantic", cfg, paths=["docs/orphan.md"])
+        self.assertFalse(any(f["path"] == "docs/orphan.md" for f in semantic["findings"]))
+
+    def test_semantic_excluded_doc_still_contributes_outgoing_links(self):
+        cfg = {"docGlobs": ["docs/**/*.md"], "indexFiles": ["docs/README.md"],
+               "layerGlobs": {"semantic": {"exclude": ["docs/source.md"]}}}
+        write(self.repo, "docs/README.md", "index\n")
+        write(self.repo, "docs/source.md", "[target](./target.md)\n")
+        write(self.repo, "docs/target.md", "target\n")
+        out = run(self.repo, "semantic", cfg)
+        self.assertEqual(out["findings"], [])
+
+    def test_front_matter_overrides_are_first_match_and_fallback(self):
+        cfg = {"docGlobs": ["docs/**/*.md"], "frontMatterFields": ["version"],
+               "frontMatterOverrides": [
+                   {"globs": ["docs/skip.md", "docs/alternate.md"], "fields": []},
+                   {"globs": ["docs/first.md", "guide/first.md"], "fields": ["title"]},
+                   {"globs": ["docs/first.md"], "fields": ["version"]}]}
+        write(self.repo, "docs/skip.md", "no front matter\n")
+        write(self.repo, "docs/alternate.md", "also no front matter\n")
+        write(self.repo, "docs/first.md", "---\ntitle: yes\n---\nbody\n")
+        write(self.repo, "docs/fallback.md", "---\ntitle: only\n---\nbody\n")
+        out = run(self.repo, "format", cfg)
+        self.assertEqual(
+            [(f["severity"], f["path"], f["line"], f["message"]) for f in out["findings"]],
+            [("WARN", "docs/fallback.md", 1, "front matter missing field: version")])
+
+    def test_invalid_new_config_parts_each_warn_once(self):
+        cases = [
+            ({"layerGlobs": []}, "layerGlobs"),
+            ({"layerGlobs": {"format": []}}, "layerGlobs.format"),
+            ({"layerGlobs": {"format": {"exclude": "docs/**"}}}, "exclude"),
+            ({"layerGlobs": {"format": {"exclude": [1]}}}, "non-string"),
+            ({"frontMatterOverrides": {}}, "frontMatterOverrides"),
+            ({"frontMatterOverrides": [{"globs": [1], "fields": []}]}, "entry"),
+        ]
+        write(self.repo, "docs/a.md", "ok\n")
+        for extra, message_part in cases:
+            with self.subTest(extra=extra):
+                cfg = {"docGlobs": ["docs/**/*.md"]}
+                cfg.update(extra)
+                out = run(self.repo, "format", cfg)
+                self.assertEqual(len(out["findings"]), 1)
+                finding = out["findings"][0]
+                self.assertEqual((finding["severity"], finding["path"], finding["line"]),
+                                 ("WARN", "(config)", 1))
+                self.assertIn(message_part, finding["message"])
+
+    def test_unknown_keys_are_ignored_and_text_pass_ignores_config_path(self):
+        cfg = {"docGlobs": ["docs/**/*.md"], "layerGlobs": {"format": {"unknown": 1}},
+               "frontMatterOverrides": {}, "unknown": True}
+        write(self.repo, "docs/a.md", "ok\n")
+        output = run_text(self.repo, "format", cfg)
+        self.assertIn("HIT WARN (config):1", output)
+        self.assertIn("SUMMARY pass=1 warn=1 fail=0", output)
+
+
+class TestIssue35GenericReportCorpus(unittest.TestCase):
+    def setUp(self):
+        self.repo = tempfile.mkdtemp()
+        self.mod = load_script_module()
+
+    def config(self, report="docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md", **extra):
+        cfg = {"docGlobs": ["docs/**/*.md"], "reportPath": report}
+        cfg.update(extra)
+        return cfg
+
+    def test_report_matcher_contract_with_explicit_suffix_position(self):
+        rx = self.mod.report_pattern(self.config())
+        cases = {
+            "docs/logs/doc_audit_2026-08-25.md": True,
+            "docs/logs/doc_audit_2026-08-25_02.md": True,
+            "docs/logs/doc_audit_2026-08-25_100.md": True,
+            "docs/logs/doc_audit_2026-08-25_2.md": False,
+            "docs/logs/doc_audit_policy.md": False,
+            "docs/logs/doc_audit_２０２６-０８-２５.md": False,
+            "docs/logs/doc_audit_2026-08-25.txt": False,
+        }
+        self.assertEqual({path: bool(rx and self.mod.re.fullmatch(rx, path)) for path in cases}, cases)
+
+        positioned = self.mod.report_pattern(self.config(
+            "docs/logs/audit_<YYYY-MM-DD>_final[_NN].md"))
+        self.assertTrue(self.mod.re.fullmatch(positioned, "docs/logs/audit_2026-08-25_final_02.md"))
+        self.assertFalse(self.mod.re.fullmatch(positioned, "docs/logs/audit_2026-08-25_02_final.md"))
+
+    def test_report_matcher_without_suffix_inserts_after_basename_date(self):
+        rx = self.mod.report_pattern(self.config("docs/logs/audit_<YYYY-MM-DD>_final.md"))
+        self.assertTrue(self.mod.re.fullmatch(rx, "docs/logs/audit_2026-08-25_final.md"))
+        self.assertTrue(self.mod.re.fullmatch(rx, "docs/logs/audit_2026-08-25_02_final.md"))
+        self.assertFalse(self.mod.re.fullmatch(rx, "docs/logs/audit_2026-08-25_final_02.md"))
+
+    def test_invalid_report_templates_have_no_matcher(self):
+        cases = [
+            self.config("docs/logs/audit_<YYYY-MM-DD>.txt"),
+            self.config("docs/logs/audit.md"),
+            self.config("docs/<YYYY-MM-DD>.md"),
+            self.config("docs/<YYYY-MM-DD>/audit.md"),
+            {"docGlobs": ["guide/**/*.md"],
+             "reportPath": "docs/logs/audit_<YYYY-MM-DD>.md"},
+        ]
+        self.assertEqual([self.mod.report_pattern(cfg) for cfg in cases], [None] * len(cases))
+
+    def test_default_enumeration_excludes_only_actual_reports(self):
+        write(self.repo, "docs/logs/doc_audit_2026-08-25.md", "report\n")
+        write(self.repo, "docs/logs/doc_audit_policy.md", "policy\n")
+        out = run(self.repo, "format", self.config())
+        self.assertEqual(out["findings"], [])
+        self.assertEqual(out["counts"], {"docs": 1, "findings": 0, "fail": 0, "warn": 0})
+
+    def test_default_enumeration_excludes_reports_when_doc_globs_are_omitted(self):
+        write(self.repo, "docs/logs/doc_audit_2026-08-25.md", "report\n")
+        write(self.repo, "docs/logs/doc_audit_policy.md", "policy\n")
+        cfg = {"reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"}
+        out = run(self.repo, "format", cfg)
+        self.assertEqual(out["findings"], [])
+        self.assertEqual(out["counts"], {"docs": 1, "findings": 0, "fail": 0, "warn": 0})
+
+    def test_explicit_report_path_is_not_excluded(self):
+        report = "docs/logs/doc_audit_2026-08-25.md"
+        write(self.repo, report, "intro\n[broken](./gone.md)\n")
+        out = run(self.repo, "format", self.config(), paths=[report])
+        self.assertEqual(
+            [(f["severity"], f["path"], f["line"]) for f in out["findings"]],
+            [("FAIL", report, 2)])
+        self.assertEqual(out["counts"], {"docs": 1, "findings": 1, "fail": 1, "warn": 0})
+
+    def test_explicit_report_outgoing_link_prevents_false_orphan(self):
+        report = "docs/logs/doc_audit_2026-08-25.md"
+        target = "docs/target.md"
+        cfg = self.config(indexFiles=[report])
+        write(self.repo, report, "[target](../target.md)\n")
+        write(self.repo, target, "target\n")
+        out = run(self.repo, "semantic", cfg, paths=[report, target])
+        self.assertEqual(out["findings"], [])
+        self.assertEqual(out["counts"], {"docs": 2, "findings": 0, "fail": 0, "warn": 0})
+
+    def test_opt_in_true_restores_reports_and_invalid_types_warn_but_exclude(self):
+        report = "docs/logs/doc_audit_2026-08-25.md"
+        write(self.repo, report, "report\n")
+        opted_in = run(self.repo, "format", self.config(auditReportsInCorpus=True))
+        self.assertEqual(opted_in["counts"], {"docs": 1, "findings": 0, "fail": 0, "warn": 0})
+        for value in ("true", 1, []):
+            with self.subTest(value=value):
+                out = run(self.repo, "format", self.config(auditReportsInCorpus=value))
+                self.assertEqual(out["counts"], {"docs": 0, "findings": 1, "fail": 0, "warn": 1})
+                self.assertEqual(
+                    [(f["severity"], f["path"], f["line"]) for f in out["findings"]],
+                    [("WARN", "(config)", 1)])
+
+    def test_report_exclusion_keeps_text_pass_and_counts_aligned(self):
+        write(self.repo, "docs/logs/doc_audit_2026-08-25.md", "report\n")
+        write(self.repo, "docs/kept.md", "kept\n")
+        output = run_text(self.repo, "format", self.config())
+        self.assertIn("SUMMARY pass=1 warn=0 fail=0", output)
 
 
 if __name__ == "__main__":

@@ -42,6 +42,41 @@ class TestStartRun(unittest.TestCase):
         self.assertEqual(proc.returncode, 2)
         self.assertIn("full mode requires impacted", proc.stderr)
 
+    def test_report_only_full_corpus_is_empty_by_default(self):
+        report = "docs/logs/doc_audit_2026-08-25_02.md"
+        config = {"reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"}
+        fx = RunFixture(self, docs=(report,), config_extra=config)
+        fx.open()
+        proc = fx.plan_start_seal(impacted=[], mode="full")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertTrue(manifest["emptyCorpus"])
+        self.assertEqual(manifest["impacted"], [])
+
+    def test_report_corpus_opt_in_true_only_restores_nonempty_corpus(self):
+        report = "docs/logs/doc_audit_2026-08-25.md"
+        base = {"reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"}
+        values = ((True, 2), ("true", 0), (1, 0), ([], 0))
+        for value, expected_returncode in values:
+            with self.subTest(value=value):
+                fx = RunFixture(self, docs=(report,),
+                                config_extra=dict(base, auditReportsInCorpus=value))
+                fx.open()
+                proc = fx.plan_start_seal(impacted=[], mode="full")
+                self.assertEqual(proc.returncode, expected_returncode, proc.stdout + proc.stderr)
+                if expected_returncode:
+                    self.assertIn("full mode requires impacted", proc.stderr)
+
+    def test_policy_document_keeps_full_corpus_nonempty(self):
+        docs = ("docs/logs/doc_audit_2026-08-25.md", "docs/logs/doc_audit_policy.md")
+        fx = RunFixture(self, docs=docs, config_extra={
+            "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"})
+        fx.open()
+        proc = fx.plan_start_seal(impacted=[], mode="full")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("full mode requires impacted", proc.stderr)
+
     def test_manifest_uses_default_doc_globs_and_excludes_claude_worktrees(self):
         fx = RunFixture(self)
         fx.config.pop("docGlobs")

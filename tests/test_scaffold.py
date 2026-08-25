@@ -4,6 +4,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "scaffold.py")
 SHAS = os.path.join(ROOT, "skills", "audit", "references", "engine-shas.json")
 PLUGIN = os.path.join(ROOT, ".claude-plugin", "plugin.json")
+HISTORICAL_ENGINE = os.path.join(ROOT, "tests", "data", "generic-layers-v0.10.1.py")
 
 
 def run(repo, *extra):
@@ -196,6 +197,48 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         self.assertEqual(read(path), modified)
         self.assertIn("@0.10.0 ", read(path))
 
+    def test_refresh_updates_unmodified_historical_engine(self):
+        spec = importlib.util.spec_from_file_location("scaffold_under_test", SCRIPT)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        old = read(HISTORICAL_ENGINE)
+        shipped = json.loads(read(SHAS))["0.10.1"]["check-docs-engine"]
+        self.assertEqual(module._normalized_sha(old), shipped)
+        path = os.path.join(self.repo, "scripts", "check-docs.py")
+        write(self.repo, "scripts/check-docs.py",
+              module._python_with_stamp(old, "check-docs-engine", "0.10.1", shipped))
+
+        proc = run(self.repo, "--harness", "--refresh")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["stampVersion"], "0.11.0")
+        self.assertIn("scripts/check-docs.py", out["created"])
+        refreshed = read(path)
+        current = json.loads(read(SHAS))["0.11.0"]["check-docs-engine"]
+        self.assertIn(f"# docaudit-template: check-docs-engine@0.11.0 sha256:{current}\n",
+                      refreshed)
+        self.assertEqual(module._normalized_sha(refreshed), current)
+
+    def test_refresh_preserves_modified_historical_engine(self):
+        spec = importlib.util.spec_from_file_location("scaffold_under_test", SCRIPT)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        old = read(HISTORICAL_ENGINE)
+        shipped = json.loads(read(SHAS))["0.10.1"]["check-docs-engine"]
+        self.assertEqual(module._normalized_sha(old), shipped)
+        historical = module._python_with_stamp(
+            old, "check-docs-engine", "0.10.1", shipped)
+        modified = historical + "# user customization\n"
+        path = write(self.repo, "scripts/check-docs.py", modified)
+
+        proc = run(self.repo, "--harness", "--refresh")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertIn("scripts/check-docs.py", out["skipped"])
+        self.assertIn({"path": "scripts/check-docs.py",
+                       "reason": "modified or unknown template stamp"},
+                      out["skipReasons"])
+        self.assertEqual(read(path), modified)
+        self.assertIn("@0.10.1 ", read(path))
+
     def test_refresh_does_not_overwrite_modified_or_unstamped_file(self):
         self.assertEqual(run(self.repo, "--harness").returncode, 0)
         command = os.path.join(self.repo, ".claude", "commands", "check-docs.md")
@@ -237,6 +280,7 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         version = json.loads(read(PLUGIN))["version"]
+        self.assertEqual(version, "0.11.0")
         shipped = json.loads(read(SHAS))[version]
         actual = {name: module._normalized_sha(text)
                   for name, text in module._harness_sources().items()}

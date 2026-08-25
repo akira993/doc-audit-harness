@@ -122,7 +122,9 @@ class TestImpactSupplement(unittest.TestCase):
         for rel in ("docs/x.md", "docs/mapped.md", "docs/a.md", "docs/b.md",
                     "docs/exactly.md", "docs/below.md", "docs/above.md", "docs/bare.md",
                     "docs/m1.md", "docs/h1.md", "docs/g1.md", "docs/g2.md",
-                    "docs/s1.md", "docs/s2.md", "docs/noise1.md", "docs/noise2.md"):
+                    "docs/s1.md", "docs/s2.md", "docs/noise1.md", "docs/noise2.md",
+                    "docs/logs/doc_audit_2026-08-25.md",
+                    "docs/logs/doc_audit_policy.md"):
             write(os.path.join(self.repo, rel), "# doc\n")
 
     def stub(self, name, body):
@@ -164,6 +166,61 @@ class TestImpactSupplement(unittest.TestCase):
         self.assertNotIn("src/other.py", paths)
         self.assertNotIn("src/skip.py", paths)
         self.assertEqual(data["counts"]["graphifyOnly"], 2)
+
+    def test_config_excludes_report_candidates_but_no_config_preserves_behavior(self):
+        report = "docs/logs/doc_audit_2026-08-25.md"
+        policy = "docs/logs/doc_audit_policy.md"
+        gbin = self.stub("graphify-reports", graphify_candidates_stub([report, policy]))
+
+        write_impact_json(self.impact_path, [])
+        without_config = run_script([
+            "--impact-json", self.impact_path, "--changed", "-",
+            "--change-summary", "change", "--repo-root", self.repo,
+            "--graphify-bin", gbin,
+        ], stdin_text="src/foo.py\n")
+        self.assertEqual(without_config.returncode, 0, without_config.stderr)
+        with open(self.impact_path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual({item["path"] for item in data["impacted"]}, {report, policy})
+
+        config_path = os.path.join(self.repo, "doc-audit.json")
+        config = {"docGlobs": ["docs/**/*.md"],
+                  "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"}
+        write(config_path, json.dumps(config))
+        write_impact_json(self.impact_path, [])
+        with_config = run_script([
+            "--impact-json", self.impact_path, "--changed", "-",
+            "--change-summary", "change", "--repo-root", self.repo,
+            "--graphify-bin", gbin, "--config", config_path,
+        ], stdin_text="src/foo.py\n")
+        self.assertEqual(with_config.returncode, 0, with_config.stderr)
+        with open(self.impact_path, encoding="utf-8") as handle:
+            data = json.load(handle)
+        self.assertEqual(data["impacted"], [{"path": policy, "provenance": "graphify"}])
+        self.assertEqual(data["mapGapCandidates"], [policy])
+        self.assertEqual(data["counts"]["candidatesBeforeCap"], 1)
+        self.assertEqual(data["counts"]["graphifyOnly"], 1)
+
+    def test_config_opt_in_true_only_restores_report_candidates(self):
+        report = "docs/logs/doc_audit_2026-08-25.md"
+        gbin = self.stub("graphify-opt-in", graphify_candidates_stub([report]))
+        config_path = os.path.join(self.repo, "doc-audit.json")
+        base = {"docGlobs": ["docs/**/*.md"],
+                "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"}
+        for value, expected in ((True, [report]), ("true", []), (1, []), ([], [])):
+            with self.subTest(value=value):
+                write(config_path, json.dumps(dict(base, auditReportsInCorpus=value)))
+                write_impact_json(self.impact_path, [])
+                proc = run_script([
+                    "--impact-json", self.impact_path, "--changed", "-",
+                    "--change-summary", "change", "--repo-root", self.repo,
+                    "--graphify-bin", gbin, "--config", config_path,
+                ], stdin_text="src/foo.py\n")
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                with open(self.impact_path, encoding="utf-8") as handle:
+                    data = json.load(handle)
+                self.assertEqual([item["path"] for item in data["impacted"]], expected)
+                self.assertEqual(data["counts"]["candidatesBeforeCap"], len(expected))
 
     def test_cocoindex_only_merge_score_boundary(self):
         impacted = []

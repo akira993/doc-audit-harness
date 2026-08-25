@@ -15,6 +15,7 @@ Reads:
   --repo-root PATH         repo root (for running graphify/ccc with cwd there)
   --max-impacted-docs N    cap (must match resolve-impact.py's own cap; default 200)
   --doc-globs GLOB[,GLOB]  comma-separated docGlobs patterns (default docs/**/*.md,*.md)
+  --config PATH            optional doc-audit config for report-corpus exclusion
   --graphify-bin BIN       optional; omit to skip the graphify source entirely
   --cocoindex-bin BIN      optional; omit to skip the CocoIndex source entirely
   --min-score FLOAT        CocoIndex score threshold (default 0.4)
@@ -27,7 +28,7 @@ passthrough (impact.json left byte-identical).
 """
 import argparse, json, os, re, subprocess, sys
 
-from docaudit_paths import validate_repo_path
+from docaudit_paths import matches_glob, validate_repo_path
 
 DEFAULT_DOC_GLOBS = ["docs/**/*.md", "*.md"]
 DEFAULT_MIN_SCORE = 0.4
@@ -63,6 +64,42 @@ def glob_to_regex(pattern):
 
 def is_doc(path, doc_regexes):
     return any(rx.match(path) is not None or path == g for rx, g in doc_regexes)
+
+
+def report_pattern(config):
+    value = config.get("reportPath")
+    globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+    if not isinstance(value, str) or not value.endswith(".md"):
+        return None
+    sample = value.replace("<YYYY-MM-DD>", "2000-01-01").replace("[_NN]", "_01")
+    if not any(matches_glob(sample, item) for item in globs if isinstance(item, str)):
+        return None
+    directory, name = os.path.split(value)
+    marker = "<YYYY-MM-DD>"
+    suffix_marker = "[_NN]"
+    if marker not in name:
+        return None
+    prefix = name.split(marker, 1)[0]
+    if not prefix:
+        return None
+    suffix_at = None
+    if suffix_marker not in value:
+        suffix_at = len(value) - len(name) + name.find(marker) + len(marker)
+    out = []
+    i = 0
+    while i < len(value):
+        if value.startswith(marker, i):
+            out.append("[0-9]{4}-[0-9]{2}-[0-9]{2}")
+            i += len(marker)
+            if suffix_at == i:
+                out.append("(_[0-9]{2,})?")
+        elif value.startswith(suffix_marker, i):
+            out.append("(_[0-9]{2,})?")
+            i += len(suffix_marker)
+        else:
+            out.append(re.escape(value[i]))
+            i += 1
+    return "^" + "".join(out) + "$"
 
 
 def run(cmd, cwd, timeout=60):
@@ -153,6 +190,7 @@ def main():
     ap.add_argument("--repo-root", default=os.getcwd())
     ap.add_argument("--max-impacted-docs", type=int, default=DEFAULT_MAX_IMPACTED_DOCS)
     ap.add_argument("--doc-globs", default=",".join(DEFAULT_DOC_GLOBS))
+    ap.add_argument("--config")
     ap.add_argument("--graphify-bin", default=None)
     ap.add_argument("--cocoindex-bin", default=None)
     ap.add_argument("--min-score", type=float, default=DEFAULT_MIN_SCORE)
@@ -174,6 +212,17 @@ def main():
     if not args.graphify_bin and not args.cocoindex_bin:
         # Pure passthrough — leave impact.json byte-identical.
         sys.exit(0)
+
+    report_rx = None
+    if args.config:
+        try:
+            with open(args.config, encoding="utf-8") as f:
+                config = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"warn: impact-supplement: cannot read/parse config ({e}); no-op", file=sys.stderr)
+            sys.exit(0)
+        if config.get("auditReportsInCorpus") is not True:
+            report_rx = report_pattern(config)
 
     if args.changed == "-":
         raw = sys.stdin.read()
@@ -211,6 +260,8 @@ def main():
     def safe_candidates(values, source):
         admitted = []
         for value in sorted(values):
+            if report_rx and re.fullmatch(report_rx, value):
+                continue
             try:
                 admitted.append(validate_repo_path(args.repo_root, value))
             except ValueError as exc:
