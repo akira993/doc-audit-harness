@@ -12,6 +12,7 @@ from unittest import mock
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "sibling-scan.py")
 SCRIPT_DIR = os.path.dirname(SCRIPT)
+REPORT_PATTERN = r"^docs/logs/doc_audit_[0-9]{4}-[0-9]{2}-[0-9]{2}(_[0-9]{2,})?\.md$"
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
@@ -38,7 +39,7 @@ class TestSiblingScan(unittest.TestCase):
         return json.loads(proc.stdout)
 
     def payload(self, **more):
-        data = {"repoRoot": self.repo, "manifest": {"mode": "incremental", "head": git(self.repo, "rev-parse", "HEAD").stdout.strip(), "baselineSha": self.base, "changedSet": ["docs/a.md"], "docGlobs": ["docs/**/*.md"]}, "returns": [], "phase4": None, "reportPattern": "docs/logs/doc_audit_*.md"}
+        data = {"repoRoot": self.repo, "manifest": {"mode": "incremental", "head": git(self.repo, "rev-parse", "HEAD").stdout.strip(), "baselineSha": self.base, "changedSet": ["docs/a.md"], "docGlobs": ["docs/**/*.md"]}, "returns": [], "phase4": None, "reportPattern": REPORT_PATTERN}
         data.update(more); return data
 
     def test_quotes_unicode_title_and_change_set_sources(self):
@@ -72,10 +73,13 @@ class TestSiblingScan(unittest.TestCase):
 
     def test_report_is_excluded_and_run_dir_matches_stdin(self):
         os.makedirs(os.path.join(self.repo, "docs", "logs"))
-        with open(os.path.join(self.repo, "docs", "logs", "doc_audit_x.md"), "w") as f: f.write("`ccc`\n")
+        with open(os.path.join(self.repo, "docs", "logs", "doc_audit_2026-08-25_02.md"), "w") as f: f.write("`ccc`\n")
+        with open(os.path.join(self.repo, "docs", "logs", "doc_audit_policy.md"), "w") as f: f.write("`ccc`\n")
         payload = self.payload(returns=[{"verdict": "WARN", "rationale": "`ccc`"}])
         out = self.scan(payload)
-        self.assertNotIn("docs/logs/doc_audit_x.md", [item["path"] for item in out["matches"]])
+        paths = [item["path"] for item in out["matches"]]
+        self.assertNotIn("docs/logs/doc_audit_2026-08-25_02.md", paths)
+        self.assertIn("docs/logs/doc_audit_policy.md", paths)
         run_dir = os.path.join(self.repo, ".claude", "state", "docaudit-run", "r")
         os.makedirs(run_dir)
         with open(os.path.join(run_dir, "returns.json"), "w") as handle:

@@ -9,6 +9,8 @@ live here; the plugin ships no project knowledge.
 | `diffGlobs` | string[] | yes | path globs that scope the change set (`**`=incl `/`, `*`=excl `/`) |
 | `docGlobs` | string[] | no | files treated as docs for the heuristic scan (default `["docs/**/*.md","*.md"]`) |
 | `frontMatterFields` | string[] | no | generic `format` layer requires these front-matter fields on every doc (WARN if missing); omit to skip front-matter checks |
+| `layerGlobs` | object | no | per-layer generic exclusions: `{format?:{exclude:string[]},existence?:{exclude:string[]},semantic?:{exclude:string[]}}`; exclusions also apply to explicit `--paths` input |
+| `frontMatterOverrides` | object[] | no | ordered generic `format` overrides: `{globs:string[],fields:string[]}`; the first entry whose `globs` contains a match wins, `fields:[]` skips the check, and no match falls back to `frontMatterFields` |
 | `indexFiles` | string[] | no | generic `semantic` layer treats these as link roots for orphan detection (default: any `README.md` within the doc tree) |
 | `impactMap` | object[] | yes | `{changed: path\|glob, impacts: docPath[], note?: string}` |
 | `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: (path\|path:line)[]}` — a URL `liveSource` (http/https) is not supported: it is never executed or fetched, and the audit emits a warning |
@@ -16,6 +18,7 @@ live here; the plugin ships no project knowledge.
 | `boundaryCommand` | string | no | shell command for project-boundary check |
 | `reviewCommands` | object | no | `{code, security}` review command strings (effort embedded, e.g. `/code-review high`) |
 | `reportPath` | string | no | output report path template (supports `<YYYY-MM-DD>` and `[_NN]`) |
+| `auditReportsInCorpus` | boolean | no | only literal `true` keeps matching audit reports in corpus scans; omitted, `false`, or an invalid type excludes them (generic layers emit a config WARN for an invalid type) |
 | `maxImpactedDocs` | number | no | cap on impacted docs (default 200); overflow sets `truncated` |
 | `harness` | object | no | `{state,decidedAt,engineVersion}` where state is `installed`, `declined`, `integrated`, `adjusted`, or `existing-untouched`; absence is the v0.9 `unset` state |
 | `verdictCache` | object | no | `{enabled:bool=true,minConsecutivePasses:int=2}`; values outside 2..10 disable cache and emit WARN |
@@ -313,3 +316,32 @@ SKILL falls back to `scripts/generic-layers.py` — a portable, config-driven ba
 conservative repo-path-token resolution; `semantic` = orphan detection). This baseline
 is intentionally weaker than a project's bespoke doc tools; richer checks come from
 `docAuditCommands` or a project-tailored scaffold (Plan 4).
+
+`layerGlobs.<layer>.exclude` is applied inside each generic check, including when `--paths`
+explicitly supplies documents. For `semantic`, excluded documents are removed only from orphan
+reporting; their outgoing links still count as references. `frontMatterOverrides` is evaluated in
+array order and the first entry with any matching glob wins. Invalid shapes for either key produce
+a WARN at `(config):1` and the invalid part is ignored.
+
+The existence layer inspects both backtick tokens (including non-ASCII paths) and bare paths from
+an ASCII path character class. A non-resolving backtick token that denotes a concrete file is a
+FAIL; bare references and directory-like or extensionless backtick tokens remain WARN. This can
+turn an existing repository from CONSISTENT to NEEDS FIX without adding a new key. Use
+`layerGlobs` for intentional per-layer exclusions; generated audit reports are excluded from the
+corpus by default to avoid self-audit noise.
+
+Known limits: file/directory classification is syntax-based, so an extensionless file such as
+`docs/LICENSE` is WARN rather than FAIL. Bare harvesting does not detect non-ASCII paths. Fenced
+and four-space-indented code masking uses a conservative simplified Markdown recognizer and may
+mask more content than a full parser.
+
+Audit-report exclusion is derived from the complete `reportPath` template. A valid template is a
+`.md` path whose sample-rendered path matches `docGlobs`, whose basename contains
+`<YYYY-MM-DD>`, and whose basename has a non-empty prefix before that placeholder. Regex derivation
+escapes every literal character, replaces `<YYYY-MM-DD>` with ASCII-only
+`[0-9]{4}-[0-9]{2}-[0-9]{2}`, and replaces `[_NN]` with the optional suffix
+`(_[0-9]{2,})?`. The optional suffix is always accepted: at the `[_NN]` position when present,
+otherwise immediately after the date and before any following literal text. Report generation
+starts collision suffixes at `_02`, keeps two-digit zero padding through `_99`, continues with
+`_100`, and never overwrites an existing report. Set `auditReportsInCorpus` to boolean `true` only
+when reports intentionally belong in corpus scans.

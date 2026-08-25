@@ -1,0 +1,4 @@
+{
+  "docGlobs": ["docs/**/*.md"],
+  "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"
+}

@@ -4,12 +4,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "resolve-impact.py")
 
 
-def run(changed, config, repo_root):
+def run(changed, config, repo_root, mode="incremental"):
     """Invoke resolve-impact.py; return parsed JSON stdout."""
     cfg = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
     json.dump(config, cfg); cfg.close()
     p = subprocess.run(
-        [sys.executable, SCRIPT, "--config", cfg.name, "--repo-root", repo_root, "--changed", "-"],
+        [sys.executable, SCRIPT, "--config", cfg.name, "--repo-root", repo_root,
+         "--changed", "-", "--mode", mode],
         input="\n".join(changed), capture_output=True, text=True,
     )
     os.unlink(cfg.name)
@@ -177,6 +178,60 @@ class TestResolveImpact(unittest.TestCase):
         paths = [d["path"] for d in out["impacted"]]
         self.assertIn("docs/wcag.md", paths)
         self.assertIn("DESIGN.md", paths)
+
+    def test_reports_are_excluded_from_full_corpus_but_policy_remains(self):
+        report = "docs/logs/doc_audit_2026-08-25_02.md"
+        policy = "docs/logs/doc_audit_policy.md"
+        for path in (report, policy):
+            full = os.path.join(self.repo, path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8") as handle:
+                handle.write("doc\n")
+        cfg = self.base_config(reportPath="docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md")
+        out = run([], cfg, self.repo, mode="full")
+        paths = [item["path"] for item in out["impacted"]]
+        self.assertNotIn(report, paths)
+        self.assertIn(policy, paths)
+        self.assertEqual(out["mapGapCandidates"], [])
+        self.assertEqual(out["counts"], {"changed": 0, "impacted": 5, "mapped": 0,
+                                         "heuristicOnly": 0, "candidatesBeforeCap": 5})
+
+    def test_reports_are_excluded_from_heuristic_pool_but_mapped_is_unchanged(self):
+        report = "docs/logs/doc_audit_2026-08-25.md"
+        policy = "docs/logs/doc_audit_policy.md"
+        for path in (report, policy):
+            full = os.path.join(self.repo, path)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w", encoding="utf-8") as handle:
+                handle.write("report_signal\n")
+        cfg = self.base_config(reportPath="docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md")
+        out = run(["src/report_signal.py"], cfg, self.repo)
+        self.assertEqual(out["impacted"], [{"path": policy, "provenance": "heuristic"}])
+        self.assertEqual(out["mapGapCandidates"], [policy])
+        self.assertEqual(out["counts"], {"changed": 1, "impacted": 1, "mapped": 0,
+                                         "heuristicOnly": 1, "candidatesBeforeCap": 1})
+
+        mapped_cfg = self.base_config(
+            reportPath="docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md",
+            impactMap=[{"changed": "src/report_signal.py", "impacts": [report]}])
+        mapped = run(["src/report_signal.py"], mapped_cfg, self.repo)
+        self.assertIn({"path": report, "provenance": "mapped"}, mapped["impacted"])
+
+    def test_corpus_opt_in_true_only_restores_reports(self):
+        report = "docs/logs/doc_audit_2026-08-25.md"
+        full = os.path.join(self.repo, report)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        with open(full, "w", encoding="utf-8") as handle:
+            handle.write("report\n")
+        base = self.base_config(reportPath="docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md")
+        opted_in = run([], dict(base, auditReportsInCorpus=True), self.repo, mode="full")
+        self.assertIn(report, [item["path"] for item in opted_in["impacted"]])
+        self.assertEqual(opted_in["counts"]["candidatesBeforeCap"], 5)
+        for value in ("true", 1, []):
+            with self.subTest(value=value):
+                out = run([], dict(base, auditReportsInCorpus=value), self.repo, mode="full")
+                self.assertNotIn(report, [item["path"] for item in out["impacted"]])
+                self.assertEqual(out["counts"]["candidatesBeforeCap"], 4)
 
 
 if __name__ == "__main__":

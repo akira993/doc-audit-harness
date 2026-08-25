@@ -198,7 +198,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.10.1  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.11.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -251,7 +251,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.0 `doc-lint` templates can be updated with
+Existing unmodified stamped 0.10.1 templates can be updated to 0.11.0 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
@@ -347,7 +347,8 @@ the audit emits a warning so you track that value manually.
 - **If it doesn't,** omit `docAuditCommands`. Phase 4 falls back to the built-in
   `generic-layers.py` — a portable baseline:
   - `format`: relative-link resolution (broken ⇒ FAIL) + optional `frontMatterFields` (missing ⇒ WARN).
-  - `existence`: conservative repo-path-token resolution (non-resolving ⇒ WARN).
+  - `existence`: repo-path-token resolution from backticks and bare ASCII paths
+    (a non-resolving concrete backtick file ⇒ FAIL; other non-resolving paths ⇒ WARN).
   - `semantic`: orphan detection (unlinked doc ⇒ WARN).
   The generic baseline is **intentionally weaker** than bespoke tools.
 - **If `init` installs the v0.10 harness,** it writes this fixed mapping, used by

@@ -116,17 +116,17 @@ class TestComputeBaseline(unittest.TestCase):
         git(self.repo, "add", "-A"); git(self.repo, "commit", "-m", "config")
         head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
         write(self.repo, ".claude/state/last-doc-audit.json", json.dumps({"sha": head}))
-        for path in (".claude/state/docaudit-history.json", ".claude/worktrees/a", ".mdq/x", ".codegraph/x", "graphify-out/x", ".cocoindex_code/x", "docs/logs/doc_audit_2026-01-01.md", "docs/kept.md"):
+        for path in (".claude/state/docaudit-history.json", ".claude/worktrees/a", ".mdq/x", ".codegraph/x", "graphify-out/x", ".cocoindex_code/x", "docs/logs/doc_audit_2026-01-01.md", "docs/logs/doc_audit_2026-01-01_02.md", "docs/logs/doc_audit_policy.md", "docs/kept.md"):
             write(self.repo, path, "changed\n")
         git(self.repo, "add", "-A"); git(self.repo, "commit", "-m", "change")
         proc = subprocess.run(["bash", SCRIPT, "--config", config_path, "--repo-root", self.repo],
                               capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["machineryExcludedCount"], 8)
+        self.assertEqual(out["machineryExcludedCount"], 9)
         self.assertLessEqual(len(out["machineryExcludedSample"]), 5)
         self.assertEqual(out["filteredOutCount"], 0)
-        self.assertEqual(out["changed"], ["docs/kept.md"])
+        self.assertEqual(out["changed"], ["docs/kept.md", "docs/logs/doc_audit_policy.md"])
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -42,7 +43,7 @@ def current_mode_blob(root, path):
 
 def report_pattern(config):
     value = config.get("reportPath")
-    globs = config.get("docGlobs", [])
+    globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
     if not isinstance(value, str) or not value.endswith(".md"):
         return None
     sample = value.replace("<YYYY-MM-DD>", "2000-01-01").replace("[_NN]", "_01")
@@ -54,7 +55,26 @@ def report_pattern(config):
     prefix = name.split("<YYYY-MM-DD>", 1)[0]
     if not prefix:
         return None
-    return (directory.rstrip("/") + "/" if directory else "") + prefix + "*.md"
+    marker = "<YYYY-MM-DD>"
+    suffix_marker = "[_NN]"
+    suffix_at = None
+    if suffix_marker not in value:
+        suffix_at = len(value) - len(name) + name.find(marker) + len(marker)
+    out = []
+    i = 0
+    while i < len(value):
+        if value.startswith(marker, i):
+            out.append("[0-9]{4}-[0-9]{2}-[0-9]{2}")
+            i += len(marker)
+            if suffix_at == i:
+                out.append("(_[0-9]{2,})?")
+        elif value.startswith(suffix_marker, i):
+            out.append("(_[0-9]{2,})?")
+            i += len(suffix_marker)
+        else:
+            out.append(re.escape(value[i]))
+            i += 1
+    return "^" + "".join(out) + "$"
 
 
 def excluded(path, config):
@@ -65,7 +85,7 @@ def excluded(path, config):
     if path.split("/", 1)[0] in PROBE_ROOTS:
         return True
     pattern = report_pattern(config)
-    return bool(pattern and matches_glob(path, pattern))
+    return bool(pattern and re.fullmatch(pattern, path))
 
 
 def enumerate_changes(root, baseline, config):

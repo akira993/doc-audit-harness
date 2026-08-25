@@ -183,7 +183,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.10.1  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.11.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -234,8 +234,8 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.0 `doc-lint` テンプレートは、`/docaudit:init --harness --refresh`
-で 0.10.1 に更新できる。利用者が変更したテンプレートはそのまま残る。
+変更されていない stamp 付きの 0.10.1 テンプレートは、`/docaudit:init --harness --refresh`
+で 0.11.0 に更新できる。利用者が変更したテンプレートはそのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
 > 非標準レイアウト（`guide/`、`vps/` … 配下の docs）にも対応する。symlink された doc ディレクトリ
@@ -328,7 +328,8 @@ impact map こそが監査を *change-driven* にする。各エントリは
 - **無い場合** は `docAuditCommands` を省略する。Phase 4 は組込みの `generic-layers.py` に
   fallback する — ポータブルなベースライン:
   - `format`: 相対リンク解決（壊れ ⇒ FAIL）+ 任意の `frontMatterFields`（欠落 ⇒ WARN）。
-  - `existence`: 保守的な repo-path-token 解決（解決不能 ⇒ WARN）。
+  - `existence`: backtick と bare ASCII path からの repo-path-token 解決
+    （解決不能な具体的 backtick ファイル ⇒ FAIL、それ以外の解決不能 path ⇒ WARN）。
   - `semantic`: orphan 検出（どこからもリンクされないドキュメント ⇒ WARN）。
   generic ベースラインは固有ツールより **意図的に弱い**。
 - **v0.10 ハーネスを `init` で導入した場合** は、pre-flight と Phase 4 で使う次の固定配線を

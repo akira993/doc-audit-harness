@@ -132,6 +132,19 @@ class TestChangeSet(unittest.TestCase):
         other = self.call(fx, baseline="0" * 40)
         self.assertNotEqual(other.returncode, 0)
 
+    def test_report_exclusion_is_exact_and_ignores_corpus_opt_in(self):
+        fx = RunFixture(self, config_extra={
+            "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md",
+            "auditReportsInCorpus": True,
+            "docGlobs": ["docs/**/*.md", "*.md"]})
+        report = "docs/logs/doc_audit_2026-08-18_02.md"
+        policy = "docs/logs/doc_audit_policy.md"
+        write(os.path.join(fx.repo, report), "report\n")
+        write(os.path.join(fx.repo, policy), "policy\n")
+        out = json.loads(self.call(fx).stdout)
+        self.assertNotIn(report, out["changedSet"])
+        self.assertIn(policy, out["changedSet"])
+
     def test_baseline_is_part_of_digest(self):
         fx = RunFixture(self)
         first = json.loads(self.call(fx).stdout)["changeSetSha"]

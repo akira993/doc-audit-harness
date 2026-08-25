@@ -419,7 +419,7 @@ class TestCache(GateBase):
         fx = RunFixture(self)
         self.two_passes(fx)
         fx.open(runid="20260818T120002Z-abcdef12")
-        self.assertEqual(fx.plan_start_seal(contract="0.10.1").returncode, 0)
+        self.assertEqual(fx.plan_start_seal(contract="0.11.0").returncode, 0)
         with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
             manifest = json.load(handle)
         self.assertEqual(set(manifest["dispatch"]), set(fx.docs))
