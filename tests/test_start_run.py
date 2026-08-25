@@ -20,10 +20,60 @@ class TestStartRun(unittest.TestCase):
         for field in ("runid", "head", "mode", "baselineSha", "changedSet",
                       "changeSetSha", "impacted", "dispatch", "cached", "runClass",
                       "phase4Required", "preflightRequired", "contractVersion",
-                      "digestExclude", "sealed", "worktreeDigest"):
+                      "digestExclude", "sealed", "worktreeDigest", "reportDate",
+                      "reportCandidateRule"):
             self.assertIn(field, manifest)
         self.assertTrue(manifest["sealed"])
         self.assertTrue(os.path.exists(marker))
+
+    def test_report_date_and_explicit_suffix_rule_are_sealed_from_runid_utc(self):
+        fx = RunFixture(self, config_extra={
+            "reportPath": "docs/logs/audit_<YYYY-MM-DD>_final[_NN].md"})
+        self.assertEqual(fx.open(runid="20261231T235959Z-abcdef12").returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertEqual(manifest["reportDate"], "2026-12-31")
+        self.assertEqual(manifest["reportCandidateRule"], {
+            "base": "docs/logs/audit_2026-12-31_final.md",
+            "suffixPrefix": "docs/logs/audit_2026-12-31_final",
+            "suffixSuffix": ".md", "suffixStart": 2})
+
+    def test_implicit_suffix_is_inserted_immediately_after_utc_date(self):
+        fx = RunFixture(self, config_extra={
+            "reportPath": "docs/logs/audit_<YYYY-MM-DD>_final.md"})
+        self.assertEqual(fx.open(runid="20270101T000000Z-abcdef12").returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            rule = json.load(handle)["reportCandidateRule"]
+        self.assertEqual(rule["base"], "docs/logs/audit_2027-01-01_final.md")
+        self.assertEqual(rule["suffixPrefix"], "docs/logs/audit_2027-01-01")
+        self.assertEqual(rule["suffixSuffix"], "_final.md")
+
+    def test_explicit_suffix_directory_position_is_preserved(self):
+        fx = RunFixture(self, config_extra={
+            "reportPath": "docs/logs[_NN]/audit_<YYYY-MM-DD>.md"})
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            rule = json.load(handle)["reportCandidateRule"]
+        self.assertEqual(rule["base"], "docs/logs/audit_2026-08-18.md")
+        self.assertEqual(rule["suffixPrefix"], "docs/logs")
+        self.assertEqual(rule["suffixSuffix"], "/audit_2026-08-18.md")
+
+    def test_invalid_calendar_runid_is_rejected_before_manifest_write(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open(runid="20260230T120000Z-abcdef12").returncode, 0)
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("invalid UTC calendar", proc.stderr)
+
+    def test_invalid_report_candidate_pattern_is_rejected(self):
+        fx = RunFixture(self, config_extra={"reportPath": "docs/logs/audit.md"})
+        self.assertEqual(fx.open().returncode, 0)
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("reportPath", proc.stderr)
 
     def test_full_uses_head_as_baseline(self):
         fx = RunFixture(self)

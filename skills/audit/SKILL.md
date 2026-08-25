@@ -19,11 +19,16 @@ the config exists.** Bind `RUN_BASE="$CLAUDE_PROJECT_DIR/.claude/state/docaudit-
 `--break-lock` was supplied, run only
 `python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --break-lock`,
 report its JSON (including `holder`), and exit; this path does not acquire a new lock or run any
-phase. Otherwise run
+phase. It is an emergency operation that intentionally breaks report serialization; while the
+gate holds its `flock`, including the complete gate+report interval, it MUST be refused with
+`reason:"gate-running"` and must never be bypassed. Otherwise run
 `python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" [--accept-config]`,
 adding `--accept-config` only when the skill received it. Assign the complete stdout JSON,
 unchanged, to `EVIDENCE`; bind `RUNID` and `RUN_DIR` from its `runid` and `runDir` fields. Do not
-create `RUN_DIR` yourself. Exit 4 with `{locked:true,holder}` means a prior run owns the lock:
+create `RUN_DIR` yourself. If stdout includes `previousReportStatus` with `pending`, `failed`, or
+`written-durability-unknown`, report that unresolved or uncertain prior report state to the user
+before Phase 0; do not silently discard it. Continue the newly locked run normally. Exit 4 with
+`{locked:true,holder}` means a prior run owns the lock:
 show the holder and stop with “先行 run が lock を保持しています。死んでいるなら
 `/docaudit:audit --break-lock` を実行してください。” Exit 6 means an earlier run detected an
 unapproved config change: stop, ask the user to inspect `git diff .claude/doc-audit.json`, and
@@ -55,7 +60,7 @@ inside `EVIDENCE`, not separate transport variables:
 | (g) waiting for `/code-review` | same as (f) |
 | (h) Phase-4 evidence complete | (g) + phase4 |
 
-Any terminal path after a successful open that does not invoke the gate MUST release the run with
+Before gate invocation, any terminal path after a successful open MUST release the run with
 the matching `open-run.py --release --runid "$RUNID"` command above. A temporary
 `AskUserQuestion` pause follows the checkpoint rule instead; release only when the chosen answer
 terminates this audit.
@@ -490,32 +495,67 @@ it from Phase-4 evidence plus Phase-3 verdicts.
 Phase-3 verdicts (`$RUN_DIR/verdicts/`) and required Phase-4 findings
 (`$RUN_DIR/phase4.json`, absent only with the valid `none` sentinel) are already on disk. **You do
 NOT compute, declare, or hand off the verdict** — the deterministic gate derives
-it and is the SOLE writer of the anchor. Invoke it before writing any human report:
+it and is the SOLE writer of the anchor and report.
+
+When `reportPath` is configured, generate the complete human report body **before starting the
+gate**, with the change set, impacted docs and per-doc verdicts, delegated-check results, review
+summaries, `mapGapCandidates`, the Phase-3 Workflow attempt count and final
+`missing`/`returnMissing`/`mismatch`/`invalid`/`warnings`, and all required status lines below.
+Use the following single placeholder contract for every possible verdict; do not predict the
+verdict or create separate success and REFUSED templates:
+
+| placeholder | exact occurrences | gate-rendered value |
+|---|---:|---|
+| `{{GATE_VERDICT}}` | 1 | final verdict |
+| `{{GATE_REASON}}` | 0 or 1 | REFUSED reason; `"n/a"` on success |
+| `{{GATE_COUNTS}}` | 1 | counts; `"n/a"` on REFUSED |
+| `{{GATE_HISTORY_STATUS}}` | 1 | history status; `"n/a"` on REFUSED |
+| `{{GATE_WARNINGS}}` | 1 | gate warning codes |
+| `{{GATE_SIBLING_SCAN}}` | 1 | sibling scan; `"n/a"` on REFUSED |
+| `{{GATE_ANCHOR_WRITTEN}}` | 1 | whether the anchor was written |
+| `{{GATE_REPORT_DATE}}` | 2 | sealed date for front matter `created` and `updated` |
+
+Pass that UTF-8 body on stdin to
+`python3 "$SD/scripts/write-template.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID"`.
+The helper binds the template to the run ledger; never write `report-template.md`, its receipt, or
+the final `reportPath` directly. If the body must be regenerated, invoke the same helper with the
+explicit `--replace` flag and pass the complete replacement body on stdin. If `reportPath` is not
+configured, do not create a template; the gate completes reportless.
+
+After the helper succeeds, invoke the gate:
 `python3 "$SD/scripts/decide-verdict.py" --run-dir "$RUN_DIR" --repo-root "$CLAUDE_PROJECT_DIR" --config "$CFG" --anchor-path "$ANCHOR_PATH" --runid "$RUNID" --expect-json "$EVIDENCE"`.
 The gate validates the sealed immutable evidence snapshot, updates persistent state when allowed,
-and releases the lock. Parse stdout `verdict` (`CONSISTENT`, `NEEDS_FIX`, or `REFUSED`), `reason`,
-`counts`, `historyStatus`, `warnings`, and `siblingScan` (always an object for CONSISTENT and NEEDS_FIX); never replace any of them with an
-orchestrator judgment. `CONSISTENT` means the anchor advanced, `NEEDS_FIX` means blocking evidence
-was found and the anchor did not advance, and exit 3 `REFUSED` means the run is invalid. Never
-override `NEEDS_FIX`/`REFUSED`, hand-write an anchor, fabricate evidence, or retry the gate with a
+and publishes the report while holding the lock, then releases the lock. Parse stdout `verdict`
+(`CONSISTENT`, `NEEDS_FIX`, or `REFUSED`), `reason`, `counts`, `historyStatus`, `warnings`,
+`siblingScan` (always an object for CONSISTENT and NEEDS_FIX), `reportPath`, and `reportStatus`;
+never replace any of them with an orchestrator judgment. Report stdout `reportPath`, `warnings`,
+and `reportStatus` to the user. `reportPath` exists only after successful publication, and
+`reportStatus` is omitted when a pre-lock or non-owned REFUSED path wrote no `last_run` state.
+`CONSISTENT` means the anchor advanced, `NEEDS_FIX` means blocking evidence was found and the
+anchor did not advance, and exit 3 `REFUSED` means the run is invalid. Never override
+`NEEDS_FIX`/`REFUSED`, hand-write an anchor or report, fabricate evidence, or retry the gate with a
 modified expectation. If a REFUSED `reason` is config change/unaccepted config, add: inspect
 `git diff .claude/doc-audit.json`, restore or approve it, then explicitly re-run with
 `/docaudit:audit --accept-config`.
 
-**Only after the gate returns**, write a single human report to `reportPath` (e.g.
-`docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md`,
-6-field front matter (title, description, category, created, updated, version) with `category: logs`), containing: change set, impacted docs +
-per-doc verdicts, delegated-check results, review summaries, `mapGapCandidates`,
-the Phase-3 Workflow attempt count and final `missing`/`returnMissing`/`mismatch`/`invalid`/`warnings`,
-the gate's `counts`, `historyStatus`, and `siblingScan`, the **mdq status line**, the
-**context-mode status line**, and the **ax status line** (all below), and the gate's roll-up
-verdict/reason. Because the report is written after gate and report paths are mechanically
-excluded from the change-set contract, it cannot invalidate the sealed digest. Do NOT edit any existing doc and do NOT auto-edit
-`docs/README.md` — list "add report to index" as a manual follow-up.
+After invoking the gate, orchestrator lock release is required on exactly two recovery paths:
+(i) a pre-lock REFUSED caused by invalid required EVIDENCE or invalid invocation identity, where
+the gate could not validate and release the lock — run the matching
+`open-run.py --release --runid "$RUNID"`; and (ii) stdout `warnings` contains
+`lockReleaseFailed` — after the gate exits, run the same ownership-checking release command. If
+either release fails, stop and tell the user to inspect the holder and run
+`/docaudit:audit --break-lock`. A true fd/path/expected-inode mismatch after lock validation is
+non-owned: do not call `--release`; stop and give the same `--break-lock` guidance.
+
+The report uses 6-field front matter (title, description, category, created, updated, version)
+with `category: logs`. It is written by the gate while the lock is held, so it cannot race with a
+parallel run's sealed digest. Do NOT edit any existing doc and do NOT auto-edit `docs/README.md` —
+list "add report to index" as a manual follow-up.
 
 Never overwrite an existing report. On a collision, start with the zero-padded two-digit suffix
 `_02`, then increment it; `_99` is followed by `_100`. Insert the suffix at `[_NN]` when that
-placeholder is present, otherwise immediately after the rendered date.
+placeholder is present, otherwise immediately after the rendered date. The gate now implements
+this suffix contract inside its lock-held report publication interval.
 
 **mdq status line** — always include exactly one; it is **non-blocking** (never changes the verdict). If Phase 0's confirmation gate fired, append the matching `MDQ_DEGRADE` suffix below to whichever base line applies (omit the suffix when `MDQ_DEGRADE` is `n/a`):
 - `MDQ_AVAILABLE` false → `💡 mdq: not active — docs read in full. Install mdq for Phase-0 indexed, chunked reads (~90%+ token savings on large docs): clone github.com/dahatake/skills and run its ./setup/setup-markdown-query.sh`
@@ -587,7 +627,9 @@ Append ` (+<machineryExcludedCount> machinery excluded)` to that line when the m
 When `filteredOutCount` is zero but `machineryExcludedCount` is non-zero, emit one standalone line
 at the same position: `ℹ changed-set machinery exclusion: <machineryExcludedCount> path(s) (sample: <machineryExcludedSample joined by ", ">) [non-blocking]`.
 
-**siblingScan status line** — for CONSISTENT and NEEDS_FIX include exactly one; it is non-blocking. For REFUSED, omit the line (the gate returns no `siblingScan` on REFUSED; never fabricate one). If `skipped` is set, write `⚠ siblingScan: skipped (<reason>) — no cross-document phrase sweep ran; grep the changed terms by hand. [non-blocking]`. If matches are present, write `⚠ siblingScan: <P> phrases / <M> matches — possible stale siblings (sources: findings <a>, phase4 <b>, changeSet <c>; truncated <t>) [non-blocking]`. Otherwise write `✓ siblingScan: <P> phrases / 0 matches — clean (sources: findings <a>, phase4 <b>, changeSet <c>; truncated <t>)`.
+**siblingScan status line** — include exactly one `{{GATE_SIBLING_SCAN}}` placeholder in the
+pre-gate template; it is non-blocking. The gate replaces it with the scan object for CONSISTENT or
+NEEDS_FIX and with `"n/a"` for REFUSED; never fabricate a scan result.
 
 **impact warning lines** — if the Phase-2 `warnings[]` is non-empty, include one `⚠ <warning> [non-blocking]` line per entry, immediately after the diffGlobs filter line; they are **non-blocking** (never change the verdict).
 
@@ -601,10 +643,11 @@ used only when mdq is genuinely absent (conditional-force). The engine still run
 mdq. MCP servers are optional.
 
 Concurrent audits are excluded mechanically by `RUN_BASE/lock`: `open-run.py` uses exclusive
-creation, the gate holds an exclusive `flock` through its decision/state writes, and
-`--break-lock` cannot take a gate-held lock. There is no TTL or best-effort shared run directory;
-each accepted run owns `RUN_BASE/<runid>/`. Every non-gate terminal path releases only its own
-runid.
+creation, the gate holds an exclusive `flock` through its decision, state writes, and report
+publication, and `--break-lock` cannot take it anywhere in that gate+report interval. Breaking a
+stale lock is an emergency operation that intentionally breaks the report serialization guarantee;
+never use it to bypass `gate-running`. There is no TTL or best-effort shared run directory; each
+accepted run owns `RUN_BASE/<runid>/`. Every pre-gate terminal path releases only its own runid.
 
 The threat model protects two properties against one verifier writing anything in the repository
 during its run: (a) it cannot make the gate emit an evidence-unsupported CONSISTENT, and (b) it
@@ -613,10 +656,10 @@ once and judges that immutable byte snapshot; replacing disposable evidence afte
 not change the decision and is not itself detected. Before writing later-run state, the gate
 rechecks lock identity, HEAD/digest, history, anchor, and config. Owned-run contamination fails
 safe: corrupt/changed history is quarantined as `.tainted-<runid>`, a changed anchor is removed,
-and a changed config records a REFUSED state that requires explicit `--accept-config`. A lock
-is considered owned for cleanup only when it exists and either its inode equals
-`EVIDENCE.lockIno` or its content names this `RUNID`; if absent, or both inode and runid belong to
-a legitimate later run, the gate only REFUSES and alters no later-run state.
+and a changed config records a REFUSED state that requires explicit `--accept-config`. A lock is
+considered owned for cleanup only when its content names this `RUNID`, its open-fd inode equals its
+current path inode, and both equal `EVIDENCE.lockIno` — all four facts must agree. If any fact does
+not agree, the gate only REFUSES and alters no later-run state.
 
 Out of scope are a verifier-created resident process that survives the run and changes
 history/lock/anchor/config before a later run begins (equivalent to directly forging a future

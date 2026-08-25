@@ -51,6 +51,17 @@ class TestOpenRun(unittest.TestCase):
         finally:
             os.close(fd)
 
+    def test_previous_report_status_surfaces_only_recovery_states(self):
+        for status, expected in (("pending", "pending"), ("failed", "failed"),
+                                 ("written-durability-unknown", "written-durability-unknown"),
+                                 ("written", None), ("not-requested", None)):
+            with self.subTest(status=status):
+                fx = RunFixture(self)
+                write(fx.last_run, json.dumps({"reportStatus": status}) + "\n")
+                proc = fx.open()
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(json.loads(proc.stdout).get("previousReportStatus"), expected)
+
 
 class TestEvidence(unittest.TestCase):
     def test_returns_schema_and_evidence_merge(self):

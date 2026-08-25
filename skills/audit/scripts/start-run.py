@@ -2,6 +2,7 @@
 """Create the complete unsealed run manifest from impact and dispatch plans."""
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -56,6 +57,27 @@ def report_pattern(config):
     return "^" + "".join(out) + "$"
 
 
+def report_candidate_rule(config, repo, report_date):
+    value = config.get("reportPath")
+    if value is None:
+        return None
+    if report_pattern(config) is None:
+        raise ValueError("reportPath is not a valid report candidate pattern")
+    if value.count("<YYYY-MM-DD>") != 1 or value.count("[_NN]") > 1:
+        raise ValueError("reportPath must contain one date marker and at most one suffix marker")
+    rendered = value.replace("<YYYY-MM-DD>", report_date)
+    if "[_NN]" in rendered:
+        prefix, suffix = rendered.split("[_NN]", 1)
+    else:
+        insertion = rendered.index(report_date) + len(report_date)
+        prefix, suffix = rendered[:insertion], rendered[insertion:]
+    base = prefix + suffix
+    for candidate in (base, prefix + "_02" + suffix):
+        validate_repo_path(repo, candidate, must_exist=False)
+    return {"base": base, "suffixPrefix": prefix,
+            "suffixSuffix": suffix, "suffixStart": 2}
+
+
 def atomic_write(path, raw):
     fd, temporary = tempfile.mkstemp(prefix=".manifest.", dir=os.path.dirname(path))
     try:
@@ -99,6 +121,12 @@ def main():
     try:
         if not RUNID_RE.match(args.runid) or os.path.basename(os.path.realpath(args.run_dir)) != args.runid:
             raise ValueError("runid is invalid or does not match RUN_DIR basename")
+        try:
+            run_time = datetime.datetime.strptime(args.runid[:16], "%Y%m%dT%H%M%SZ").replace(
+                tzinfo=datetime.timezone.utc)
+        except ValueError as exc:
+            raise ValueError("runid contains an invalid UTC calendar timestamp") from exc
+        report_date = run_time.date().isoformat()
         evidence = json.loads(args.evidence)
         if (not isinstance(evidence, dict) or evidence.get("runid") != args.runid
                 or os.path.realpath(str(evidence.get("runDir"))) != os.path.realpath(args.run_dir)):
@@ -119,6 +147,7 @@ def main():
         if "sha256:" + hashlib.sha256(config_raw).hexdigest() != evidence.get("config"):
             raise ValueError("config changed after open-run")
         config = json.loads(config_raw.decode("utf-8"))
+        report_rule = report_candidate_rule(config, repo, report_date)
         paths = impacted_paths(impact, repo)
         for field in ("dispatch", "cached", "changedSet"):
             if not isinstance(dispatch.get(field), list):
@@ -161,7 +190,8 @@ def main():
                     "preflightRequired": preflight_required,
                     "contractVersion": dispatch.get("contractVersion"),
                     "digestExclude": digest_exclude, "sealed": False,
-                    "emptyCorpus": not corpus, "docGlobs": doc_globs}
+                    "emptyCorpus": not corpus, "docGlobs": doc_globs,
+                    "reportDate": report_date, "reportCandidateRule": report_rule}
         if not isinstance(manifest["changeSetSha"], str) or not isinstance(manifest["contractVersion"], str):
             raise ValueError("dispatch cache contract fields are missing")
         raw = (json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")

@@ -138,6 +138,27 @@ class RunFixture:
                 return proc
         return proc
 
+    def report_template(self):
+        return """---
+created: {{GATE_REPORT_DATE}}
+updated: {{GATE_REPORT_DATE}}
+---
+verdict: {{GATE_VERDICT}}
+warnings: {{GATE_WARNINGS}}
+anchorWritten: {{GATE_ANCHOR_WRITTEN}}
+reason: {{GATE_REASON}}
+counts: {{GATE_COUNTS}}
+historyStatus: {{GATE_HISTORY_STATUS}}
+siblingScan: {{GATE_SIBLING_SCAN}}
+"""
+
+    def write_template(self, body=None, replace=False):
+        args = ["--repo-root", self.repo, "--runid", self.runid]
+        if replace:
+            args.append("--replace")
+        return self.call("write-template.py", *args,
+                         input_text=body if body is not None else self.report_template())
+
     def gate(self):
         return self.call("decide-verdict.py", "--run-dir", self.run_dir,
                          "--repo-root", self.repo, "--config", self.config_path,
