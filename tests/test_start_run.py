@@ -8,6 +8,67 @@ from tests.wp12_helpers import RunFixture, git, write
 
 
 class TestStartRun(unittest.TestCase):
+    def test_phase3_backend_defaults_to_workflow_without_codex_timeout(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open().returncode, 0)
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertEqual(manifest["phase3Backend"], "workflow")
+        self.assertNotIn("phase3CodexTimeoutSeconds", manifest)
+
+    def test_explicit_workflow_does_not_seal_codex_timeout(self):
+        fx = RunFixture(self, config_extra={"phase3Backend": "workflow",
+                                             "phase3CodexTimeoutSeconds": 900})
+        self.assertEqual(fx.open().returncode, 0)
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertEqual(manifest["phase3Backend"], "workflow")
+        self.assertNotIn("phase3CodexTimeoutSeconds", manifest)
+
+    def test_codex_backend_seals_default_and_explicit_timeout(self):
+        for configured, expected in ((None, 600), (60, 60), (3600, 3600)):
+            with self.subTest(timeout=configured):
+                extra = {"phase3Backend": "codex"}
+                if configured is not None:
+                    extra["phase3CodexTimeoutSeconds"] = configured
+                fx = RunFixture(self, config_extra=extra)
+                self.assertEqual(fx.open().returncode, 0)
+                proc = fx.plan_start_seal()
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+                self.assertEqual(manifest["phase3Backend"], "codex")
+                self.assertEqual(manifest["phase3CodexTimeoutSeconds"], expected)
+
+    def test_invalid_phase3_backend_is_rejected_at_start_run(self):
+        for value in ("other", "", True, 1, None, []):
+            with self.subTest(value=value):
+                fx = RunFixture(self, config_extra={"phase3Backend": value})
+                self.assertEqual(fx.open().returncode, 0)
+                proc = fx.plan_start_seal()
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn("phase3Backend", proc.stderr)
+
+    def test_invalid_phase3_codex_timeout_is_rejected_at_start_run(self):
+        for value in (59, 3601, True, 60.0, "600", None):
+            with self.subTest(value=value):
+                fx = RunFixture(self, config_extra={"phase3Backend": "codex",
+                                                     "phase3CodexTimeoutSeconds": value})
+                self.assertEqual(fx.open().returncode, 0)
+                proc = fx.plan_start_seal()
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn("phase3CodexTimeoutSeconds", proc.stderr)
+        fx = RunFixture(self, config_extra={"phase3Backend": "workflow",
+                                             "phase3CodexTimeoutSeconds": 59})
+        self.assertEqual(fx.open().returncode, 0)
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("phase3CodexTimeoutSeconds", proc.stderr)
+
     def test_manifest_has_complete_contract_and_preserves_verdict_directory(self):
         fx = RunFixture(self)
         self.assertEqual(fx.open().returncode, 0)
@@ -20,10 +81,72 @@ class TestStartRun(unittest.TestCase):
         for field in ("runid", "head", "mode", "baselineSha", "changedSet",
                       "changeSetSha", "impacted", "dispatch", "cached", "runClass",
                       "phase4Required", "preflightRequired", "contractVersion",
-                      "digestExclude", "sealed", "worktreeDigest"):
+                      "digestExclude", "sealed", "worktreeDigest", "reportDate",
+                      "reportCandidateRule"):
             self.assertIn(field, manifest)
         self.assertTrue(manifest["sealed"])
         self.assertTrue(os.path.exists(marker))
+
+    def test_report_date_and_explicit_suffix_rule_are_sealed_from_runid_utc(self):
+        fx = RunFixture(self, config_extra={
+            "reportPath": "docs/logs/audit_<YYYY-MM-DD>_final[_NN].md"})
+        self.assertEqual(fx.open(runid="20261231T235959Z-abcdef12").returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertEqual(manifest["reportDate"], "2026-12-31")
+        self.assertEqual(manifest["reportCandidateRule"], {
+            "base": "docs/logs/audit_2026-12-31_final.md",
+            "suffixPrefix": "docs/logs/audit_2026-12-31_final",
+            "suffixSuffix": ".md", "suffixStart": 2})
+
+    def test_implicit_suffix_is_inserted_immediately_after_utc_date(self):
+        fx = RunFixture(self, config_extra={
+            "reportPath": "docs/logs/audit_<YYYY-MM-DD>_final.md"})
+        self.assertEqual(fx.open(runid="20270101T000000Z-abcdef12").returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            rule = json.load(handle)["reportCandidateRule"]
+        self.assertEqual(rule["base"], "docs/logs/audit_2027-01-01_final.md")
+        self.assertEqual(rule["suffixPrefix"], "docs/logs/audit_2027-01-01")
+        self.assertEqual(rule["suffixSuffix"], "_final.md")
+
+    def test_implicit_suffix_uses_marker_when_same_date_appears_earlier(self):
+        fx = RunFixture(self, config_extra={
+            "reportPath": "docs/2026-08-18/audit_<YYYY-MM-DD>.md"})
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            rule = json.load(handle)["reportCandidateRule"]
+        self.assertEqual(rule["base"], "docs/2026-08-18/audit_2026-08-18.md")
+        self.assertEqual(rule["suffixPrefix"],
+                         "docs/2026-08-18/audit_2026-08-18")
+        self.assertEqual(rule["suffixSuffix"], ".md")
+
+    def test_explicit_suffix_directory_position_is_preserved(self):
+        fx = RunFixture(self, config_extra={
+            "reportPath": "docs/logs[_NN]/audit_<YYYY-MM-DD>.md"})
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            rule = json.load(handle)["reportCandidateRule"]
+        self.assertEqual(rule["base"], "docs/logs/audit_2026-08-18.md")
+        self.assertEqual(rule["suffixPrefix"], "docs/logs")
+        self.assertEqual(rule["suffixSuffix"], "/audit_2026-08-18.md")
+
+    def test_invalid_calendar_runid_is_rejected_before_manifest_write(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open(runid="20260230T120000Z-abcdef12").returncode, 0)
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("invalid UTC calendar", proc.stderr)
+
+    def test_invalid_report_candidate_pattern_is_rejected(self):
+        fx = RunFixture(self, config_extra={"reportPath": "docs/logs/audit.md"})
+        self.assertEqual(fx.open().returncode, 0)
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("reportPath", proc.stderr)
 
     def test_full_uses_head_as_baseline(self):
         fx = RunFixture(self)

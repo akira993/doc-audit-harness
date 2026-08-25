@@ -52,9 +52,9 @@ running five phases on each audit:
 |------:|--------------|--------------------|
 | 1 | **Baseline + diff** — read the anchor, compute the change set since it (merge-base diff + uncommitted + untracked), filtered by `diffGlobs`. No anchor ⇒ full mode. | `compute-baseline.sh` |
 | 2 | **Impact resolution** — map changed files → impacted docs (explicit `impactMap` ∪ heuristic), plus `ssotSources` to re-verify, plus a `truncated` flag. | `resolve-impact.py` |
-| 3 | **Change-impact verification** — one subagent per impacted doc adversarially checks *"does this doc still match the changed source?"* (PASS/WARN/FAIL). | Workflow fan-out + `doc-impact-verifier` agent |
+| 3 | **Change-impact verification** — one verifier per impacted doc adversarially checks *"does this doc still match the changed source?"* (PASS/WARN/FAIL). | Workflow fan-out by default; opt-in `codex-dispatch.py` backend |
 | 4 | **Existing layers + reviews** — run your project's doc checks (or the built-in generic fallback), the boundary command, then `/security-review`; offer `/code-review` for the user to run because it is not model-invocable. | delegated commands / `generic-layers.py` |
-| 5 | **Synthesize + anchor** — roll up to one verdict, write the report, and (only if CONSISTENT) update the anchor. | `write-anchor.sh` |
+| 5 | **Gate + report + anchor** — roll up to one verdict, write the report while holding the run lock, and (only if CONSISTENT) update the anchor. | `write-template.py` + `decide-verdict.py` |
 
 Key properties to internalize:
 
@@ -81,7 +81,7 @@ Key properties to internalize:
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 whole-repo index + Phase 3 chunked doc reads (~90%+ savings on large docs; upstream bench 97–99%) | optional — auto-used when present (conditional-force); grep when absent |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 git diff + Phase 4 `/code-review`·`/security-review` output processed in its sandbox (only distilled summaries enter context) | optional — auto-used when its `ctx_*` tools are present (conditional-force); read in full when absent |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: lets doc-impact-verifier corroborate a doc's external-URL-dependent claims via a read-only, GET-only fetch (static HTML only — no JS-rendered SPA support) | optional — auto-used when installed (conditional-force); external-URL claims go unverified when absent |
-| [`codex`](https://github.com/openai/codex) (`@openai/codex` CLI) | Phase 4: a fourth, adversarial review via plain `codex exec -s read-only`, scoped to `$BASELINE_SHA..HEAD` in the prompt text | optional — auto-used when installed (conditional-force); **its `critical`/`high` findings CAN block the verdict when the run completes** — see below |
+| [`codex`](https://github.com/openai/codex) (`@openai/codex` CLI) | optional Phase-3 per-document backend, and Phase 4's fourth adversarial review, both via `codex exec -s read-only` | optional — Phase 3 requires explicit `phase3Backend:"codex"`; Phase 4 review is conditional-force; **completed `critical`/`high` review findings CAN block the verdict** — see below |
 | [`codegraph`](https://github.com/colbymchenry/codegraph) | Phase 3: lets doc-impact-verifier corroborate a doc claim that depends on a changed file's own symbols via read-only `codegraph impact`/`node` | optional — auto-used when installed (conditional-force); purely advisory, like `ax` |
 | [`graphify`](https://github.com/Graphify-Labs/graphify) | Phase 2: a second, independent candidate source for `mapGapCandidates` via graph adjacency (provenance `graphify`) | optional — auto-used when installed (conditional-force); `mapGapCandidates` uses the token heuristic only when absent |
 | [CocoIndex](https://github.com/cocoindex-io/cocoindex-code) (`ccc`) | Phase 2: a third, independent candidate source for `mapGapCandidates` via local-embedding semantic search (provenance `semantic`) | optional — auto-used when installed AND already `ccc init`-ed (conditional-force); **docaudit itself never runs `ccc init`** — see below |
@@ -135,6 +135,11 @@ Every audit prints a **3-state, non-blocking codex-review status line** immediat
 ax one: 💡 when not active, 💡 "skipped (full run)" when `mode=full`, ✓ "active (findings
 included in verdict when present)" otherwise — the line itself never blocks, but says plainly
 that the findings it summarizes may already have.
+
+Separately, v0.12.0 can opt Phase 3 into `"phase3Backend":"codex"`. This runs one read-only
+Codex process per dispatched document through `codex-dispatch.py`; the default remains
+`workflow`. The opt-in path is fail-closed: a missing, unauthenticated, timed-out, or invalid
+Codex result is never silently rerouted to Workflow.
 
 `codegraph`, `graphify`, and CocoIndex (`ccc`) are three further, purely-advisory seams — **none of
 them ever affects the verdict**, unlike `codex`. `codegraph` is symbol-level and Phase 3-only: it
@@ -198,7 +203,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.11.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.12.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -220,6 +225,13 @@ cp -R /path/to/doc-audit-harness/. ~/.claude/skills/docaudit/
 # or just the scripts if that's all that changed:
 cp /path/to/doc-audit-harness/skills/audit/scripts/*.py ~/.claude/skills/docaudit/skills/audit/scripts/
 ```
+
+**v0.12.0 behavior changes:** the deterministic gate now writes the report while it holds the
+run lock. The orchestrator first passes the placeholder-bearing body to `write-template.py`;
+after the gate, `previousReportStatus` surfaces an earlier `pending`, `failed`, or
+`written-durability-unknown` report state. Phase 3 also has the explicit, fail-closed
+`phase3Backend:"codex"` opt-in described below. Report filenames and front-matter dates are
+derived from the run ID in **UTC**, so they may differ from the local date around midnight.
 
 ---
 
@@ -251,7 +263,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.1 templates can be updated to 0.11.0 with
+Existing unmodified stamped 0.10.1 or 0.11.0 templates can be updated directly to 0.12.0 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
@@ -288,6 +300,8 @@ none.** (Canonical schema: `skills/audit/references/config-schema.md`.)
 | `indexFiles` | string[] | no | generic `semantic` layer link-roots for orphan detection (default: any `README.md` in the doc tree) |
 | `harness` | object | no | `{state,decidedAt,engineVersion}`; state is one of the five decisions above. Absence is the compatible `unset` state. |
 | `verdictCache` | object | no | `{enabled:true,minConsecutivePasses:2}`; allowed pass count is 2..10, otherwise cache is disabled with a WARN. |
+| `phase3Backend` | string | no | `"workflow"` (default) or `"codex"`; invalid values are rejected when the run is sealed. |
+| `phase3CodexTimeoutSeconds` | number | no | Codex per-document execution timeout; integer 60..3600, default 600, used only by the Codex Phase-3 backend. |
 | `models.light` | object | no | `{enabled,maxChanged,maxImpacted,maxDiffLines,maxDiffBytes,sensitiveTokens}` deterministic light-run limits. |
 | `codexReview` | object | no | `{enabled,bin,model?,timeoutMs?}`; explicit `model` wins, otherwise light uses `gpt-5.6-luna` and standard uses `gpt-5.6-terra`, both at medium effort. |
 | `digestExclude` | string[] | no | extra generated paths omitted from the seal; accepted only under `.claude/state/**` or known generated-data directories. |
@@ -385,21 +399,28 @@ the audit emits a warning so you track that value manually.
   limits it to approved docs. Non-interactive runs retain the FAIL evidence and never edit.
 - **Sealed evidence:** the orchestrator carries one SHA-bearing `EVIDENCE` object. Before
   verifier fan-out, `seal-run.py` fixes HEAD, the complete change-set hash, and the worktree
-  digest. `decide-verdict.py` reads each evidence file once, checks verifier returns against
+  digest, including the resolved Phase-3 backend. `decide-verdict.py` reads each evidence file once, checks verifier returns against
   assigned paths, and is the sole writer of history, last-run state, and the anchor. Old flat
   files under `docaudit-run/` are ignored.
 - **Deterministic cache:** `plan-dispatch.py` skips Phase 3 only when a doc has the configured
   number (default 2) of consecutive PASS records with identical doc content, `changeSetSha`,
-  and contract version. Missing/corrupt history is a cold start; `--full` bypasses cache.
+  contract version, and backend. Old history without a backend means `workflow`.
+  Missing/corrupt history is a cold start; `--full` bypasses cache.
 - **Run class:** `classify-run.py` chooses `light` or `standard` from mode, counts, diff size,
   sensitive path tokens, and last-run verdict. Light uses `doc-impact-verifier-light` (Haiku),
-  while standard and every retry use Sonnet. Codex review defaults to Luna for light and Terra
-  for standard unless `codexReview.model` is set; both use medium effort.
+  while standard and every Workflow retry use Sonnet. The Codex Phase-3 backend uses Luna for
+  light and Terra for standard, both at medium effort. Codex review uses the same defaults unless
+  `codexReview.model` is set.
 - **Verdict:** `FAIL` ⇒ **NEEDS FIX** (anchor not updated). Only `WARN`/`PASS` ⇒ **CONSISTENT**
   (anchor updated). Invalid or changed evidence/state ⇒ **REFUSED**. Severity mapping:
   Phase-3 verdicts are used directly; for Phase-4 tools, high-severity → FAIL, medium → WARN.
   Both CONSISTENT and NEEDS FIX run the non-blocking, 30-second `sibling-scan.py`: it checks phrases
   from verifier findings, Phase-4 titles, and removed change-set lines, then reports one status line.
+- **Report:** when `reportPath` is configured, the orchestrator submits one complete placeholder
+  template through `write-template.py` before the gate. The gate renders and publishes it while
+  holding the run lock, and returns `reportPath`, fixed warning codes, and `reportStatus`.
+  A later open reports unresolved `pending`, `failed`, or `written-durability-unknown` status.
+  The report date comes from the run ID in UTC, not the local calendar date.
 - **Anchor:** written **only on CONSISTENT**, recording the current HEAD SHA. **Commit it**
   (convention: a `docs(audit): …` commit) so the baseline is shared and survives squash-merges.
   Existing anchors with only `sha` remain compatible; v0.10 adds run/digest metadata.

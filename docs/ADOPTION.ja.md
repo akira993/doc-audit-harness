@@ -51,9 +51,9 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 |------:|------|---------------------|
 | 1 | **Baseline + diff** — anchor を読み、それ以降の変更集合（merge-base diff + 未コミット + 未追跡）を `diffGlobs` で絞って算出。anchor が無ければ full モード。 | `compute-baseline.sh` |
 | 2 | **Impact resolution** — 変更ファイル → 影響ドキュメント（明示 `impactMap` ∪ heuristic）、`ssotSources` の再検証対象、`truncated` フラグを解決。 | `resolve-impact.py` |
-| 3 | **Change-impact verification** — 影響ドキュメント 1 件ごとに subagent が *「このドキュメントは変更後のソースとまだ整合しているか？」* を敵対的に検証（PASS/WARN/FAIL）。 | Workflow fan-out + `doc-impact-verifier` agent |
+| 3 | **Change-impact verification** — 影響ドキュメント 1 件ごとに verifier が *「このドキュメントは変更後のソースとまだ整合しているか？」* を敵対的に検証（PASS/WARN/FAIL）。 | 既定は Workflow fan-out、opt-in で `codex-dispatch.py` backend |
 | 4 | **既存レイヤ + reviews** — プロジェクト固有のドキュメントチェック（または組込み generic fallback）、boundary コマンド、続いて `/security-review` を実行し、`/code-review` はモデルから起動できないためユーザー実行を提案。 | 委譲コマンド / `generic-layers.py` |
-| 5 | **Synthesize + anchor** — 単一 verdict に集約、レポートを書き、（CONSISTENT のときのみ）anchor を更新。 | `write-anchor.sh` |
+| 5 | **Gate + report + anchor** — 単一 verdict に集約し、run lock を保持したままレポートを書き、（CONSISTENT のときのみ）anchor を更新。 | `write-template.py` + `decide-verdict.py` |
 
 頭に入れておくべき性質:
 
@@ -80,7 +80,7 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 で repo 全体を索引 + Phase 3 でチャンク読取り（大きい doc で ~90%+ 削減、upstream ベンチ 97–99%） | 任意 — 在れば自動使用（conditional-force）、非搭載で grep |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 の git diff と Phase 4 の `/code-review`・`/security-review` 出力をサンドボックスで処理（要約だけが context に入る） | 任意 — `ctx_*` ツールが在れば自動使用（conditional-force）、無ければ全文読取り |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: doc-impact-verifier がドキュメントの外部 URL 依存の主張を read-only・GET-only の fetch で照合できるようにする（静的 HTML のみ — JS レンダリングの SPA は非対応） | 任意 — 導入済みなら自動使用（conditional-force）、無ければ外部 URL の主張は未検証のまま |
-| [`codex`](https://github.com/openai/codex)（`@openai/codex` CLI） | Phase 4: 無印 `codex exec -s read-only` による第4の敵対的レビュー。範囲はプロンプト内で `$BASELINE_SHA..HEAD` に固定 | 任意 — 導入済みなら自動使用（conditional-force）、**完走時の `critical`/`high` 所見は verdict をブロックし得る**（下記参照） |
+| [`codex`](https://github.com/openai/codex)（`@openai/codex` CLI） | 任意の Phase-3 文書別 backend と Phase 4 の第4敵対的レビュー。どちらも `codex exec -s read-only` | 任意 — Phase 3 は `phase3Backend:"codex"` の明示指定が必要。Phase 4 review は conditional-force。**完走した `critical`/`high` review 所見は verdict をブロックし得る**（下記参照） |
 | [`codegraph`](https://github.com/colbymchenry/codegraph) | Phase 3: doc-impact-verifier が変更ファイル自身のシンボルに依存する主張を read-only の `codegraph impact`/`node` で照合できるようにする | 任意 — 導入済みなら自動使用（conditional-force）、`ax` 同様に純粋な補助情報 |
 | [`graphify`](https://github.com/Graphify-Labs/graphify) | Phase 2: `mapGapCandidates` へのグラフ隣接ベースの第二候補源（provenance `graphify`） | 任意 — 導入済みなら自動使用（conditional-force）、無ければ `mapGapCandidates` は token heuristic のみ |
 | [CocoIndex](https://github.com/cocoindex-io/cocoindex-code)（`ccc`） | Phase 2: `mapGapCandidates` への意味検索ベースの第三候補源（provenance `semantic`） | 任意 — 導入済み **かつ** 既に `ccc init` 済みなら自動使用（conditional-force）、**docaudit 自身は `ccc init` を絶対に実行しない**（下記参照） |
@@ -120,6 +120,11 @@ ax 行の直後に **3状態・非ブロッキングの codex-review 状態行**
 `mode=full` なら 💡「skipped (full run)」、それ以外は ✓「active (findings included in
 verdict when present)」 — 行自体は verdict をブロックしないが、その行が要約する所見は既に
 verdict に寄与している場合がある旨を明記する。
+
+これとは別に、v0.12.0 では Phase 3 を `"phase3Backend":"codex"` で opt-in できる。
+`codex-dispatch.py` が dispatched 文書ごとに read-only の Codex process を起動し、既定値は
+`workflow` のまま。Codex 不在・未認証・timeout・不正出力時に Workflow へ黙って切り替えず、
+fail-closed で終了する。
 
 `codegraph`・`graphify`・CocoIndex（`ccc`）は、さらに3つの純粋な補助 seam であり — `codex` とは
 異なり **どれも verdict に一切影響しない**。`codegraph` はシンボルレベルで Phase 3 専用:
@@ -183,7 +188,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.11.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.12.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -205,6 +210,13 @@ cp -R /path/to/doc-audit-harness/. ~/.claude/skills/docaudit/
 # 変わったのがスクリプトだけなら:
 cp /path/to/doc-audit-harness/skills/audit/scripts/*.py ~/.claude/skills/docaudit/skills/audit/scripts/
 ```
+
+**v0.12.0 の挙動変更:** 決定論的 gate が run lock を保持したままレポートを書く。orchestrator は
+先に placeholder 付き本文を `write-template.py` へ渡し、次回 open では前回レポートの
+`pending`・`failed`・`written-durability-unknown` が `previousReportStatus` として表面化される。
+Phase 3 には明示的かつ fail-closed な `phase3Backend:"codex"` opt-in も追加された。レポートの
+ファイル名と front matter の日付は run ID 由来の **UTC 基準**なので、日付境界ではローカル日付と
+異なる場合がある。
 
 ---
 
@@ -234,8 +246,9 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.1 テンプレートは、`/docaudit:init --harness --refresh`
-で 0.11.0 に更新できる。利用者が変更したテンプレートはそのまま残る。
+変更されていない stamp 付きの 0.10.1 または 0.11.0 テンプレートは、
+`/docaudit:init --harness --refresh` で 0.12.0 へ直接更新できる。利用者が変更したテンプレートは
+そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
 > 非標準レイアウト（`guide/`、`vps/` … 配下の docs）にも対応する。symlink された doc ディレクトリ
@@ -271,6 +284,8 @@ cd ~/code/my-project
 | `indexFiles` | string[] | いいえ | generic `semantic` レイヤの orphan 検出のリンク根（既定: doc ツリー内の任意の `README.md`） |
 | `harness` | object | いいえ | `{state,decidedAt,engineVersion}`。state は上記 5 状態のいずれか。未設定は互換用の `unset`。 |
 | `verdictCache` | object | いいえ | `{enabled:true,minConsecutivePasses:2}`。連続 PASS 数は 2..10。範囲外なら WARN とともに cache 無効。 |
+| `phase3Backend` | string | いいえ | `"workflow"`（既定）または `"codex"`。不正値は run の seal 時に拒否。 |
+| `phase3CodexTimeoutSeconds` | number | いいえ | Codex 文書別実行 timeout。整数 60..3600、既定 600。Codex Phase-3 backend のみで使用。 |
 | `models.light` | object | いいえ | `{enabled,maxChanged,maxImpacted,maxDiffLines,maxDiffBytes,sensitiveTokens}`。light run の決定論的な上限。 |
 | `codexReview` | object | いいえ | `{enabled,bin,model?,timeoutMs?}`。`model` 指定を優先し、未指定なら light=Luna、standard=Terra。effort は両方 medium。 |
 | `digestExclude` | string[] | いいえ | seal から除外する追加生成パス。`.claude/state/**` または既知の生成データディレクトリだけ許可。 |
@@ -362,20 +377,26 @@ impact map こそが監査を *change-driven* にする。各エントリは
   最初の選択だけで、`fix-scope.py` が承認済み文書へ限定する。非対話実行は FAIL を evidence に
   残すだけで編集しない。
 - **seal 済み evidence:** orchestrator は SHA を含む 1 個の `EVIDENCE` を保持する。fan-out 前に
-  `seal-run.py` が HEAD、変更集合全体の hash、worktree digest を固定する。`decide-verdict.py` は
+  `seal-run.py` が HEAD、変更集合全体の hash、worktree digest、解決済み Phase-3 backend を固定する。`decide-verdict.py` は
   evidence を各 1 回だけ読み、verifier の返却と割当パスを突き合わせ、history、last-run、anchor を
   書く唯一の処理になる。旧式の flat な `docaudit-run/` ファイルは無視する。
 - **決定論的 cache:** `plan-dispatch.py` は、同じ文書内容・`changeSetSha`・契約版で、設定数
-  （既定 2）の連続 PASS がある文書だけ Phase 3 を省略する。history が無い／壊れている場合は
-  cold start。`--full` は常に cache を使わない。
+  （既定 2）の連続 PASS があり、backend も一致する文書だけ Phase 3 を省略する。backend 欄の無い
+  旧 history は `workflow` とみなす。history が無い／壊れている場合は cold start。`--full` は
+  常に cache を使わない。
 - **run class:** `classify-run.py` が mode、件数、diff サイズ、機密パストークン、前回 verdict から
-  `light` / `standard` を決める。light は `doc-impact-verifier-light`（Haiku）、standard と全 retry は
-  Sonnet。Codex review は `codexReview.model` 未指定時に light=Luna、standard=Terra、effort は medium。
+  `light` / `standard` を決める。Workflow の light は `doc-impact-verifier-light`（Haiku）、standard と
+  全 retry は Sonnet。Codex Phase-3 backend は light=Luna、standard=Terra、effort は medium。
+  Codex review も `codexReview.model` 未指定時は同じ既定値を使う。
 - **verdict:** `FAIL` ⇒ **NEEDS FIX**（anchor は更新しない）。`WARN`/`PASS` のみ ⇒ **CONSISTENT**
   （anchor 更新）。evidence や状態を検証できなければ **REFUSED**。severity マッピング:
   Phase-3 の verdict はそのまま使用。Phase-4 ツールは high-severity → FAIL、medium → WARN。
   CONSISTENT と NEEDS FIX の両方で、30 秒上限・non-blocking の `sibling-scan.py` が verifier 所見、
   Phase 4 title、変更集合の削除行から句を取り、status line で sibling 候補を報告する。
+- **レポート:** `reportPath` 設定時、orchestrator は gate 前に完全な placeholder template を
+  `write-template.py` へ渡す。gate は run lock を保持したまま置換・公開し、`reportPath`、固定 warning
+  code、`reportStatus` を返す。次回 open は未解決の `pending`・`failed`・
+  `written-durability-unknown` を報告する。レポート日付はローカル暦日ではなく run ID 由来の UTC。
 - **anchor:** **CONSISTENT のときのみ**書かれ、現在の HEAD SHA を記録する。**コミットする**
   （慣習: `docs(audit): …` コミット）ことで baseline が共有され、squash merge も乗り越える。
   `sha` だけの旧 anchor と互換で、v0.10 は run/digest 情報を追加する。

@@ -2,6 +2,7 @@
 """Create the complete unsealed run manifest from impact and dispatch plans."""
 
 import argparse
+import datetime
 import hashlib
 import json
 import os
@@ -18,6 +19,20 @@ BUILTIN_EXCLUDES = [".claude/state/docaudit-run", ".claude/state/docaudit-histor
                     ".claude/state/docaudit-last-run.json", ".claude/state/last-doc-audit.json",
                     ".claude/worktrees", ".mdq", ".codegraph", "graphify-out",
                     ".cocoindex_code"]
+VALID_PHASE3_BACKENDS = {"workflow", "codex"}
+DEFAULT_PHASE3_CODEX_TIMEOUT_SECONDS = 600
+
+
+def phase3_settings(config):
+    backend = config.get("phase3Backend", "workflow")
+    if not isinstance(backend, str) or backend not in VALID_PHASE3_BACKENDS:
+        raise ValueError("phase3Backend must be workflow or codex")
+    timeout = config.get("phase3CodexTimeoutSeconds",
+                         DEFAULT_PHASE3_CODEX_TIMEOUT_SECONDS)
+    if (isinstance(timeout, bool) or not isinstance(timeout, int)
+            or not 60 <= timeout <= 3600):
+        raise ValueError("phase3CodexTimeoutSeconds must be an integer from 60 through 3600")
+    return backend, timeout
 
 
 def report_pattern(config):
@@ -54,6 +69,28 @@ def report_pattern(config):
             out.append(re.escape(value[i]))
             i += 1
     return "^" + "".join(out) + "$"
+
+
+def report_candidate_rule(config, repo, report_date):
+    value = config.get("reportPath")
+    if value is None:
+        return None
+    if report_pattern(config) is None:
+        raise ValueError("reportPath is not a valid report candidate pattern")
+    if value.count("<YYYY-MM-DD>") != 1 or value.count("[_NN]") > 1:
+        raise ValueError("reportPath must contain one date marker and at most one suffix marker")
+    marker_position = value.index("<YYYY-MM-DD>")
+    rendered = value.replace("<YYYY-MM-DD>", report_date)
+    if "[_NN]" in rendered:
+        prefix, suffix = rendered.split("[_NN]", 1)
+    else:
+        insertion = marker_position + len(report_date)
+        prefix, suffix = rendered[:insertion], rendered[insertion:]
+    base = prefix + suffix
+    for candidate in (base, prefix + "_02" + suffix):
+        validate_repo_path(repo, candidate, must_exist=False)
+    return {"base": base, "suffixPrefix": prefix,
+            "suffixSuffix": suffix, "suffixStart": 2}
 
 
 def atomic_write(path, raw):
@@ -99,6 +136,12 @@ def main():
     try:
         if not RUNID_RE.match(args.runid) or os.path.basename(os.path.realpath(args.run_dir)) != args.runid:
             raise ValueError("runid is invalid or does not match RUN_DIR basename")
+        try:
+            run_time = datetime.datetime.strptime(args.runid[:16], "%Y%m%dT%H%M%SZ").replace(
+                tzinfo=datetime.timezone.utc)
+        except ValueError as exc:
+            raise ValueError("runid contains an invalid UTC calendar timestamp") from exc
+        report_date = run_time.date().isoformat()
         evidence = json.loads(args.evidence)
         if (not isinstance(evidence, dict) or evidence.get("runid") != args.runid
                 or os.path.realpath(str(evidence.get("runDir"))) != os.path.realpath(args.run_dir)):
@@ -119,6 +162,8 @@ def main():
         if "sha256:" + hashlib.sha256(config_raw).hexdigest() != evidence.get("config"):
             raise ValueError("config changed after open-run")
         config = json.loads(config_raw.decode("utf-8"))
+        phase3_backend, phase3_codex_timeout = phase3_settings(config)
+        report_rule = report_candidate_rule(config, repo, report_date)
         paths = impacted_paths(impact, repo)
         for field in ("dispatch", "cached", "changedSet"):
             if not isinstance(dispatch.get(field), list):
@@ -161,7 +206,11 @@ def main():
                     "preflightRequired": preflight_required,
                     "contractVersion": dispatch.get("contractVersion"),
                     "digestExclude": digest_exclude, "sealed": False,
-                    "emptyCorpus": not corpus, "docGlobs": doc_globs}
+                    "emptyCorpus": not corpus, "docGlobs": doc_globs,
+                    "reportDate": report_date, "reportCandidateRule": report_rule}
+        manifest["phase3Backend"] = phase3_backend
+        if phase3_backend == "codex":
+            manifest["phase3CodexTimeoutSeconds"] = phase3_codex_timeout
         if not isinstance(manifest["changeSetSha"], str) or not isinstance(manifest["contractVersion"], str):
             raise ValueError("dispatch cache contract fields are missing")
         raw = (json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")

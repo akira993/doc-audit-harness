@@ -70,6 +70,7 @@ def main():
         if sha256_bytes(config_raw) != evidence.get("config"):
             raise ValueError("config changed after open-run")
         config = json.loads(config_raw.decode("utf-8"))
+        backend = config.get("phase3Backend", "workflow")
         with open(args.impact_json, encoding="utf-8") as handle:
             impacted = paths_from_impact(json.load(handle))
         mode = "full" if args.full else args.mode
@@ -110,7 +111,7 @@ def main():
             doc_sha = content_sha(args.repo_root, path)
             qualified, runids, _reason = cache_qualification(
                 entries, path, doc_sha, changed["changeSetSha"], args.contract_version,
-                minimum or 2)
+                minimum or 2, backend)
             if not enabled or not qualified:
                 dispatch.append(path)
                 continue

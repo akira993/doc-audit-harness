@@ -8,11 +8,13 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
+import stat
 import subprocess
 import sys
 import tempfile
 
-from docaudit_cache import (cache_qualification, content_sha, json_bytes,
+from docaudit_cache import (VALID_BACKENDS, cache_qualification, content_sha, json_bytes,
                             parse_history, sha256_bytes, trim_history,
                             validate_min_passes)
 from docaudit_paths import validate_repo_path
@@ -24,9 +26,38 @@ REQUIRED_EXPECT = {"runid", "runDir", "anchor", "config", "lockIno", "preflight"
                    "digest", "returns", "attempt", "phase4"}
 VALID_VERDICTS = {"PASS", "WARN", "FAIL"}
 FAIL_SEVERITIES = {"FAIL", "HIGH", "CRITICAL"}
+MAX_TEMPLATE_BYTES = 2 * 1024 * 1024
+MAX_REPORT_BYTES = 4 * 1024 * 1024
+MAX_RECEIPT_BYTES = 64 * 1024
+TOKEN_COUNTS = {
+    "{{GATE_VERDICT}}": 1,
+    "{{GATE_REASON}}": 1,
+    "{{GATE_COUNTS}}": 1,
+    "{{GATE_HISTORY_STATUS}}": 1,
+    "{{GATE_WARNINGS}}": 1,
+    "{{GATE_SIBLING_SCAN}}": 1,
+    "{{GATE_ANCHOR_WRITTEN}}": 1,
+    "{{GATE_REPORT_DATE}}": 2,
+}
+OPTIONAL_TOKENS = frozenset({"{{GATE_REASON}}"})
+TOKEN_RE = re.compile(r"\{\{GATE_[A-Z0-9_]+\}\}")
+REPORT_WARNING_CODES = frozenset({
+    "reportWriteError", "reportTemplateMissing", "reportTemplateInvalid",
+    "reportDurabilityUnknown", "reportStatusUpdateFailed", "lockReleaseFailed",
+})
+BIDI_CONTROLS = frozenset(chr(value) for value in (
+    0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)))
 
 
 class Refused(Exception):
+    pass
+
+
+class TemplateMissing(Exception):
+    pass
+
+
+class TemplateInvalid(Exception):
     pass
 
 
@@ -218,6 +249,278 @@ def lock_recheck(fd, lock_path, runid, expected_inode):
     return holder
 
 
+def validate_evidence(value):
+    if not isinstance(value, dict):
+        raise Refused("EVIDENCE is not an object")
+    if REQUIRED_EXPECT - set(value):
+        raise Refused("EVIDENCE required keys are missing")
+    if not isinstance(value["runid"], str) or not isinstance(value["runDir"], str):
+        raise Refused("EVIDENCE run identity has invalid types")
+    if (isinstance(value["lockIno"], bool) or not isinstance(value["lockIno"], int)
+            or value["lockIno"] <= 0):
+        raise Refused("EVIDENCE lockIno has invalid type")
+    if (isinstance(value["attempt"], bool) or not isinstance(value["attempt"], int)
+            or not 0 <= value["attempt"] <= 3):
+        raise Refused("EVIDENCE attempt has invalid type")
+    if value["historyStatus"] not in {"absent", "ok", "corrupt"}:
+        raise Refused("EVIDENCE historyStatus is invalid")
+    sha_fields = {"config", "dispatch", "manifest", "digest", "returns"}
+    optional_sha_fields = {"anchor", "preflight", "cached", "history", "phase4"}
+    sha_re = re.compile(r"^sha256:[0-9a-f]{64}$")
+    for key in sha_fields:
+        if not isinstance(value[key], str) or not sha_re.fullmatch(value[key]):
+            raise Refused(f"EVIDENCE {key} has invalid type")
+    for key in optional_sha_fields:
+        if not isinstance(value[key], str) or (value[key] != "none" and not sha_re.fullmatch(value[key])):
+            raise Refused(f"EVIDENCE {key} has invalid type")
+
+
+def validate_report_rule(manifest, repo, runid):
+    report_date = manifest.get("reportDate")
+    if not isinstance(report_date, str):
+        raise Refused("sealed reportDate is missing")
+    try:
+        parsed = datetime.date.fromisoformat(report_date)
+        run_date = datetime.datetime.strptime(runid[:16], "%Y%m%dT%H%M%SZ").date()
+    except ValueError as exc:
+        raise Refused("sealed reportDate is invalid") from exc
+    if parsed.isoformat() != report_date or parsed != run_date:
+        raise Refused("sealed reportDate does not match runid UTC date")
+    rule = manifest.get("reportCandidateRule")
+    if rule is None:
+        return None
+    if not isinstance(rule, dict) or set(rule) != {
+            "base", "suffixPrefix", "suffixSuffix", "suffixStart"}:
+        raise Refused("sealed report candidate rule is invalid")
+    if (not all(isinstance(rule[key], str) for key in ("base", "suffixPrefix", "suffixSuffix"))
+            or not isinstance(rule["suffixStart"], int)
+            or isinstance(rule["suffixStart"], bool)
+            or rule["suffixStart"] != 2
+            or rule["base"] != rule["suffixPrefix"] + rule["suffixSuffix"]
+            or report_date not in rule["base"]):
+        raise Refused("sealed report candidate rule is invalid")
+    try:
+        validate_repo_path(repo, rule["base"], must_exist=False)
+        validate_repo_path(repo, rule["suffixPrefix"] + "_02" + rule["suffixSuffix"],
+                           must_exist=False)
+    except ValueError as exc:
+        raise Refused(f"sealed report candidate rule is unsafe: {exc}") from exc
+    return rule
+
+
+def read_regular_bounded(path, label, maximum, missing_error):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError as exc:
+        raise missing_error(f"{label} is missing") from exc
+    except OSError as exc:
+        raise TemplateInvalid(f"{label} cannot be safely opened: {exc}") from exc
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise TemplateInvalid(f"{label} is not a regular file")
+        chunks = []
+        remaining = maximum + 1
+        while remaining:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > maximum:
+            raise TemplateInvalid(f"{label} exceeds its size limit")
+        return raw
+    finally:
+        os.close(fd)
+
+
+def load_report_template(run_dir):
+    receipt_raw = read_regular_bounded(
+        os.path.join(run_dir, "report-template.receipt.json"), "report receipt",
+        MAX_RECEIPT_BYTES, TemplateMissing)
+    try:
+        receipt = json.loads(receipt_raw.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise TemplateInvalid(f"report receipt is invalid: {exc}") from exc
+    if not isinstance(receipt, dict) or receipt.get("failed") is not False:
+        raise TemplateInvalid("report receipt does not record a successful helper invocation")
+    raw = read_regular_bounded(os.path.join(run_dir, "report-template.md"), "report template",
+                               MAX_TEMPLATE_BYTES, TemplateMissing)
+    expected_sha = "sha256:" + hashlib.sha256(raw).hexdigest()
+    if (receipt.get("sha256") != expected_sha or receipt.get("bytes") != len(raw)
+            or isinstance(receipt.get("bytes"), bool)):
+        raise TemplateInvalid("report receipt does not match the template")
+    try:
+        return raw.decode("utf-8")
+    except UnicodeError as exc:
+        raise TemplateInvalid(f"report template is not valid UTF-8: {exc}") from exc
+
+
+def safe_json(value):
+    rendered = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    if any(char in BIDI_CONTROLS for char in rendered):
+        raise TemplateInvalid("report replacement contains a bidirectional control character")
+    return (rendered.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+
+
+def render_report(template, verdict, report_date, *, reason=None, counts=None,
+                  history_status=None, warnings=None, sibling=None, anchor_written=False):
+    found = TOKEN_RE.findall(template)
+    if any(token not in TOKEN_COUNTS for token in found):
+        raise TemplateInvalid("report template contains an unknown gate token")
+    for token, count in TOKEN_COUNTS.items():
+        actual_count = found.count(token)
+        if ((token in OPTIONAL_TOKENS and actual_count not in (0, count))
+                or (token not in OPTIONAL_TOKENS and actual_count != count)):
+            raise TemplateInvalid(f"report template token count is invalid for {token}")
+    refused = verdict == "REFUSED"
+    values = {
+        "{{GATE_VERDICT}}": verdict,
+        "{{GATE_REASON}}": safe_json(reason if refused else "n/a"),
+        "{{GATE_COUNTS}}": safe_json("n/a" if refused else counts),
+        "{{GATE_HISTORY_STATUS}}": safe_json("n/a" if refused else history_status),
+        "{{GATE_WARNINGS}}": safe_json(warnings or []),
+        "{{GATE_SIBLING_SCAN}}": safe_json("n/a" if refused else sibling),
+        "{{GATE_ANCHOR_WRITTEN}}": "true" if anchor_written else "false",
+        "{{GATE_REPORT_DATE}}": report_date,
+    }
+    rendered = TOKEN_RE.sub(lambda match: values[match.group(0)], template)
+    raw = rendered.encode("utf-8")
+    if len(raw) > MAX_REPORT_BYTES:
+        raise TemplateInvalid("rendered report exceeds 4 MiB")
+    return raw
+
+
+def write_all(fd, raw):
+    offset = 0
+    while offset < len(raw):
+        written = os.write(fd, raw[offset:])
+        if written <= 0:
+            raise OSError("short write")
+        offset += written
+
+
+def fsync_directory_fd(fd):
+    os.fsync(fd)
+
+
+def publish_report(repo, run_dir, rule, raw):
+    fd, temporary = tempfile.mkstemp(prefix=".report-publication.", dir=run_dir)
+    linked = None
+    linked_parent_fd = None
+    cleanup_error = None
+    durability_unknown = False
+    try:
+        os.fchmod(fd, 0o644)
+        write_all(fd, raw)
+        os.fsync(fd)
+        os.close(fd)
+        fd = None
+        number = None
+        while True:
+            candidate = (rule["base"] if number is None else
+                         rule["suffixPrefix"] + f"_{number:02d}" + rule["suffixSuffix"])
+            candidate = validate_repo_path(repo, candidate, must_exist=False)
+            parent_rel = os.path.dirname(candidate)
+            parent = repo if not parent_rel else os.path.join(repo, parent_rel)
+            os.makedirs(parent, exist_ok=True)
+            if parent_rel:
+                validate_repo_path(repo, parent_rel, regular_file=False)
+            candidate_parent_fd = os.open(
+                parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                os.link(temporary, os.path.basename(candidate),
+                        dst_dir_fd=candidate_parent_fd, follow_symlinks=False)
+                linked = candidate
+                linked_parent_fd = candidate_parent_fd
+                candidate_parent_fd = None
+                break
+            except FileExistsError:
+                number = rule["suffixStart"] if number is None else number + 1
+            finally:
+                if candidate_parent_fd is not None:
+                    os.close(candidate_parent_fd)
+        try:
+            fsync_directory_fd(linked_parent_fd)
+        except OSError:
+            durability_unknown = True
+    finally:
+        if linked_parent_fd is not None:
+            os.close(linked_parent_fd)
+        if fd is not None:
+            os.close(fd)
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            cleanup_error = exc
+    return linked, durability_unknown, cleanup_error
+
+
+def report_status_update(last_run_path, state):
+    atomic(last_run_path, state)
+
+
+def release_lock(lock_path, lock_inode):
+    if os.stat(lock_path, follow_symlinks=False).st_ino != lock_inode:
+        raise OSError("lock path no longer names the owned inode")
+    os.unlink(lock_path)
+
+
+def add_warning(warnings, code):
+    if code not in warnings:
+        warnings.append(code)
+
+
+def finalize_report(repo, run_dir, rule, report_date, last_run_path, base_state, warnings,
+                    verdict, *, reason=None, counts=None, history_status=None,
+                    sibling=None, anchor_written=False):
+    if rule is None:
+        return None, base_state["reportStatus"]
+    report_path = None
+    status = "failed"
+    error_code = None
+    try:
+        template = load_report_template(run_dir)
+        rendered = render_report(
+            template, verdict, report_date, reason=reason, counts=counts,
+            history_status=history_status, warnings=warnings, sibling=sibling,
+            anchor_written=anchor_written)
+        report_path, durability_unknown, cleanup_error = publish_report(
+            repo, run_dir, rule, rendered)
+        if durability_unknown:
+            status = "written-durability-unknown"
+            add_warning(warnings, "reportDurabilityUnknown")
+        else:
+            status = "written"
+        if cleanup_error is not None:
+            add_warning(warnings, "reportWriteError")
+    except TemplateMissing:
+        error_code = "reportTemplateMissing"
+        add_warning(warnings, error_code)
+    except TemplateInvalid:
+        error_code = "reportTemplateInvalid"
+        add_warning(warnings, error_code)
+    except (OSError, ValueError):
+        error_code = "reportWriteError"
+        add_warning(warnings, error_code)
+    final_state = dict(base_state, reportStatus=status)
+    if report_path is not None:
+        final_state["reportPath"] = report_path
+    if error_code is not None:
+        final_state["reportError"] = error_code
+    try:
+        report_status_update(last_run_path, final_state)
+        persisted_status = status
+    except OSError:
+        add_warning(warnings, "reportStatusUpdateFailed")
+        persisted_status = base_state["reportStatus"]
+    return report_path, persisted_status
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", required=True)
@@ -278,11 +581,12 @@ def main():
     anchor_signature = None
     config_signature = None
     identity_ok = False
+    report_trusted = False
+    report_rule = None
+    warnings = []
     try:
         expected = json.loads(args.expect_json)
-        if not isinstance(expected, dict):
-            raise Refused("EVIDENCE is not an object")
-        missing_expect = REQUIRED_EXPECT - set(expected)
+        validate_evidence(expected)
         if expected.get("runid") != args.runid or os.path.realpath(str(expected.get("runDir"))) != run_dir:
             raise Refused("EVIDENCE run identity mismatch")
         lock_fd = os.open(lock_path, os.O_RDWR | os.O_NOFOLLOW)
@@ -297,7 +601,9 @@ def main():
             raise Refused(f"lock path cannot be inspected: {exc}") from exc
         os.lseek(lock_fd, 0, os.SEEK_SET)
         holder = parse_json(os.read(lock_fd, 65536), "lock")
-        owned = (lock_inode == expected.get("lockIno") or holder.get("runid") == args.runid)
+        owned = (holder.get("runid") == args.runid
+                 and path_inode == lock_inode
+                 and lock_inode == expected["lockIno"])
         if path_inode != lock_inode:
             raise Refused("lock was unlinked/recreated")
 
@@ -314,9 +620,10 @@ def main():
                              or os.path.basename(run_dir) != args.runid
                              or lock_inode != expected.get("lockIno"))
         identity_ok = not identity_mismatch
-        if missing_expect:
-            raise Refused("EVIDENCE required keys are missing")
         verify_sha(manifest_raw, expected["manifest"], "manifest")
+        if manifest.get("sealed") is not True:
+            raise Refused("manifest is not sealed")
+        report_rule = validate_report_rule(manifest, repo, args.runid)
         verify_sha(dispatch_raw, expected["dispatch"], "dispatch")
         verify_sha(returns_raw, expected["returns"], "returns")
         if sha256_bytes(config_raw) != expected["config"]:
@@ -327,6 +634,11 @@ def main():
         config = parse_json(config_raw, "config")
         if not all(isinstance(value, dict) for value in (manifest, dispatch_doc, config)):
             raise Refused("manifest, dispatch, and config must be objects")
+        backend = manifest.get("phase3Backend")
+        if (not isinstance(backend, str) or backend not in VALID_BACKENDS
+                or backend != config.get("phase3Backend", "workflow")):
+            raise Refused("sealed phase3Backend is invalid or does not match config")
+        report_trusted = identity_ok
         validate_returns(returns)
         if expected.get("attempt") != max((item["attempt"] for item in returns), default=0):
             raise Refused("EVIDENCE attempt does not match returns")
@@ -385,8 +697,6 @@ def main():
             verify_sha(raw, expected["phase4"], "phase4")
             phase4 = parse_json(raw, "phase4.json")
 
-        if not manifest.get("sealed"):
-            raise Refused("manifest is not sealed")
         head = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True,
                               text=True, check=True).stdout.strip()
         if head != manifest.get("head"):
@@ -465,7 +775,7 @@ def main():
             current_sha = content_sha(repo, path)
             ok, runids, _reason = cache_qualification(
                 history_entries, path, current_sha, manifest["changeSetSha"],
-                manifest["contractVersion"], minimum or 2)
+                manifest["contractVersion"], minimum or 2, backend)
             if (not ok or record.get("contentSha") != current_sha
                     or record.get("changeSetSha") != manifest["changeSetSha"]
                     or record.get("contractVersion") != manifest["contractVersion"]
@@ -479,7 +789,10 @@ def main():
             has_fail = findings_fail(phase4) or has_fail
         verdict = "NEEDS_FIX" if has_fail else "CONSISTENT"
 
-        # Recheck mutable roots immediately before every persistent state update.
+        # The sibling scan remains inside the lock and precedes the indivisible barrier.
+        sibling = run_sibling_step(manifest, returns, phase4, config, repo)
+
+        # Recheck every mutable root as one barrier immediately before state commit.
         lock_recheck(lock_fd, lock_path, args.runid, expected["lockIno"])
         head2 = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True,
                                text=True, check=True).stdout.strip()
@@ -508,57 +821,91 @@ def main():
                               "contentSha": content_sha(repo, path),
                               "changeSetSha": manifest["changeSetSha"],
                               "contractVersion": manifest["contractVersion"],
+                              "backend": backend,
                               "verdict": verdicts[path]["verdict"], "ts": now})
         atomic(history_path, {"entries": trim_history(history_entries + additions)})
-        atomic(last_run_path, {"runid": args.runid, "verdict": verdict, "ts": now})
+        report_status = "pending" if report_rule is not None else "not-requested"
+        last_state = {"runid": args.runid, "verdict": verdict, "ts": now,
+                      "reportStatus": report_status}
+        atomic(last_run_path, last_state)
         anchor_written = False
         if verdict == "CONSISTENT":
             atomic(anchor_path, {"sha": head, "head": head, "digest": digest,
                                  "runid": args.runid,
                                  "contractVersion": manifest["contractVersion"]})
             anchor_written = True
-        os.unlink(lock_path)
+        counts = {"impacted": len(impacted), "dispatch": len(dispatched),
+                  "cached": len(cached)}
+        report_path, report_status = finalize_report(
+            repo, run_dir, report_rule, manifest["reportDate"], last_run_path,
+            last_state, warnings, verdict, counts=counts,
+            history_status=expected["historyStatus"], sibling=sibling,
+            anchor_written=anchor_written)
+        try:
+            release_lock(lock_path, lock_inode)
+        except OSError:
+            add_warning(warnings, "lockReleaseFailed")
         os.close(lock_fd)
         lock_fd = None
-        sibling = None
-        if verdict in {"CONSISTENT", "NEEDS_FIX"}:
-            sibling = run_sibling_step(manifest, returns, phase4, config, repo)
-        print(json.dumps({"verdict": verdict, "anchorWritten": anchor_written,
-                          "runid": args.runid, "counts": {"impacted": len(impacted),
-                          "dispatch": len(dispatched), "cached": len(cached)},
-                          "historyStatus": expected["historyStatus"], "warnings": warnings,
-                          "siblingScan": sibling}, ensure_ascii=False, sort_keys=True))
+        result = {"verdict": verdict, "anchorWritten": anchor_written,
+                  "runid": args.runid, "counts": counts,
+                  "historyStatus": expected["historyStatus"], "warnings": warnings,
+                  "siblingScan": sibling, "reportStatus": report_status}
+        if report_path is not None:
+            result["reportPath"] = report_path
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except (Refused, OSError, ValueError, KeyError, json.JSONDecodeError,
             subprocess.CalledProcessError) as exc:
         reason = str(exc)
         # Degrade only state owned by this run; never touch a later run's state.
+        report_path = None
+        report_status = None
         if owned:
             try:
                 if history_taint and os.path.exists(history_path):
                     os.replace(history_path, history_path + ".tainted-" + args.runid)
-                if anchor_taint and os.path.exists(anchor_path):
-                    os.unlink(anchor_path)
-                if config_taint:
-                    atomic(last_run_path, {"runid": args.runid, "verdict": "REFUSED",
-                                           "reason": "config-changed",
-                                           "expectedConfigSha": expected.get("config"),
-                                           "ts": datetime.datetime.now(datetime.timezone.utc).isoformat()})
-                elif identity_ok:
-                    atomic(last_run_path, {"runid": args.runid, "verdict": "REFUSED",
-                                           "reason": reason,
-                                           "ts": datetime.datetime.now(datetime.timezone.utc).isoformat()})
-                if lock_fd is not None:
-                    try:
-                        inode_now = os.stat(lock_path, follow_symlinks=False).st_ino
-                    except OSError:
-                        inode_now = None
-                    if inode_now == lock_inode:
-                        os.unlink(lock_path)
             except OSError:
                 pass
-        print(json.dumps({"verdict": "REFUSED", "anchorWritten": False,
-                          "reason": reason}, ensure_ascii=False, sort_keys=True))
+            try:
+                if anchor_taint and os.path.exists(anchor_path):
+                    os.unlink(anchor_path)
+            except OSError:
+                pass
+            can_report = report_trusted and report_rule is not None and not config_taint
+            state_written = False
+            if identity_ok:
+                now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+                recorded_reason = "config-changed" if config_taint else reason
+                last_state = {"runid": args.runid, "verdict": "REFUSED",
+                              "reason": recorded_reason, "ts": now,
+                              "reportStatus": "pending" if can_report else "not-requested"}
+                if config_taint:
+                    last_state["expectedConfigSha"] = expected.get("config")
+                try:
+                    atomic(last_run_path, last_state)
+                    state_written = True
+                    report_status = last_state["reportStatus"]
+                except OSError:
+                    add_warning(warnings, "reportStatusUpdateFailed")
+                if can_report and state_written:
+                    report_path, report_status = finalize_report(
+                        repo, run_dir, report_rule, manifest["reportDate"], last_run_path,
+                        last_state, warnings, "REFUSED", reason=reason,
+                        anchor_written=False)
+            if lock_fd is not None:
+                try:
+                    release_lock(lock_path, lock_inode)
+                except OSError:
+                    add_warning(warnings, "lockReleaseFailed")
+        result = {"verdict": "REFUSED", "anchorWritten": False, "reason": reason}
+        if warnings:
+            result["warnings"] = warnings
+        if report_status is not None:
+            result["reportStatus"] = report_status
+        if report_path is not None:
+            result["reportPath"] = report_path
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 3
     finally:
         if lock_fd is not None:

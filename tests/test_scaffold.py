@@ -197,7 +197,7 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         self.assertEqual(read(path), modified)
         self.assertIn("@0.10.0 ", read(path))
 
-    def test_refresh_updates_unmodified_historical_engine(self):
+    def test_refresh_skips_from_0_10_1_stamp_to_latest_engine(self):
         spec = importlib.util.spec_from_file_location("scaffold_under_test", SCRIPT)
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         old = read(HISTORICAL_ENGINE)
@@ -210,11 +210,11 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         proc = run(self.repo, "--harness", "--refresh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["stampVersion"], "0.11.0")
+        self.assertEqual(out["stampVersion"], "0.12.0")
         self.assertIn("scripts/check-docs.py", out["created"])
         refreshed = read(path)
-        current = json.loads(read(SHAS))["0.11.0"]["check-docs-engine"]
-        self.assertIn(f"# docaudit-template: check-docs-engine@0.11.0 sha256:{current}\n",
+        current = json.loads(read(SHAS))["0.12.0"]["check-docs-engine"]
+        self.assertIn(f"# docaudit-template: check-docs-engine@0.12.0 sha256:{current}\n",
                       refreshed)
         self.assertEqual(module._normalized_sha(refreshed), current)
 
@@ -280,7 +280,7 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         version = json.loads(read(PLUGIN))["version"]
-        self.assertEqual(version, "0.11.0")
+        self.assertEqual(version, "0.12.0")
         shipped = json.loads(read(SHAS))[version]
         actual = {name: module._normalized_sha(text)
                   for name, text in module._harness_sources().items()}

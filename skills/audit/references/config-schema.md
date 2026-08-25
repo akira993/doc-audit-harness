@@ -22,6 +22,8 @@ live here; the plugin ships no project knowledge.
 | `maxImpactedDocs` | number | no | cap on impacted docs (default 200); overflow sets `truncated` |
 | `harness` | object | no | `{state,decidedAt,engineVersion}` where state is `installed`, `declined`, `integrated`, `adjusted`, or `existing-untouched`; absence is the v0.9 `unset` state |
 | `verdictCache` | object | no | `{enabled:bool=true,minConsecutivePasses:int=2}`; values outside 2..10 disable cache and emit WARN |
+| `phase3Backend` | string | no | Phase-3 verifier backend: `"workflow"` (default when omitted) or `"codex"`; any other value is rejected at seal |
+| `phase3CodexTimeoutSeconds` | number | no | per-document Codex execution timeout in seconds (default 600; integer 60..3600); excludes worker-queue wait, resets for each retry, and has effect only when `phase3Backend` is `"codex"` |
 | `models.light` | object | no | deterministic light-run limits: `{enabled,maxChanged=10,maxImpacted=15,maxDiffLines=200,maxDiffBytes=65536,sensitiveTokens?}`; defaults are empirical, not measured service guarantees |
 | `digestExclude` | string[] | no | additional generated paths excluded from the sealed worktree digest; only `.claude/state/**`, `.mdq/`, `.codegraph/`, `graphify-out/`, and `.cocoindex_code/` are accepted |
 | `protectedGlobs` | string[] | no | additional pre-flight fix deny patterns; built-in ADR/decisions/logs/`.claude` denial cannot be removed |
@@ -156,7 +158,9 @@ therefore block CONSISTENT when they contain FAIL.
 
 `plan-dispatch.py` and `docaudit_cache.py` skip Phase 3 only for the most recent
 `minConsecutivePasses` records of a document when every record is PASS and its `contentSha`,
-`changeSetSha`, and `contractVersion` match the current run. The gate repeats the qualification.
+`changeSetSha`, `contractVersion`, and Phase-3 backend match the current run. Missing backend fields
+in old history entries mean `workflow`; explicit `workflow` is therefore compatible with old entries.
+The gate repeats the qualification using the backend sealed in the manifest.
 Only `decide-verdict.py` writes `.claude/state/docaudit-history.json`; absent history is a cold
 start, corrupt history disables cache and is quarantined by the gate, and full mode disables
 cache.

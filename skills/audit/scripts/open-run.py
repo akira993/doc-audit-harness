@@ -9,6 +9,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import sys
 
 from docaudit_paths import validate_repo_path
@@ -58,6 +59,29 @@ def read_holder(fd):
         return json.loads(raw.decode("utf-8"))
     except Exception:
         return {"invalid": True}
+
+
+def previous_report_status(path):
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            return None
+        raw = os.read(fd, 65537)
+        if len(raw) > 65536:
+            return None
+        value = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    finally:
+        os.close(fd)
+    status = value.get("reportStatus") if isinstance(value, dict) else None
+    if status in {"pending", "failed", "written-durability-unknown"}:
+        return status
+    return None
 
 
 def release(lock_path, runid, breaking=False):
@@ -194,9 +218,13 @@ def main():
         return 2
     finally:
         os.close(fd)
-    return emit({"runid": runid, "runDir": run_dir, "anchor": anchor_sha,
-                 "config": config_sha, "lockIno": inode,
-                 "preflight": "none", "phase4": "none"})
+    result = {"runid": runid, "runDir": run_dir, "anchor": anchor_sha,
+              "config": config_sha, "lockIno": inode,
+              "preflight": "none", "phase4": "none"}
+    prior_status = previous_report_status(last_run_path)
+    if prior_status is not None:
+        result["previousReportStatus"] = prior_status
+    return emit(result)
 
 
 if __name__ == "__main__":
