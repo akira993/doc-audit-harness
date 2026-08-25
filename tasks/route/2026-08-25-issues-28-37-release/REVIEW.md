@@ -441,3 +441,25 @@ worker が 3 件修正＋SKILL 注記（368 件全 green・§10 増減なし・t
 ## route-close
 
 （手順 7 実施後に記入: 対象タスク / HEAD / 変更ファイル / audit verdict 代替 / SSoT 更新有無）
+
+（記入: 2026-08-25）
+- **対象タスク**: NEXT-SESSION-PROMPT.xml — Issue #28（codex Phase-3 backend）・#37（レポート
+  書き込み競合）の対応と保留リリース（v0.11.0 遡及＋v0.12.0）の一括準備
+- **記録時点の HEAD**: `6709d1693c782b4c97bde9d1a0a495ee55063e2b`（branch
+  `feat/v0.12.0-issues-28-37`、PR #38）
+- **確定した変更ファイル**（コミット 4cc53bf/abcb7a9/cd98ccc/d7c3d3f/fa173af/fa4973c/6709d16）:
+  engine: decide-verdict.py・start-run.py・open-run.py・plan-dispatch.py・docaudit_cache.py・
+  新規 write-template.py・新規 codex-dispatch.py／SKILL.md／references: config-schema.md・
+  新規 codex-phase3-verdict.schema.json・engine-shas.json／plugin.json（0.12.0）／
+  docs: ADOPTION.md・ADOPTION.ja.md／tests: 8 ファイル（新規 3 含む・368 件全 green）／
+  task 記録（git add -f）: PLAN・REVIEW・pr-body・原因実証・probe 結果・A/B 比較・
+  release-handoff.sh。未コミットは着手前から存在する未追跡 `.claude/` のみ（本タスク未接触）。
+- **audit verdict 代替**: この repo に doc-audit.json は無いため、変更した公開挙動に対応する文書
+  （skills/audit/references/config-schema.md・docs/ADOPTION.md・docs/ADOPTION.ja.md・
+  skills/audit/SKILL.md）を同一 branch 内で同時更新し、Stage 2c/3 の boss 全行 diff レビューで
+  整合を確認（前例踏襲）。
+- **SSoT 更新の有無**: **あり** — durable な公開仕様の変更（phase3Backend/
+  phase3CodexTimeoutSeconds キー・gate-writes-report の report 意味論・UTC 日付・
+  previousReportStatus）に対応して上記 4 文書を更新。それ以外の SSoT は 0 ファイル更新。
+- **残作業（ユーザー実行）**: PR #38 の承認・マージ → `bash tasks/route/2026-08-25-issues-28-37-release/release-handoff.sh <merge-sha> 38`
+  （v0.11.0 遡及タグ＋Release → v0.12.0 タグ＋Release → #37/#28 close → skills-dir 同期・検証）。
