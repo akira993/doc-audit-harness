@@ -7,6 +7,7 @@ import os
 
 
 VALID_VERDICTS = {"PASS", "WARN", "FAIL"}
+VALID_BACKENDS = {"workflow", "codex"}
 HISTORY_FIELDS = {
     "runid": str,
     "path": str,
@@ -54,6 +55,9 @@ def parse_history(data):
                 raise ValueError(f"history entry {index} has invalid {field}")
         if entry["verdict"] not in VALID_VERDICTS:
             raise ValueError(f"history entry {index} has invalid verdict")
+        backend = entry.get("backend", "workflow")
+        if not isinstance(backend, str) or backend not in VALID_BACKENDS:
+            raise ValueError(f"history entry {index} has invalid backend")
         key = (entry["runid"], entry["path"])
         if key in seen:
             raise ValueError("history contains duplicate (runid,path)")
@@ -62,15 +66,18 @@ def parse_history(data):
 
 
 def cache_qualification(entries, path, current_content_sha, change_set_sha,
-                        contract_version, minimum):
+                        contract_version, minimum, backend="workflow"):
+    if not isinstance(backend, str) or backend not in VALID_BACKENDS:
+        return False, [], "backend-invalid"
     recent = [entry for entry in entries if entry["path"] == path][-minimum:]
     if len(recent) != minimum:
         return False, [], "history-insufficient"
     if len({entry["runid"] for entry in recent}) != minimum:
         return False, [], "history-runid-duplicate"
-    expected = (current_content_sha, change_set_sha, contract_version)
+    expected = (current_content_sha, change_set_sha, contract_version, backend)
     for entry in recent:
-        actual = (entry["contentSha"], entry["changeSetSha"], entry["contractVersion"])
+        actual = (entry["contentSha"], entry["changeSetSha"], entry["contractVersion"],
+                  entry.get("backend", "workflow"))
         if entry["verdict"] != "PASS" or actual != expected:
             return False, [], "history-key-mismatch"
     return True, [entry["runid"] for entry in recent], None
@@ -86,4 +93,3 @@ def trim_history(entries, per_path=20):
 
 def json_bytes(value):
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
-

@@ -4,6 +4,7 @@ import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INIT_SKILL = os.path.join(ROOT, "skills", "init", "SKILL.md")
+AUDIT_SKILL = os.path.join(ROOT, "skills", "audit", "SKILL.md")
 SCHEMA = os.path.join(ROOT, "skills", "audit", "references", "config-schema.md")
 
 
@@ -13,6 +14,19 @@ def read(path):
 
 
 class TestHarnessContract(unittest.TestCase):
+    def test_phase3_codex_backend_is_documented_as_sealed_and_fail_closed(self):
+        skill = read(AUDIT_SKILL)
+        schema = read(SCHEMA)
+        for key in ("phase3Backend", "phase3CodexTimeoutSeconds"):
+            self.assertIn(f"`{key}`", schema)
+        self.assertIn('`"workflow"` (default when omitted) or `"codex"`', schema)
+        self.assertIn("Use only sealed `manifest.phase3Backend`", skill)
+        self.assertIn("codex-dispatch.py", skill)
+        self.assertIn("gpt-5.6-luna", skill)
+        self.assertIn("gpt-5.6-terra", skill)
+        self.assertIn("Never silently fall back to Workflow", skill)
+        self.assertIn("Phase-3 backend: <manifest.phase3Backend>", skill)
+
     def test_init_documents_every_stored_transition(self):
         text = read(INIT_SKILL)
         for state in ("installed", "declined", "integrated", "adjusted",

@@ -8,6 +8,67 @@ from tests.wp12_helpers import RunFixture, git, write
 
 
 class TestStartRun(unittest.TestCase):
+    def test_phase3_backend_defaults_to_workflow_without_codex_timeout(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open().returncode, 0)
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertEqual(manifest["phase3Backend"], "workflow")
+        self.assertNotIn("phase3CodexTimeoutSeconds", manifest)
+
+    def test_explicit_workflow_does_not_seal_codex_timeout(self):
+        fx = RunFixture(self, config_extra={"phase3Backend": "workflow",
+                                             "phase3CodexTimeoutSeconds": 900})
+        self.assertEqual(fx.open().returncode, 0)
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertEqual(manifest["phase3Backend"], "workflow")
+        self.assertNotIn("phase3CodexTimeoutSeconds", manifest)
+
+    def test_codex_backend_seals_default_and_explicit_timeout(self):
+        for configured, expected in ((None, 600), (60, 60), (3600, 3600)):
+            with self.subTest(timeout=configured):
+                extra = {"phase3Backend": "codex"}
+                if configured is not None:
+                    extra["phase3CodexTimeoutSeconds"] = configured
+                fx = RunFixture(self, config_extra=extra)
+                self.assertEqual(fx.open().returncode, 0)
+                proc = fx.plan_start_seal()
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+                self.assertEqual(manifest["phase3Backend"], "codex")
+                self.assertEqual(manifest["phase3CodexTimeoutSeconds"], expected)
+
+    def test_invalid_phase3_backend_is_rejected_at_start_run(self):
+        for value in ("other", "", True, 1, None, []):
+            with self.subTest(value=value):
+                fx = RunFixture(self, config_extra={"phase3Backend": value})
+                self.assertEqual(fx.open().returncode, 0)
+                proc = fx.plan_start_seal()
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn("phase3Backend", proc.stderr)
+
+    def test_invalid_phase3_codex_timeout_is_rejected_at_start_run(self):
+        for value in (59, 3601, True, 60.0, "600", None):
+            with self.subTest(value=value):
+                fx = RunFixture(self, config_extra={"phase3Backend": "codex",
+                                                     "phase3CodexTimeoutSeconds": value})
+                self.assertEqual(fx.open().returncode, 0)
+                proc = fx.plan_start_seal()
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn("phase3CodexTimeoutSeconds", proc.stderr)
+        fx = RunFixture(self, config_extra={"phase3Backend": "workflow",
+                                             "phase3CodexTimeoutSeconds": 59})
+        self.assertEqual(fx.open().returncode, 0)
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("phase3CodexTimeoutSeconds", proc.stderr)
+
     def test_manifest_has_complete_contract_and_preserves_verdict_directory(self):
         fx = RunFixture(self)
         self.assertEqual(fx.open().returncode, 0)

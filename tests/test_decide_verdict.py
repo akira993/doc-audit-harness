@@ -884,6 +884,22 @@ class TestCache(GateBase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(json.loads(proc.stdout)["verdict"], "CONSISTENT")
 
+    def test_codex_backend_is_written_to_history_and_qualifies_codex_cache(self):
+        fx = RunFixture(self, config_extra={"phase3Backend": "codex"})
+        self.two_passes(fx)
+        with open(fx.history, encoding="utf-8") as handle:
+            history = json.load(handle)
+        self.assertTrue(history["entries"])
+        self.assertTrue(all(entry["backend"] == "codex" for entry in history["entries"]))
+        self.assertEqual(fx.open(runid="20260818T120002Z-abcdef12").returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertEqual(set(manifest["cached"]), set(fx.docs))
+        self.assertEqual(fx.complete(verdicts={}, returns_override=[]).returncode, 0)
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
     def test_full_always_dispatches_after_qualified_history(self):
         fx = RunFixture(self)
         self.two_passes(fx)

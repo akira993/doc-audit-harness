@@ -19,6 +19,20 @@ BUILTIN_EXCLUDES = [".claude/state/docaudit-run", ".claude/state/docaudit-histor
                     ".claude/state/docaudit-last-run.json", ".claude/state/last-doc-audit.json",
                     ".claude/worktrees", ".mdq", ".codegraph", "graphify-out",
                     ".cocoindex_code"]
+VALID_PHASE3_BACKENDS = {"workflow", "codex"}
+DEFAULT_PHASE3_CODEX_TIMEOUT_SECONDS = 600
+
+
+def phase3_settings(config):
+    backend = config.get("phase3Backend", "workflow")
+    if not isinstance(backend, str) or backend not in VALID_PHASE3_BACKENDS:
+        raise ValueError("phase3Backend must be workflow or codex")
+    timeout = config.get("phase3CodexTimeoutSeconds",
+                         DEFAULT_PHASE3_CODEX_TIMEOUT_SECONDS)
+    if (isinstance(timeout, bool) or not isinstance(timeout, int)
+            or not 60 <= timeout <= 3600):
+        raise ValueError("phase3CodexTimeoutSeconds must be an integer from 60 through 3600")
+    return backend, timeout
 
 
 def report_pattern(config):
@@ -147,6 +161,7 @@ def main():
         if "sha256:" + hashlib.sha256(config_raw).hexdigest() != evidence.get("config"):
             raise ValueError("config changed after open-run")
         config = json.loads(config_raw.decode("utf-8"))
+        phase3_backend, phase3_codex_timeout = phase3_settings(config)
         report_rule = report_candidate_rule(config, repo, report_date)
         paths = impacted_paths(impact, repo)
         for field in ("dispatch", "cached", "changedSet"):
@@ -192,6 +207,9 @@ def main():
                     "digestExclude": digest_exclude, "sealed": False,
                     "emptyCorpus": not corpus, "docGlobs": doc_globs,
                     "reportDate": report_date, "reportCandidateRule": report_rule}
+        manifest["phase3Backend"] = phase3_backend
+        if phase3_backend == "codex":
+            manifest["phase3CodexTimeoutSeconds"] = phase3_codex_timeout
         if not isinstance(manifest["changeSetSha"], str) or not isinstance(manifest["contractVersion"], str):
             raise ValueError("dispatch cache contract fields are missing")
         raw = (json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")

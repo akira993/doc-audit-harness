@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 
-from docaudit_cache import (cache_qualification, content_sha, json_bytes,
+from docaudit_cache import (VALID_BACKENDS, cache_qualification, content_sha, json_bytes,
                             parse_history, sha256_bytes, trim_history,
                             validate_min_passes)
 from docaudit_paths import validate_repo_path
@@ -634,6 +634,10 @@ def main():
         config = parse_json(config_raw, "config")
         if not all(isinstance(value, dict) for value in (manifest, dispatch_doc, config)):
             raise Refused("manifest, dispatch, and config must be objects")
+        backend = manifest.get("phase3Backend")
+        if (not isinstance(backend, str) or backend not in VALID_BACKENDS
+                or backend != config.get("phase3Backend", "workflow")):
+            raise Refused("sealed phase3Backend is invalid or does not match config")
         report_trusted = identity_ok
         validate_returns(returns)
         if expected.get("attempt") != max((item["attempt"] for item in returns), default=0):
@@ -771,7 +775,7 @@ def main():
             current_sha = content_sha(repo, path)
             ok, runids, _reason = cache_qualification(
                 history_entries, path, current_sha, manifest["changeSetSha"],
-                manifest["contractVersion"], minimum or 2)
+                manifest["contractVersion"], minimum or 2, backend)
             if (not ok or record.get("contentSha") != current_sha
                     or record.get("changeSetSha") != manifest["changeSetSha"]
                     or record.get("contractVersion") != manifest["contractVersion"]
@@ -817,6 +821,7 @@ def main():
                               "contentSha": content_sha(repo, path),
                               "changeSetSha": manifest["changeSetSha"],
                               "contractVersion": manifest["contractVersion"],
+                              "backend": backend,
                               "verdict": verdicts[path]["verdict"], "ts": now})
         atomic(history_path, {"entries": trim_history(history_entries + additions)})
         report_status = "pending" if report_rule is not None else "not-requested"
