@@ -171,4 +171,32 @@ docGlobs 省略＋reportPath 指定の有効 config で除外が不発（実バ�
 
 ## route-close
 
-（承認後に記録: HEAD / 変更ファイル / audit verdict / SSoT 更新有無）
+- **対象タスク**: Issues #33/#34/#35 対策 + v0.11.0 リリース（/route・PLAN rev.6）
+- **記録時点の HEAD**: `e66e2ca795d42a16a2245623f6d84d26de63bc01`（feat/v0.11.0-issues-33-35。
+  PR #36 作成・push 済み。**マージ以降は classifier がセルフマージを拒否したためユーザー実行の
+  `release-handoff.sh` に委譲** — v0.10.1 と同じ前例）
+- **確定した変更ファイル**（git status/diff で確定・52 ファイル +3432/−69、pr-body 追記 1 件）:
+  - エンジン/機構 8: generic-layers.py・change-set-sha.py・resolve-impact.py・impact-supplement.py・
+    start-run.py・sibling-scan.py・SKILL.md（audit）・scaffold は変更なし（engine-shas.json のみ）
+  - 配布参照 2: config-schema.md・engine-shas.json（0.11.0 エントリ 3 SHA）
+  - 版/docs 4: .claude-plugin/plugin.json・docs/ADOPTION.md・docs/ADOPTION.ja.md・
+    tests/test_decide_verdict.py:422
+  - tests 9 ＋新規 test_report_matcher_contract.py・tests/data/generic-layers-v0.10.1.py（force-add）
+  - 記録: tasks/route/2026-08-25-issues-33-34-35/（PLAN/REVIEW/prompt/OUT/fixture/handoff）
+- **audit verdict**: この repo 自体に `.claude/doc-audit.json` は無い（docaudit 未導入）ため
+  /docaudit:audit は実行不能。代替として、変更した公開挙動・設定・手順に対応する既存文書
+  （config-schema.md・ADOPTION 英日・SKILL.md）を本リリース内で同時更新し、Sol 批判 5 往復＋
+  `codex exec review` で整合を検証した（版残置ゲート合格・旧前提記述の grep 該当なし）
+- **SSoT 更新**: AGENTS.md / PROJECT.md は本 repo に存在せず、リポジトリ外の恒久規約変更もなし →
+  **0 ファイル更新**（正）
+- **follow-up**: Issue #37 起票済み（R4-5: レポート書き込み×並行監査 sealed 指紋の競合・suffix 上書き競合）
+- **残手順**（ユーザー実行）: `bash tasks/route/2026-08-25-issues-33-34-35/release-handoff.sh`
+  （PR #36 マージ → main で 298 テスト → tag docaudit--v0.11.0 → GitHub Release → #33/#34/#35 close →
+  skills-dir 再同期・検証）
+
+## ユーザー合意からの明示的逸脱（最終報告で明示）
+
+- 「解決しない具体的ファイルパスは FAIL 昇格」（Q3 合意）の適用先を**構文明示（link/backtick）に限定**し、
+  bare path（散文収穫）は WARN の検出網とした。根拠: Sol 批判 R1/R3 で、散文収穫への blocking 権限は
+  コマンド例・日本語直結文で偽陽性 FAIL を量産し実装不能と実証されたため（R4 で Sol も受容）。
+  Issue #33 自体は bare の severity を指定していない。
