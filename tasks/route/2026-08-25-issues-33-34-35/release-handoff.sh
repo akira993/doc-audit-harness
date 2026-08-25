@@ -37,9 +37,13 @@ rsync -a --delete \
   ./ ~/.claude/skills/docaudit/
 
 # 6) verify sync (same exclusions as the v0.10.1 handoff) + smoke-test in the skills dir
-diff -rq . ~/.claude/skills/docaudit --exclude=.git --exclude=__pycache__ --exclude=tasks \
+if diff -rq . ~/.claude/skills/docaudit --exclude=.git --exclude=__pycache__ --exclude=tasks \
   --exclude=docs/superpowers --exclude=.mdq --exclude=.serena --exclude=.claude --exclude=.envrc \
-  --exclude=.gitignore --exclude=data --exclude=tests | grep -v 'Only in .*: $' || echo "skills-dir == main"
+  --exclude=.gitignore --exclude=data --exclude=tests; then
+  echo "skills-dir == main"
+else
+  echo "skills-dir MISMATCH — 上の差分を確認"; exit 1
+fi
 python3 ~/.claude/skills/docaudit/skills/audit/scripts/generic-layers.py --help >/dev/null && echo "engine OK"
 
 echo "done — v0.11.0 released, issues closed, skills-dir synced"
