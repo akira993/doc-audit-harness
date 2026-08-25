@@ -88,24 +88,34 @@ def private_directory(codex_root, attempt, path):
 def prompt_for(manifest, repo, path, provenance):
     identity = json.dumps({"runid": manifest["runid"], "path": path},
                           ensure_ascii=False, sort_keys=True)
-    baseline = manifest.get("baselineSha")
     head = manifest.get("head")
+    if manifest.get("mode") == "full":
+        scope = f"""This is a full-corpus audit. There is no diff scope.
+Sealed HEAD: {head}
+
+Investigate whether the document at {json.dumps(path, ensure_ascii=False)} accurately describes
+the current source and configuration at the sealed HEAD."""
+        fail_basis = "the current source"
+        pass_basis = "the document accurately describes the current source and configuration"
+    else:
+        scope = f"""Baseline commit: {manifest.get("baselineSha")}
+Sealed HEAD: {head}
+
+Investigate whether the document at {json.dumps(path, ensure_ascii=False)} still accurately
+describes the source/configuration changes between the baseline and sealed HEAD."""
+        fail_basis = "the changed source"
+        pass_basis = "the document is unaffected or already consistent"
     return f"""You are a report-only documentation-impact verifier for exactly one document.
 Repository root: {repo}
 Expected identity JSON: {identity}
 Impact provenance: {provenance}
-Baseline commit: {baseline}
-Sealed HEAD: {head}
-
-Investigate whether the document at {json.dumps(path, ensure_ascii=False)} still accurately
-describes the source/configuration changes between the baseline and sealed HEAD. Use read-only
-commands only. Use grep -n and narrowly targeted reads for relevant document and source lines.
+{scope} Use read-only commands only. Use grep -n and narrowly targeted reads for relevant document and source lines.
 Do not use mdq even if it is installed, and do not read unrelated files.
 
 Choose exactly one verdict:
-- FAIL: a cited document claim is contradicted by the changed source.
+- FAIL: a cited document claim is contradicted by {fail_basis}.
 - WARN: there is a concrete, cited staleness or under-specification signal.
-- PASS: the document is unaffected or already consistent.
+- PASS: {pass_basis}.
 
 Return only JSON conforming to the supplied schema. The runid and path must exactly equal the
 Expected identity JSON. Give a concise rationale citing file:line and put supporting file:line

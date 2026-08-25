@@ -40,6 +40,7 @@ prompt=$(cat)
 identity=$(printf '%s\n' "$prompt" | sed -n 's/^Expected identity JSON: //p')
 runid=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["runid"])' "$identity")
 doc=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["path"])' "$identity")
+printf '%s\n' "$prompt" > "$FAKE_STATE/last-prompt.txt"
 printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$doc" "$sandbox" "$repo" "$schema" "$model" "$effort" >> "$FAKE_LOG"
 
 emit() {
@@ -133,7 +134,7 @@ esac
 
 
 class CodexDispatchFixture:
-    def __init__(self, case, docs=None, cached=None):
+    def __init__(self, case, docs=None, cached=None, run_mode="incremental"):
         self.case = case
         self.temp = tempfile.TemporaryDirectory()
         case.addCleanup(self.temp.cleanup)
@@ -155,7 +156,7 @@ class CodexDispatchFixture:
         manifest = {"sealed": True, "runid": self.runid,
                     "dispatch": self.docs, "cached": self.cached,
                     "impacted": self.docs + self.cached,
-                    "baselineSha": "baseline", "head": "head"}
+                    "baselineSha": "baseline", "head": "head", "mode": run_mode}
         self._write_json(os.path.join(self.run_dir, "manifest.json"), manifest)
         impact = {"impacted": [{"path": path, "provenance": "mapped"}
                                for path in self.docs + self.cached]}
@@ -203,8 +204,35 @@ class CodexDispatchFixture:
         root = os.path.join(self.run_dir, "codex-out")
         return sorted(os.path.join(root, name) for name in os.listdir(root))
 
+    def prompt(self):
+        with open(os.path.join(self.state, "last-prompt.txt"), encoding="utf-8") as handle:
+            return handle.read()
+
 
 class TestCodexDispatch(unittest.TestCase):
+    def test_prompt_scope_tracks_full_and_incremental_manifest_modes(self):
+        full = CodexDispatchFixture(self, docs=["docs/a.md"], run_mode="full")
+        proc = full.run()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        prompt = full.prompt()
+        self.assertIn("This is a full-corpus audit. There is no diff scope.", prompt)
+        self.assertIn("current source and configuration at the sealed HEAD", prompt)
+        self.assertIn("contradicted by the current source", prompt)
+        self.assertNotIn("Baseline commit:", prompt)
+        self.assertNotIn("changes between the baseline and sealed HEAD", prompt)
+        self.assertNotIn("contradicted by the changed source", prompt)
+
+        incremental = CodexDispatchFixture(
+            self, docs=["docs/a.md"], run_mode="incremental")
+        proc = incremental.run()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        prompt = incremental.prompt()
+        self.assertIn("Baseline commit: baseline", prompt)
+        self.assertIn("changes between the baseline and sealed HEAD", prompt)
+        self.assertIn("contradicted by the changed source", prompt)
+        self.assertNotIn("This is a full-corpus audit", prompt)
+        self.assertNotIn("contradicted by the current source", prompt)
+
     def test_empty_dispatch_writes_empty_returns_without_starting_codex(self):
         fx = CodexDispatchFixture(self, docs=[])
         proc = fx.run()
