@@ -548,6 +548,10 @@ verdict or create separate success and REFUSED templates:
 | `{{GATE_ANCHOR_WRITTEN}}` | 1 | whether the anchor was written |
 | `{{GATE_REPORT_DATE}}` | 2 | sealed date for front matter `created` and `updated` |
 
+`{{GATE_WARNINGS}}` includes only warnings known before report publication. For warnings discovered
+during publication (`reportDurabilityUnknown`, `reportWriteError`, `reportStatusUpdateFailed`, or
+`lockReleaseFailed`), the gate stdout and `last_run.reportStatus` are authoritative.
+
 Pass that UTF-8 body on stdin to
 `python3 "$SD/scripts/write-template.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID"`.
 The helper binds the template to the run ledger; never write `report-template.md`, its receipt, or

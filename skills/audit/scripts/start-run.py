@@ -79,11 +79,12 @@ def report_candidate_rule(config, repo, report_date):
         raise ValueError("reportPath is not a valid report candidate pattern")
     if value.count("<YYYY-MM-DD>") != 1 or value.count("[_NN]") > 1:
         raise ValueError("reportPath must contain one date marker and at most one suffix marker")
+    marker_position = value.index("<YYYY-MM-DD>")
     rendered = value.replace("<YYYY-MM-DD>", report_date)
     if "[_NN]" in rendered:
         prefix, suffix = rendered.split("[_NN]", 1)
     else:
-        insertion = rendered.index(report_date) + len(report_date)
+        insertion = marker_position + len(report_date)
         prefix, suffix = rendered[:insertion], rendered[insertion:]
     base = prefix + suffix
     for candidate in (base, prefix + "_02" + suffix):

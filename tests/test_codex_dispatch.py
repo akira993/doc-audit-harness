@@ -134,7 +134,8 @@ esac
 
 
 class CodexDispatchFixture:
-    def __init__(self, case, docs=None, cached=None, run_mode="incremental"):
+    def __init__(self, case, docs=None, cached=None, run_mode="incremental",
+                 changed_set=None):
         self.case = case
         self.temp = tempfile.TemporaryDirectory()
         case.addCleanup(self.temp.cleanup)
@@ -156,7 +157,8 @@ class CodexDispatchFixture:
         manifest = {"sealed": True, "runid": self.runid,
                     "dispatch": self.docs, "cached": self.cached,
                     "impacted": self.docs + self.cached,
-                    "baselineSha": "baseline", "head": "head", "mode": run_mode}
+                    "baselineSha": "baseline", "head": "head", "mode": run_mode,
+                    "changedSet": changed_set if changed_set is not None else []}
         self._write_json(os.path.join(self.run_dir, "manifest.json"), manifest)
         impact = {"impacted": [{"path": path, "provenance": "mapped"}
                                for path in self.docs + self.cached]}
@@ -223,15 +225,33 @@ class TestCodexDispatch(unittest.TestCase):
         self.assertNotIn("contradicted by the changed source", prompt)
 
         incremental = CodexDispatchFixture(
-            self, docs=["docs/a.md"], run_mode="incremental")
+            self, docs=["docs/a.md"], run_mode="incremental",
+            changed_set=["src/changed.py", "docs/new-untracked.md"])
         proc = incremental.run()
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         prompt = incremental.prompt()
         self.assertIn("Baseline commit: baseline", prompt)
         self.assertIn("changes between the baseline and sealed HEAD", prompt)
         self.assertIn("contradicted by the changed source", prompt)
+        self.assertIn("Sealed changed paths: 2 total; showing 2:", prompt)
+        self.assertIn('- "src/changed.py"', prompt)
+        self.assertIn('- "docs/new-untracked.md"', prompt)
+        self.assertIn("may include uncommitted\nand untracked changes", prompt)
+        self.assertIn("do not rely only on commit history", prompt)
         self.assertNotIn("This is a full-corpus audit", prompt)
         self.assertNotIn("contradicted by the current source", prompt)
+
+    def test_incremental_prompt_caps_changed_paths_with_total_count(self):
+        changed = [f"src/changed-{number:03d}.py" for number in range(105)]
+        fx = CodexDispatchFixture(
+            self, docs=["docs/a.md"], run_mode="incremental",
+            changed_set=changed)
+        proc = fx.run()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        prompt = fx.prompt()
+        self.assertIn("Sealed changed paths: 105 total; showing 100:", prompt)
+        self.assertIn('- "src/changed-099.py"', prompt)
+        self.assertNotIn("src/changed-100.py", prompt)
 
     def test_empty_dispatch_writes_empty_returns_without_starting_codex(self):
         fx = CodexDispatchFixture(self, docs=[])
@@ -331,7 +351,7 @@ class TestCodexDispatch(unittest.TestCase):
 
     def test_timeout_kills_process_group_and_late_writer_cannot_contaminate_retry(self):
         fx = CodexDispatchFixture(self, docs=["docs/a.md"])
-        proc = fx.run(mode="timeout_once", timeout="0.15")
+        proc = fx.run(mode="timeout_once", timeout="0.5")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(json.loads(proc.stdout)["attempts"], 2)
         rows = fx.returns()

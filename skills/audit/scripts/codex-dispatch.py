@@ -23,6 +23,7 @@ VALID_VERDICTS = {"PASS", "WARN", "FAIL"}
 MAX_OUTPUT_BYTES = 2 * 1024 * 1024
 KILL_GRACE_SECONDS = 0.25
 MAX_ATTEMPTS = 3
+MAX_CHANGED_PATHS_IN_PROMPT = 100
 
 
 def parse_args():
@@ -51,9 +52,12 @@ def load_manifest(run_dir, repo):
     runid = manifest.get("runid")
     dispatched = manifest.get("dispatch")
     cached = manifest.get("cached")
+    changed_set = manifest.get("changedSet")
     if (not isinstance(runid, str) or not runid
             or not isinstance(dispatched, list) or not isinstance(cached, list)
+            or not isinstance(changed_set, list)
             or any(not isinstance(path, str) for path in dispatched + cached)
+            or any(not isinstance(path, str) for path in changed_set)
             or len(dispatched) != len(set(dispatched))
             or set(dispatched) & set(cached)):
         raise ValueError("manifest dispatch identity is invalid")
@@ -98,11 +102,22 @@ the current source and configuration at the sealed HEAD."""
         fail_basis = "the current source"
         pass_basis = "the document accurately describes the current source and configuration"
     else:
+        changed_set = manifest.get("changedSet", [])
+        shown = changed_set[:MAX_CHANGED_PATHS_IN_PROMPT]
+        changed_paths = "\n".join(
+            f"- {json.dumps(item, ensure_ascii=False)}" for item in shown)
+        if not changed_paths:
+            changed_paths = "- (none)"
         scope = f"""Baseline commit: {manifest.get("baselineSha")}
 Sealed HEAD: {head}
+Sealed changed paths: {len(changed_set)} total; showing {len(shown)}:
+{changed_paths}
 
 Investigate whether the document at {json.dumps(path, ensure_ascii=False)} still accurately
-describes the source/configuration changes between the baseline and sealed HEAD."""
+describes the source/configuration changes between the baseline and sealed HEAD. The verification
+target is the current file content in the sealed worktree. The changed set may include uncommitted
+and untracked changes: do not rely only on commit history. Compare the document's claims with the
+current content of the listed changed paths."""
         fail_basis = "the changed source"
         pass_basis = "the document is unaffected or already consistent"
     return f"""You are a report-only documentation-impact verifier for exactly one document.
@@ -150,8 +165,8 @@ def run_child(args, manifest, provenance, codex_root, attempt, path):
     ]
     try:
         process = subprocess.Popen(
-            command, cwd=args.repo_root, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, text=True, start_new_session=True)
+            command, cwd=args.repo_root, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, text=True, start_new_session=True)
         try:
             process.communicate(
                 input=prompt_for(manifest, args.repo_root, path,

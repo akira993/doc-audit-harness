@@ -111,6 +111,18 @@ class TestStartRun(unittest.TestCase):
         self.assertEqual(rule["suffixPrefix"], "docs/logs/audit_2027-01-01")
         self.assertEqual(rule["suffixSuffix"], "_final.md")
 
+    def test_implicit_suffix_uses_marker_when_same_date_appears_earlier(self):
+        fx = RunFixture(self, config_extra={
+            "reportPath": "docs/2026-08-18/audit_<YYYY-MM-DD>.md"})
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            rule = json.load(handle)["reportCandidateRule"]
+        self.assertEqual(rule["base"], "docs/2026-08-18/audit_2026-08-18.md")
+        self.assertEqual(rule["suffixPrefix"],
+                         "docs/2026-08-18/audit_2026-08-18")
+        self.assertEqual(rule["suffixSuffix"], ".md")
+
     def test_explicit_suffix_directory_position_is_preserved(self):
         fx = RunFixture(self, config_extra={
             "reportPath": "docs/logs[_NN]/audit_<YYYY-MM-DD>.md"})
