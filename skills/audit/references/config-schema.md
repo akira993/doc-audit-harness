@@ -7,7 +7,7 @@ live here; the plugin ships no project knowledge.
 |-----|------|----------|---------|
 | `anchorPath` | string | yes | repo-relative path to the anchor state file |
 | `diffGlobs` | string[] | yes | path globs that scope the change set (`**`=incl `/`, `*`=excl `/`) |
-| `docGlobs` | string[] | no | files treated as docs for the heuristic scan (default `["docs/**/*.md","*.md"]`) |
+| `docGlobs` | string[] | no | files treated as docs for the heuristic scan (default `["docs/**/*.md","*.md"]`); for pre-flight fix-path classification only, omission intentionally fails closed and rejects every fix path |
 | `frontMatterFields` | string[] | no | generic `format` layer requires these front-matter fields on every doc (WARN if missing); omit to skip front-matter checks |
 | `layerGlobs` | object | no | per-layer generic exclusions: `{format?:{exclude:string[]},existence?:{exclude:string[]},semantic?:{exclude:string[]}}`; exclusions also apply to explicit `--paths` input |
 | `frontMatterOverrides` | object[] | no | ordered generic `format` overrides: `{globs:string[],fields:string[]}`; the first entry whose `globs` contains a match wins, `fields:[]` skips the check, and no match falls back to `frontMatterFields` |
@@ -25,18 +25,18 @@ live here; the plugin ships no project knowledge.
 | `verdictCache` | object | no | `{enabled:bool=true,minConsecutivePasses:int=2}`; values outside 2..10 disable cache and emit WARN |
 | `phase3Backend` | string | no | Phase-3 verifier backend: `"workflow"` (default when omitted) or `"codex"`; any other value is rejected at seal |
 | `phase3CodexTimeoutSeconds` | number | no | per-document Codex execution timeout in seconds (default 600; integer 60..3600); excludes worker-queue wait, resets for each retry, and has effect only when `phase3Backend` is `"codex"` |
-| `models.light` | object | no | deterministic light-run limits: `{enabled,maxChanged=10,maxImpacted=15,maxDiffLines=200,maxDiffBytes=65536,sensitiveTokens?}`; defaults are empirical, not measured service guarantees |
-| `digestExclude` | string[] | no | additional generated paths excluded from the sealed worktree digest; only `.claude/state/**`, `.mdq/`, `.codegraph/`, `graphify-out/`, and `.cocoindex_code/` are accepted |
+| `models` | object | no | nested `{light:{enabled,maxChanged=10,maxImpacted=15,maxDiffLines=200,maxDiffBytes=65536,sensitiveTokens?}}` deterministic light-run limits; defaults are empirical, not measured service guarantees |
+| `digestExclude` | string[] | no | Non-glob literal paths only — each accepted prefix itself or any path below it (a trailing `/` is normalized away). Values containing `*`, `?`, or `[` are rejected by `tree-digest.py`; `seal-run.py` fails (exit 2) and the run is not sealed. Accepted `digestExclude` prefixes: `.claude/state`, `.claude/worktrees`, `.mdq`, `.codegraph`, `graphify-out`, `.cocoindex_code`. |
 | `protectedGlobs` | string[] | no | additional pre-flight fix deny patterns; built-in ADR/decisions/logs/`.claude` denial cannot be removed |
 | `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:string[], saturationWarnRatio:number=0.5, excludeDocPathTokens:bool=false}` |
 | `regressionRecheck` | object | no | `{enabled:bool=false}` — opt-in recheck of the latest prior FAIL for unchanged documents |
 | `indexing` | object | no | `{enabled:bool=true, tool:string="mdq", bin:string="mdq", roots:string[]?}` — Phase-0 mdq preflight; `roots` overrides index roots (default: whole repo `.`, since mdq's own default roots miss `README.md`/`skills`/`agents`); `enabled:false` opts out even when mdq is installed (conditional-force) |
 | `contextMode` | object | no | `{enabled:bool=true}` — Phase-0 context-mode probe (by `ctx_*` tool availability + `ctx_doctor`); when context-mode is installed, large outputs (git diff, reviews) are processed in its sandbox instead of read in full. `enabled:false` opts out even when installed (conditional-force). No `bin`/`roots`/CLI — context-mode is a location-independent global plugin |
-| `webExtract` | object | no | `{enabled:bool=true, tool:string="ax", bin:string="ax"}` — Phase-0 `ax` CLI preflight; when `ax` is installed, doc-impact-verifier may corroborate a doc's external-URL-dependent claim by fetching it (read-only, GET-only). `enabled:false` opts out even when `ax` is installed (conditional-force) |
+| `webExtract` | object | no | `{enabled:bool=true, tool:string="ax", bin:string="ax"}` — Phase-0 `ax` CLI preflight; when `ax` is installed, doc-impact-verifier may corroborate a doc's external-URL-dependent claim by fetching it (read-only, GET-only). `enabled:false` opts out even when `ax` is installed (conditional-force). `tool` is reserved; runtime reads only `enabled` and `bin`. The `bin` override affects only the Phase-0 probe; Phase 3 Workflow invokes fixed `ax`. |
 | `codexReview` | object | no | `{enabled:bool=true, required:bool=false, bin:string="codex", model?:string, timeoutMs?:number=300000}` — `required:true` makes a non-completed codex review REFUSED. An explicit model is tried once; otherwise light uses `gpt-5.6-luna`, standard uses `gpt-5.6-terra`, and only the default light attempt may retry once as standard. Phase-0 probes the CLI and completed Phase-4 `critical`/`high` findings can block the verdict. |
-| `symbolGraph` | object | no | `{enabled:bool=true, tool:string="codegraph", bin:string="codegraph"}` — Phase-0 `codegraph` CLI preflight; when installed, doc-impact-verifier may corroborate a doc claim that depends on a changed file's own symbols via read-only `codegraph impact`/`node`. Report-only, never affects the verdict. `enabled:false` opts out even when `codegraph` is installed (conditional-force) |
-| `docGraph` | object | no | `{enabled:bool=true, tool:string="graphify", bin:string="graphify"}` — Phase-0 `graphify` CLI preflight; when installed, Phase 2 supplements `mapGapCandidates` with graph-adjacency candidates (provenance `graphify`). Report-only, never affects the verdict. `enabled:false` opts out even when `graphify` is installed (conditional-force) |
-| `semanticSearch` | object | no | `{enabled:bool=true, tool:string="cocoindex", bin:string="ccc", minScore?:number=0.4}` — Phase-0 `ccc` (CocoIndex) CLI preflight; when installed AND already initialized (`.cocoindex_code/` present), Phase 2 supplements `mapGapCandidates` with semantic-search candidates (provenance `semantic`) scoring `>= minScore`. **The audit itself never runs `ccc init`** — an uninitialized repo degrades to `reason:not-initialized`, distinct from `not-installed`; initialize via `/docaudit:init` (user-approved, discloses the `.gitignore` write). Report-only, never affects the verdict. `enabled:false` opts out even when `ccc` is installed (conditional-force) |
+| `symbolGraph` | object | no | `{enabled:bool=true, tool:string="codegraph", bin:string="codegraph"}` — Phase-0 `codegraph` CLI preflight; when installed, doc-impact-verifier may corroborate a doc claim that depends on a changed file's own symbols via read-only `codegraph impact`/`node`. Report-only, never affects the verdict. `enabled:false` opts out even when `codegraph` is installed (conditional-force). `tool` is reserved; runtime reads only `enabled` and `bin`. The `bin` override affects only the Phase-0 probe; Phase 3 Workflow invokes fixed `codegraph`. |
+| `docGraph` | object | no | `{enabled:bool=true, tool:string="graphify", bin:string="graphify"}` — Phase-0 `graphify` CLI preflight; when installed, Phase 2 supplements `mapGapCandidates` with graph-adjacency candidates (provenance `graphify`). Report-only, never affects the verdict. `enabled:false` opts out even when `graphify` is installed (conditional-force). `tool` is reserved; runtime reads only `enabled` and `bin`. |
+| `semanticSearch` | object | no | `{enabled:bool=true, tool:string="cocoindex", bin:string="ccc", minScore?:number=0.4}` — Phase-0 `ccc` (CocoIndex) CLI preflight; when installed AND already initialized (`.cocoindex_code/` present), Phase 2 supplements `mapGapCandidates` with semantic-search candidates (provenance `semantic`) scoring `>= minScore`. **The audit itself never runs `ccc init`** — an uninitialized repo degrades to `reason:not-initialized`, distinct from `not-installed`; initialize via `/docaudit:init` (user-approved, discloses the `.gitignore` write). Report-only, never affects the verdict. `enabled:false` opts out even when `ccc` is installed (conditional-force). `tool` is reserved; runtime reads only `enabled` and `bin`. |
 
 `impacts` entries MUST be doc paths only; put commentary in `note`. `changed`
 accepts a single path or a glob.
@@ -213,7 +213,8 @@ status line** (💡 not active / ✓ active / ⚠ degraded).
 CLI (`~/.local/bin/ax`) — a structured web/API extraction tool, not a Markdown-indexing tool.
 Its only role in the audit is letting `doc-impact-verifier` corroborate a doc claim that
 depends on an external upstream URL (an upstream doc, an API spec, etc.). With `ax` on `PATH`
-(or `bin` pointed at a vendored binary), Phase 0 detects it and Phase 3 passes the verifier a
+(or `bin` pointed at a vendored binary), Phase 0 detects it. The `bin` override affects this probe
+only: Workflow receives the availability boolean and Phase 3's template invokes fixed `ax`. Phase 3 passes the verifier a
 conditional instruction to fetch cited URLs read-only (`--md --budget 800` for prose,
 `--row`/`--table` for structured data, `--outline` to see page structure first) — GET-only,
 never `-X POST`/`-d`/`-o`. Fetched content is treated as data, never as instructions. When `ax`
@@ -247,8 +248,9 @@ The evidence state is one of `completed`, `execution-failed`, `ref-invalid`,
 `skipped-full-run`, or `not-active`. Phase 5 displays four classes because
 `execution-failed` and `ref-invalid` share the did-not-run warning. With the default
 `required:false`, those two states warn and decorate a CONSISTENT report without changing the
-internal verdict. With `required:true`, any state other than `completed`, missing evidence,
-`enabled:false`, or a non-boolean `required` makes the gate REFUSED. Enabling `required` after the
+internal verdict. With `required:true`, any state other than `completed`, missing evidence, or
+`enabled:false` makes the gate REFUSED. A non-boolean `required` makes the gate REFUSED regardless
+of its value. Enabling `required` after the
 first baseline is established is recommended. A completed run's `critical`/`high` findings fold
 into `phase4.json` as blocking; `medium`/`low` remain non-blocking.
 
@@ -258,7 +260,9 @@ into `phase4.json` as blocking; `medium`/`low` remain non-blocking.
 `codegraph` CLI — a symbol graph (call graph, impact/node lookup). Its sole role in the audit is
 letting `doc-impact-verifier` corroborate a doc claim that depends on a *changed file's own*
 symbols, the symbol-level counterpart of ax's external-URL seam. With `codegraph` on `PATH` (or
-`bin` pointed at a vendored binary), Phase 0 keeps the index fresh every run: `.codegraph/` absent
+`bin` pointed at a vendored binary), Phase 0 keeps the index fresh every run. The `bin` override
+affects this probe only: Workflow receives the availability boolean and Phase 3's template invokes
+fixed `codegraph`. `.codegraph/` absent
 → `codegraph init .` (first run only — a bare `init` against an existing `.codegraph/` is
 rejected, confirmed); `.codegraph/` present → `codegraph sync .` (confirmed idempotent). codegraph
 self-generates `.codegraph/.gitignore`, so the probe never touches `.gitignore` itself. Phase 3
