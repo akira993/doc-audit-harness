@@ -2,11 +2,11 @@
 """impact-supplement.py — supplement resolve-impact.py's output with graphify
 (graph-adjacency) and CocoIndex (semantic-search) candidates (spec §5.7).
 
-resolve-impact.py's own `mapped`/`heuristic` result (already cap-applied) is
+resolve-impact.py's own `mapped`/`regression`/`heuristic` result (already cap-applied) is
 UNCONDITIONALLY kept as-is — this script never displaces an existing `impacted`
 entry. New candidates from graphify and/or CocoIndex are added ONLY into the
 residual slots left under `maxImpactedDocs`, strictly in priority order
-`mapped` >= `heuristic` >= `graphify` >= `semantic` (Issue #8 anti-regression).
+`mapped` >= `regression` >= `heuristic` >= `graphify` >= `semantic` (Issue #8 anti-regression).
 
 Reads:
   --impact-json PATH       resolve-impact.py's output (rewritten in place)
