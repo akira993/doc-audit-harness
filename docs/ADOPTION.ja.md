@@ -146,7 +146,7 @@ Phase-0 probe が毎回 `.codegraph/` を最新化する（初回は `init`、�
 ものだけを採用 — `ccc search` には**足切りが無い**ことが確認済みで、無関係なクエリでも
 exit 0・limit 件を、目に見えて低いスコア帯で返す）。どちらも conditional-force
 （`"docGraph": {"enabled": false}` / `"semanticSearch": {"enabled": false}`）であり、どちらも
-`resolve-impact.py` 自身の cap 適用後に残った枠にのみ、優先順位 `mapped` ≥ `heuristic` ≥
+`resolve-impact.py` 自身の cap 適用後に残った枠にのみ、優先順位 `mapped` ≥ `regression` ≥ `heuristic` ≥
 `graphify` ≥ `semantic` を厳守してマージする — 既存候補を1件たりとも押し出すことはない
 （Issue #8 の再発防止）。**CocoIndex について最も重要な規則: docaudit 自身は `ccc init` を
 絶対に実行しない** — `ccc init` は対象 repo の `.gitignore` に `/.cocoindex_code/` を自動追記する
@@ -155,9 +155,18 @@ exit 0・limit 件を、目に見えて低いスコア帯で返す）。どち�
 扱う。初期化は `/docaudit:init` の中でのみ、`.gitignore` への書き込みを明示したユーザー承認を
 経て行われる。
 
-impact provenance は、`impactMap` のみなら `mapped`、heuristic のみなら `heuristic`、両方が同じ
+impact provenance は、`impactMap` のみなら `mapped`、前回 FAIL・内容不変の再検証なら `regression`（impactMap-gap 候補ではない）、heuristic のみなら `heuristic`、両方が同じ
 文書へ到達した場合は `both`、任意の補完元なら `graphify` / `semantic`、anchor が無いか明示的な
 `--full` の全文書 run では各 `docGlobs` 文書が `full` になる。
+
+健全な設定では、選択された文書の大半が `mapped` で到達し、token `heuristic` はまだ
+`impactMap` に昇格していない結び付きの残差になる。監査コストの主因は
+`maxImpactedDocs` ではなく anchor の古さである。このリポジトリの実測では、古い anchor
+で約 92 文書（約 3.6M tokens）、単一 commit 窓の中央値で約 18 文書だった。
+
+`regressionRecheck` は opt-in である。単発の検証結果にはブレがあるため、報告された指摘
+N 件を直して再実行すれば `CONSISTENT` になるとは保証されない。1件の欠陥を見つけたら、
+報告箇所だけでなく、同じ欠陥クラスを対象文書全体で横断的に掃除することを推奨する。
 
 各 audit は codex-review 行の直後にさらに3つの非ブロッキング状態行を出力する:
 **symbol-graph**（💡 未導入 / ✓ 稼働 / ⚠ 索引構築失敗）、**doc-graph**（💡 未導入 / ✓ 稼働 +

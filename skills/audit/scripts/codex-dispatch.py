@@ -123,7 +123,7 @@ current content of the listed changed paths."""
     return f"""You are a report-only documentation-impact verifier for exactly one document.
 Repository root: {repo}
 Expected identity JSON: {identity}
-Impact provenance: {provenance}
+Impact provenance: {provenance}. `regression` means a prior FAIL with unchanged content is being rechecked; it is not an impactMap-gap candidate.
 {scope} Use read-only commands only. Use grep -n and narrowly targeted reads for relevant document and source lines.
 Do not use mdq even if it is installed, and do not read unrelated files.
 

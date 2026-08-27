@@ -162,7 +162,7 @@ fixed-format TEXT output — neither has `--json`), CocoIndex via local-embeddin
 return `limit` results, just at a visibly lower score band). Both are conditional-force
 (`"docGraph": {"enabled": false}` / `"semanticSearch": {"enabled": false}`) and both merge into
 `mapGapCandidates` using ONLY the residual slots left after `resolve-impact.py`'s own cap, in strict
-priority `mapped` ≥ `heuristic` ≥ `graphify` ≥ `semantic` — neither ever displaces an existing
+priority `mapped` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic` — neither ever displaces an existing
 candidate (Issue #8 anti-regression). **The one rule that matters most for CocoIndex: docaudit
 itself NEVER runs `ccc init`** — `ccc init` auto-appends `/.cocoindex_code/` to the repo's
 `.gitignore` (confirmed real side effect), a write the report-only audit phase must not trigger
@@ -170,9 +170,19 @@ mid-run, so an absent `.cocoindex_code/` is its own silent `not-initialized` deg
 from "not installed"; initialization only happens inside `/docaudit:init`, behind explicit user
 approval that discloses the `.gitignore` write.
 
-Impact provenance is `mapped` for `impactMap` only, `heuristic` for heuristic only, `both` when
+Impact provenance is `mapped` for `impactMap` only, `regression` for a recheck of a prior FAIL with unchanged content (not an impactMap-gap candidate), `heuristic` for heuristic only, `both` when
 both reach the same document, `graphify` or `semantic` for their optional supplement, and `full`
 for every `docGlobs` document in a no-anchor or explicit `--full` run.
+
+A healthy configuration reaches most selected documents through `mapped`; the token `heuristic`
+should be residual coverage for couplings not yet promoted to `impactMap`. Audit cost is driven
+mainly by anchor age, not by `maxImpactedDocs`: measurements on this repository found about 92
+documents (roughly 3.6M tokens) for an old anchor, versus a median of about 18 documents for a
+single-commit window.
+
+`regressionRecheck` is opt-in. A single verifier run can vary, so fixing N reported findings and
+rerunning does not guarantee `CONSISTENT`. When one defect is found, sweep the same defect class
+across the relevant corpus instead of repairing only the reported instances.
 
 Every audit prints three further non-blocking status lines immediately after the codex-review one:
 **symbol-graph** (💡 not active / ✓ active / ⚠ index build failed), **doc-graph** (💡 not active /

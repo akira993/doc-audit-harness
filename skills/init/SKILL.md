@@ -105,6 +105,10 @@ and `skipReasons` entry. If an existing config was the `--harness` exception, st
 harness-only update; do not rebuild or rewrite the rest of the adapter.
 
 ## Step 2 — draft the config
+
+For a newly drafted config, propose `"regressionRecheck": {"enabled": true}` so a prior FAIL can
+be rechecked even when its document content is unchanged. This is a proposal for the new draft
+only; never add or change this key in an existing config automatically.
 Build a `doc-audit.json` draft from the inventory:
 - `anchorPath`: `.claude/state/last-doc-audit.json`. `diffGlobs`: `suggestedDiffGlobs`.
   `docGlobs`: inventory `docGlobs`. `indexFiles`: inventory `indexFiles`.

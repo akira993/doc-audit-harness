@@ -18,7 +18,12 @@ class TestV013Contracts(unittest.TestCase):
         self.skipTest("added in S2..S5")
 
     def test_b_audit_history_argument(self):
-        self.skipTest("added in S2..S5")
+        skill = os.path.join(ROOT, "skills", "audit", "SKILL.md")
+        with open(skill, encoding="utf-8") as handle:
+            lines = handle.readlines()
+        commands = [line for line in lines if "resolve-impact.py" in line]
+        self.assertTrue(any("--history \"$CLAUDE_PROJECT_DIR/.claude/state/docaudit-history.json\"" in line
+                            for line in commands))
 
     def test_c_audit_scope_check_order(self):
         self.skipTest("added in S2..S5")
@@ -33,10 +38,19 @@ class TestV013Contracts(unittest.TestCase):
         self.skipTest("added in S2..S5")
 
     def test_g_regression_provenance_consumers(self):
-        self.skipTest("added in S2..S5")
+        paths = ["agents/doc-impact-verifier.md", "agents/doc-impact-verifier-light.md",
+                 "skills/audit/references/workflow-template.js", "skills/audit/scripts/codex-dispatch.py",
+                 "skills/audit/scripts/impact-supplement.py", "docs/ADOPTION.md", "docs/ADOPTION.ja.md",
+                 "docs/PROMPTS.md", "docs/PROMPTS.ja.md", "tests/test_workflow_template.py"]
+        for path in paths:
+            with self.subTest(path=path), open(os.path.join(ROOT, path), encoding="utf-8") as handle:
+                self.assertIn("regression", handle.read())
 
     def test_h_config_schema_keys(self):
-        self.skipTest("added in S2..S5")
+        with open(os.path.join(ROOT, "skills", "audit", "references", "config-schema.md"), encoding="utf-8") as handle:
+            schema = handle.read()
+        for key in ("saturationWarnRatio", "excludeDocPathTokens", "regressionRecheck"):
+            self.assertIn(key, schema)
 
     def test_i_release_version_matches_all_five_surfaces(self):
         with open(PLUGIN, encoding="utf-8") as handle:

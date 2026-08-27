@@ -301,8 +301,8 @@ pattern.
 Build a concise `changeSummary` (per changed file: path + 1-line nature of change from `git diff --stat`/`git show`); it depends only on the Phase 1 `changed` list. When `CM_AVAILABLE` is true, derive this `changeSummary` with context-mode instead of reading raw diffs into context: run the `git diff`/`git show` through `ctx_execute` (or `ctx_batch_execute`) in the sandbox and return only the compact per-file summary — the raw diff stays out of context, so every downstream subagent prompt is smaller too. When `CM_AVAILABLE` is false, build it from `git diff --stat`/`git show` as usual.
 `RUN_DIR` is the run-scoped directory returned by `open-run.py`; never reset it to the old flat
 `.claude/state/docaudit-run` path and never create it yourself. Capture impact output there:
-`printf '%s\n' "${changed[@]}" | python3 "$SD/scripts/resolve-impact.py" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR" --changed - --mode "$MODE" > "$RUN_DIR/impact.json"`.
-Parse `$RUN_DIR/impact.json` for `{impacted[], mapGapCandidates[], ssotRecheck[], warnings[], truncated, counts{changed,impacted,mapped,heuristicOnly,candidatesBeforeCap}}`. If `truncated` is true, record the dropped count (the script also prints it to stderr) explicitly in the Phase 5 report — never silently discard it. If `warnings` is non-empty (e.g. an `ssotSources` entry with a URL `liveSource`, which is never fetched or verified), carry them to the Phase-5 warning lines — never silently discard them.
+`printf '%s\n' "${changed[@]}" | python3 "$SD/scripts/resolve-impact.py" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR" --changed - --mode "$MODE" --history "$CLAUDE_PROJECT_DIR/.claude/state/docaudit-history.json" > "$RUN_DIR/impact.json"`.
+Parse `$RUN_DIR/impact.json` for `{impacted[], mapGapCandidates[], ssotRecheck[], warnings[], truncated, counts{changed,impacted,mapped,heuristicOnly,regression,docCorpus,heuristicSaturation,candidatesBeforeCap}}`. If `truncated` is true, record the dropped count (the script also prints it to stderr) explicitly in the Phase 5 report — never silently discard it. If `warnings` is non-empty (e.g. an `ssotSources` entry with a URL `liveSource`, which is never fetched or verified), carry them to the Phase-5 warning lines — never silently discard them.
 
 When `DOC_GRAPH_AVAILABLE` or `SEMANTIC_SEARCH_AVAILABLE` is true, supplement `impact.json` with
 graphify/CocoIndex candidates before classification and dispatch (either or both — each is an independent,
@@ -316,7 +316,7 @@ when `SEMANTIC_SEARCH_AVAILABLE` is true. It rewrites `$RUN_DIR/impact.json` in 
 afterward (it may now carry updated `counts.graphifyOnly`/`counts.semanticOnly`/`truncated`/
 `warnings[]`) before proceeding. `resolve-impact.py`'s own `mapped`/`heuristic` result is never
 displaced — new candidates only ever fill the residual slots left under `maxImpactedDocs`, strictly
-`mapped` ≥ `heuristic` ≥ `graphify` ≥ `semantic` (Issue #8 anti-regression). When both
+`mapped` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic` (Issue #8 anti-regression). When both
 `DOC_GRAPH_AVAILABLE` and `SEMANTIC_SEARCH_AVAILABLE` are false, skip this step entirely.
 
 Classify the run deterministically:
