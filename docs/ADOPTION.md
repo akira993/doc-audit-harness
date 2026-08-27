@@ -203,7 +203,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.12.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.13.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -263,7 +263,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.1 or 0.11.0 templates can be updated directly to 0.12.0 with
+Existing unmodified stamped 0.10.1, 0.11.0, or 0.12.0 templates can be updated directly to 0.13.0 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
