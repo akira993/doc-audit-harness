@@ -4,6 +4,7 @@
 import argparse
 import concurrent.futures
 import hashlib
+import importlib.util
 import json
 import os
 import signal
@@ -26,6 +27,17 @@ MAX_ATTEMPTS = 3
 MAX_CHANGED_PATHS_IN_PROMPT = 100
 
 
+def _load_manifest_reader():
+    spec = importlib.util.spec_from_file_location(
+        "read_manifest", os.path.join(HERE, "read-manifest.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.read_manifest
+
+
+read_sealed_manifest = _load_manifest_reader()
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Dispatch sealed Phase-3 documents through codex exec.")
@@ -34,6 +46,7 @@ def parse_args():
     parser.add_argument("--model", required=True)
     parser.add_argument("--effort", required=True)
     parser.add_argument("--timeout-seconds", required=True, type=float)
+    parser.add_argument("--evidence", required=True)
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--codex-bin", default="codex")
     args = parser.parse_args()
@@ -44,35 +57,30 @@ def parse_args():
     return args
 
 
-def load_manifest(run_dir, repo):
-    with open(os.path.join(run_dir, "manifest.json"), encoding="utf-8") as handle:
-        manifest = json.load(handle)
+def load_manifest(run_dir, repo, evidence):
+    manifest = read_sealed_manifest(run_dir, evidence)
     if not isinstance(manifest, dict) or manifest.get("sealed") is not True:
         raise ValueError("manifest must be a sealed object")
     runid = manifest.get("runid")
     dispatched = manifest.get("dispatch")
     cached = manifest.get("cached")
+    impacted = manifest.get("impacted")
     changed_set = manifest.get("changedSet")
+    provenance = manifest.get("provenance")
     if (not isinstance(runid, str) or not runid
             or not isinstance(dispatched, list) or not isinstance(cached, list)
+            or not isinstance(impacted, list)
             or not isinstance(changed_set, list)
+            or not isinstance(provenance, dict)
             or any(not isinstance(path, str) for path in dispatched + cached)
+            or any(not isinstance(path, str) for path in impacted)
             or any(not isinstance(path, str) for path in changed_set)
+            or set(provenance) != set(impacted)
+            or any(not isinstance(value, str) for value in provenance.values())
             or len(dispatched) != len(set(dispatched))
             or set(dispatched) & set(cached)):
         raise ValueError("manifest dispatch identity is invalid")
     return manifest, [validate_repo_path(repo, path) for path in dispatched]
-
-
-def load_provenance(run_dir):
-    try:
-        with open(os.path.join(run_dir, "impact.json"), encoding="utf-8") as handle:
-            impacted = json.load(handle).get("impacted", [])
-    except (OSError, AttributeError, json.JSONDecodeError):
-        return {}
-    return {entry["path"]: entry.get("provenance", "unknown")
-            for entry in impacted
-            if isinstance(entry, dict) and isinstance(entry.get("path"), str)}
 
 
 def private_directory(codex_root, attempt, path):
@@ -275,8 +283,9 @@ def main():
         args.run_dir = os.path.realpath(args.run_dir)
         if not os.path.isdir(args.repo_root) or not os.path.isdir(args.run_dir):
             raise ValueError("repo root and run directory must exist")
-        manifest, dispatched = load_manifest(args.run_dir, args.repo_root)
-        provenance = load_provenance(args.run_dir)
+        evidence = json.loads(args.evidence)
+        manifest, dispatched = load_manifest(args.run_dir, args.repo_root, evidence)
+        provenance = manifest["provenance"]
         codex_root = os.path.join(args.run_dir, "codex-out")
         os.makedirs(codex_root, exist_ok=True)
         if os.path.islink(codex_root) or not os.path.isdir(codex_root):

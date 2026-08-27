@@ -80,6 +80,11 @@ def main():
     manifest_paths, _, manifest_shape_ok = unique_paths(
         manifest.get("impacted"), warnings, "manifest.json"
     )
+    manifest_provenance = manifest.get("provenance")
+    if not isinstance(manifest_provenance, dict):
+        manifest_provenance = {}
+        manifest_ok = False
+        warnings.append("manifest.json provenance is not an object")
     manifest_ok = manifest_ok and manifest_shape_ok and isinstance(manifest.get("impacted"), list)
     if isinstance(manifest.get("impacted"), list):
         raw_manifest_paths = []
@@ -110,7 +115,9 @@ def main():
 
     manifest_set = set(manifest_paths)
     impact_set = set(impact_paths)
-    manifest_mismatch = not manifest_ok or not impact_ok or manifest_set != impact_set
+    provenance_mismatch = manifest_provenance != impact_provenance
+    manifest_mismatch = (not manifest_ok or not impact_ok or manifest_set != impact_set
+                         or provenance_mismatch)
     if manifest_set != impact_set:
         only_manifest = sorted(manifest_set - impact_set)
         only_impact = sorted(impact_set - manifest_set)
@@ -118,6 +125,8 @@ def main():
             "manifest/impact path mismatch "
             f"(manifestOnly={only_manifest}, impactOnly={only_impact})"
         )
+    if provenance_mismatch:
+        warnings.append("manifest/impact provenance mismatch")
 
     valid_counts = {}
     valid_records = {}

@@ -861,6 +861,140 @@ exec "$DOCAUDIT_REAL_GIT" "$@"
             self.assertEqual(handle.read(), "{replaced after snapshot")
 
 
+class TestS4aSealedGate(GateBase):
+    FLIP_WARNING = (
+        'verdict instability: 1 document(s) changed verdict with unchanged content since '
+        'the previous run (1 with an unchanged change set) — single-pass verification '
+        'samples the defect pool; "fix these 1 and re-run" is not guaranteed to converge '
+        '(see ADOPTION)')
+
+    @staticmethod
+    def load(path):
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+
+    @staticmethod
+    def rewrite(path, value):
+        raw = (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode()
+        write(path, raw)
+        return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+    def prepared_one(self, *, report=False):
+        extra = ({"reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"}
+                 if report else None)
+        fx = RunFixture(self, docs=("docs/a.md",), config_extra=extra)
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        self.assertEqual(fx.complete({"docs/a.md": "PASS"}).returncode, 0)
+        if report:
+            self.assertEqual(fx.write_template().returncode, 0)
+        first = fx.gate()
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        return fx
+
+    def second_verdict(self, fx, *, report=False):
+        self.assertEqual(fx.open(runid="20260818T120001Z-abcdef13").returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        self.assertEqual(fx.complete({"docs/a.md": "FAIL"}).returncode, 0)
+        if report:
+            self.assertEqual(fx.write_template().returncode, 0)
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        return json.loads(proc.stdout)
+
+    def assert_flip_counts(self, result, flips, same_change_set):
+        self.assertEqual(result["counts"]["verdictFlipsUnchangedContent"], flips)
+        self.assertEqual(
+            result["counts"]["verdictFlipsUnchangedContentSameChangeSet"],
+            same_change_set)
+
+    def test_impact_sha_mismatch_has_fixed_reason(self):
+        fx = self.prepared()
+        impact_path = os.path.join(fx.run_dir, "impact.json")
+        impact = self.load(impact_path)
+        impact["warnings"] = ["changed"]
+        self.rewrite(impact_path, impact)
+        result = json.loads(self.assert_refused(fx).stdout)
+        self.assertEqual(result["reason"], "impact sha mismatch")
+
+    def test_manifest_and_impact_provenance_mismatch_has_fixed_reason(self):
+        fx = self.prepared()
+        impact_path = os.path.join(fx.run_dir, "impact.json")
+        dispatch_path = os.path.join(fx.run_dir, "dispatch.json")
+        impact = self.load(impact_path)
+        impact["impacted"][0]["provenance"] = "heuristic"
+        dispatch = self.load(dispatch_path)
+        dispatch["impactSha"] = self.rewrite(impact_path, impact)
+        fx.evidence["dispatch"] = self.rewrite(dispatch_path, dispatch)
+        result = json.loads(self.assert_refused(fx).stdout)
+        self.assertEqual(result["reason"], "provenance mismatch")
+
+    def test_unknown_provenance_with_all_shas_resealed_has_enum_reason(self):
+        fx = self.prepared()
+        impact_path = os.path.join(fx.run_dir, "impact.json")
+        dispatch_path = os.path.join(fx.run_dir, "dispatch.json")
+        manifest_path = os.path.join(fx.run_dir, "manifest.json")
+        impact = self.load(impact_path)
+        path = impact["impacted"][0]["path"]
+        impact["impacted"][0]["provenance"] = "unknown"
+        dispatch = self.load(dispatch_path)
+        dispatch["impactSha"] = self.rewrite(impact_path, impact)
+        fx.evidence["dispatch"] = self.rewrite(dispatch_path, dispatch)
+        manifest = self.load(manifest_path)
+        manifest["provenance"][path] = "unknown"
+        fx.evidence["manifest"] = self.rewrite(manifest_path, manifest)
+        result = json.loads(self.assert_refused(fx).stdout)
+        self.assertEqual(result["reason"], f"provenance enum violation: {path}=unknown")
+
+    def test_audit_scope_changed_after_seal_has_barrier_reason(self):
+        scope_raw = b'{"version":1,"rules":[]}\n'
+        metadata = {
+            "path": ".claude/audit-scope.json",
+            "sha256": hashlib.sha256(scope_raw).hexdigest(),
+            "rules": 0,
+            "importedAt": "2026-08-18T12:00:00Z",
+        }
+        fx = RunFixture(self, docs=("docs/a.md",), config_extra={"auditScope": metadata})
+        scope_path = os.path.join(fx.repo, metadata["path"])
+        write(scope_path, scope_raw)
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        self.assertEqual(fx.complete().returncode, 0)
+        write(scope_path, b'{"version":1,"rules":[{"changed":true}]}\n')
+        result = json.loads(self.assert_refused(fx).stdout)
+        self.assertEqual(result["reason"], "audit-scope changed after seal")
+
+    def test_flip_same_change_set_is_one_one_and_reaches_report_warning(self):
+        fx = self.prepared_one(report=True)
+        result = self.second_verdict(fx, report=True)
+        self.assert_flip_counts(result, 1, 1)
+        self.assertIn(self.FLIP_WARNING, result["warnings"])
+        report = os.path.join(fx.repo, result["reportPath"])
+        with open(report, encoding="utf-8") as handle:
+            body = handle.read()
+        self.assertIn("verdict instability: 1 document(s)", body)
+        self.assertIn('"verdictFlipsUnchangedContent":1', body)
+        self.assertIn('"verdictFlipsUnchangedContentSameChangeSet":1', body)
+
+    def test_flip_changed_change_set_is_one_zero(self):
+        fx = self.prepared_one()
+        write(os.path.join(fx.repo, "src", "app.py"), "print('changed code')\n")
+        git(fx.repo, "add", "src/app.py")
+        git(fx.repo, "commit", "-m", "change code only")
+        result = self.second_verdict(fx)
+        self.assert_flip_counts(result, 1, 0)
+
+    def test_flip_changed_content_is_zero_zero(self):
+        fx = self.prepared_one()
+        write(os.path.join(fx.repo, "docs", "a.md"), "# changed document\n")
+        git(fx.repo, "add", "docs/a.md")
+        git(fx.repo, "commit", "-m", "change document")
+        result = self.second_verdict(fx)
+        self.assert_flip_counts(result, 0, 0)
+        self.assertFalse(any(item.startswith("verdict instability:")
+                             for item in result["warnings"]))
+
+
 class TestCache(GateBase):
     def two_passes(self, fx):
         for number in range(2):
