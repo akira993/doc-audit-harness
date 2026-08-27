@@ -127,7 +127,8 @@ by tool availability). First read the opt-out:
 - Else (tools absent) bind `CM_AVAILABLE=false`, `CM_STATUS=not-installed`.
 Like the mdq probe this is report-only and **never fatal** — any failure falls back to
 `CM_AVAILABLE=false`/`CM_STATUS=probe-error` and the audit continues. These bind
-`CM_AVAILABLE`/`CM_HEALTHY`/`CM_STATUS` for Phases 2/3/4 and the Phase-5 context-mode status line.
+`CM_AVAILABLE`/`CM_STATUS` for Phases 2/3/4 and the Phase-5 context-mode status line;
+`CM_HEALTHY` is bound only in the central `ctx_*`-available branch above.
 
 Then probe **ax** (`~/.local/bin/ax`, a CLI for structured web/API extraction — the doc-impact-
 verifier's sole use for it is corroborating a doc's claim against an external upstream URL). Unlike
@@ -136,7 +137,9 @@ context-mode, ax is a plain CLI binary with no runtime tool-availability signal,
 `bash "$SD/scripts/ax-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"` and parse
 `{axAvailable, axBin, axVersion, reason}` (`reason` ∈ `ok`/`not-installed`/`disabled-by-config`).
 Bind `AX_AVAILABLE` (the `axAvailable` field) and `AX_BIN` (the `axBin` field, default `ax`) for
-Phase 3 and the Phase-5 ax status line. The script always exits 0 and never touches the network
+the Phase-5 ax status line. `AX_BIN` affects only the Phase-0 probe; Phase 3's
+`workflow-template.js` invokes fixed `ax`, and Workflow receives only the availability boolean.
+The script always exits 0 and never touches the network
 (`ax --version` reports the local binary's own version); any failure degrades to `AX_AVAILABLE=false`
 and the audit continues unaffected — external-URL corroboration is a bonus, never a requirement.
 
@@ -147,8 +150,8 @@ tool-availability signal, so this probe is **deterministic** (ax-pattern), not s
 and parse
 `{codexReviewAvailable, codexReviewBin, codexReviewVersion, probeCommands, reason}` (`reason` ∈
 `ok`/`not-installed`/`disabled-by-config`/`probe-exec-failed`). Bind
-`CODEX_REVIEW_AVAILABLE` (the
-`codexReviewAvailable` field) and `CODEX_REVIEW_BIN` (the `codexReviewBin` field, default `codex`)
+`CODEX_REVIEW_AVAILABLE="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["codexReviewAvailable"]).lower())' "$CODEX_PROBE_JSON")"`
+and `CODEX_REVIEW_BIN` (the `codexReviewBin` field, default `codex`)
 and bind the probe reason with
 `CODEX_REVIEW_REASON="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["reason"])' "$CODEX_PROBE_JSON")"`
 for Phase 4 and the Phase-5 codex-review status line. The probe confirms only that the CLI exists
@@ -171,7 +174,9 @@ build/refresh call, not just `--version`): run
 `bash "$SD/scripts/codegraph-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"` and parse
 `{symbolGraphAvailable, symbolGraphBin, reason}` (`reason` ∈
 `ok`/`not-installed`/`disabled-by-config`/`index-failed`). Bind `SYMBOL_GRAPH_AVAILABLE` and
-`SYMBOL_GRAPH_BIN` (default `codegraph`) for Phase 3 and the Phase-5 symbol-graph status line. The
+`SYMBOL_GRAPH_BIN` (default `codegraph`) for the Phase-5 symbol-graph status line.
+`SYMBOL_GRAPH_BIN` affects only the Phase-0 probe; Phase 3's `workflow-template.js` invokes fixed
+`codegraph`, and Workflow receives only the availability boolean. The
 probe keeps the index fresh every run: `.codegraph/` absent → `codegraph init .` (first run,
 confirmed 96ms on this repo); `.codegraph/` present → `codegraph sync .` (confirmed idempotent,
 fast); it never touches `.gitignore` itself (codegraph self-generates `.codegraph/.gitignore`).
@@ -234,11 +239,11 @@ Evaluate `harness.state` together with `docAuditCommands` exactly once after the
 | `declined` | any | skip pre-flight (Phase 4 still uses `docAuditCommands`) |
 | any other case | absent | skip pre-flight |
 
-Bind `HARNESS_ACTIVE` from this table. For `installed`, first require all three generated files:
+For `installed`, first require all three generated files:
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`. If any is absent, derive `HARNESS_STATE=broken` for this run only (do not
 write it to config), bind `PREFLIGHT_STATE=broken`, make pre-flight not required, skip harness
-execution, run `generic-layers.py --layer all --format json` only as a non-evidence diagnostic,
+execution, run `generic-layers.py --layer all --format json --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"` only as a non-evidence diagnostic,
 and report `/docaudit:init --harness --refresh`. If all three exist, compare their template stamps
 with the installed plugin version; an older stamp remains runnable but adds a harness status WARN
 and the same `--refresh` guidance. Then run the target repository's copied
@@ -507,8 +512,9 @@ in the orchestrator. Apply the branch as:
 
    After `/security-review`, run the **codex review** (the fourth, adversarial review —
    the one seam among mdq/context-mode/ax/codex whose findings CAN affect the verdict;
-   see Guardrails). First bind `BASELINE_OK` to `true` only when
-   `git rev-parse --verify "$BASELINE_SHA^{commit}"` succeeds, otherwise `false`, then run the
+   see Guardrails). In incremental mode, bind `BASELINE_OK` to `true` only when
+   `git rev-parse --verify "$BASELINE_SHA^{commit}"` succeeds, otherwise `false`. In full mode,
+   do not run `rev-parse`; bind `BASELINE_OK=false`. Then run the
    deterministic table before constructing a prompt or invoking Codex:
    `CODEX_REVIEW_PLAN="$(python3 "$SD/scripts/codex-review-plan.py" --mode "$MODE" --config "$CFG" --available "$CODEX_REVIEW_AVAILABLE" --available-reason "$CODEX_REVIEW_REASON" --baseline-ok "$BASELINE_OK")"`
    Parse and bind its `action`, `state`, `promptVariant`, and `reason`. When `action=skip` or
@@ -604,7 +610,10 @@ After the helper succeeds, invoke the gate:
 The gate validates the sealed immutable evidence snapshot, updates persistent state when allowed,
 and publishes the report while holding the lock, then releases the lock. Parse stdout `verdict`
 (`CONSISTENT`, `NEEDS_FIX`, or `REFUSED`), `reason`, `counts`, `historyStatus`, `warnings`,
-`siblingScan` (always an object for CONSISTENT and NEEDS_FIX), `reportPath`, and `reportStatus`;
+`siblingScan` (always an object for CONSISTENT and NEEDS_FIX), `reportPath`, `reportStatus`, and
+`codexReview:{state,required,degraded}`. When Codex review is degraded, the gate renders
+`{{GATE_VERDICT}}` as `CONSISTENT (codex-review did not run: <state>)` while keeping stdout
+`verdict` equal to `CONSISTENT`;
 include `counts.verdictFlipsUnchangedContent` and
 `counts.verdictFlipsUnchangedContentSameChangeSet` in the existing report counts line;
 never replace any of them with an orchestrator judgment. Report stdout `reportPath`, `warnings`,
@@ -654,7 +663,7 @@ this suffix contract inside its lock-held report publication interval.
 
 **codex-review status line** — always include exactly one, immediately after the ax line; it is
 **4-way display** over the five internal states and, unlike the mdq/context-mode/ax
-lines, the findings it summarizes may already have contributed to the verdict via Phase 4 step 3e
+lines, the findings it summarizes may already have contributed to the verdict via Phase 4 step 3
 — word it so this isn't read as another purely-advisory line:
 - `CODEX_REVIEW_STATE=not-active` → `💡 codex-review: not active (<CODEX_REVIEW_REASON>)`
 - `CODEX_REVIEW_STATE=skipped-full-run` → `💡 codex-review: skipped (full run without codexReview.required)`
@@ -671,8 +680,9 @@ lines, the findings it summarizes may already have contributed to the verdict vi
 - `SYMBOL_GRAPH_AVAILABLE` true (`reason:ok`) → `✓ symbol-graph: active (codegraph impact/node corroboration available; read-only)`
 - `reason:index-failed` → `⚠ symbol-graph: installed but index build failed — not available this run. [non-blocking]`
 
-**doc-graph status line** — always include exactly one, immediately after the symbol-graph line; it is **non-blocking** (never changes the verdict), 3-state:
-- `DOC_GRAPH_AVAILABLE` false → `💡 doc-graph: not active — mapGapCandidates uses the token heuristic only; install: (see graphify install docs)`
+**doc-graph status line** — always include exactly one, immediately after the symbol-graph line; it is **non-blocking** (never changes the verdict), 4-state:
+- `DOC_GRAPH_AVAILABLE` false with `reason` ∈ `{not-installed, disabled-by-config}` → `💡 doc-graph: not active — mapGapCandidates uses the token heuristic only; install: (see graphify install docs)`
+- `reason:update-failed` → `⚠ doc-graph: installed but index update failed — not available this run. [non-blocking]`
 - `DOC_GRAPH_AVAILABLE` true and `DOC_GRAPH_GITIGNORE_OK` true → `✓ doc-graph: active (mapGapCandidates supplemented via graphify; graphify-out/ gitignored)`
 - `DOC_GRAPH_AVAILABLE` true and `DOC_GRAPH_GITIGNORE_OK` false → `⚠ doc-graph: active but graphify-out/ is NOT gitignored — add it to .gitignore. [non-blocking]`
 

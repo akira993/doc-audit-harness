@@ -222,3 +222,23 @@ Report the pre-flight decision and final findings, followed by the audit verdict
 
 Run /docaudit:audit
 ```
+
+---
+
+## 9. Import an existing audit-scope.json
+
+Use this when another audit tool has already produced an `audit-scope.json` and you want
+docaudit to generate the corresponding `impactMap`. The importer records provenance; do not
+hand-edit the generated `auditScope` metadata.
+
+```
+<task>
+Import this repository's existing audit-scope.json into docaudit's configuration.
+</task>
+<constraints>
+Show the proposed config changes and obtain approval before writing them. Do not hand-edit
+the generated auditScope metadata or generated impactMap entries.
+</constraints>
+
+Run /docaudit:init --import-audit-scope
+```

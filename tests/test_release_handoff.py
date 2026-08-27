@@ -1,4 +1,4 @@
-"""Branch, publication, and archive-boundary tests for the v0.13.0 handoff."""
+"""Branch, publication, and archive-boundary tests for the v0.13.1 handoff."""
 
 import io
 import json
@@ -15,34 +15,24 @@ HANDOFF = os.path.join(
     ROOT,
     "tasks",
     "route",
-    "2026-08-27-issues-39-44-v0.13.0",
+    "2026-08-27-issues-46-50-v0.13.1",
     "release-handoff.sh",
 )
 APPROVED = "a" * 40
 WRONG = "c" * 40
-TAG = "docaudit--v0.13.0"
-TITLE = (
-    "docaudit v0.13.0 — audit-scope import, regression recheck, "
-    "strict codex review"
-)
-ISSUES = {str(number) for number in range(39, 45)}
+TAG = "docaudit--v0.13.1"
+TITLE = "docaudit v0.13.1 — documentation consistency (#46–#50)"
+ISSUES = {str(number) for number in range(46, 51)}
+PRECLOSED = {"46", "47"}
 REQUIRED_BODY = (
     APPROVED,
-    "#39",
-    "#40",
-    "#41",
-    "#42",
-    "#43",
-    "#44",
-    "codexReview.required",
-    "baseline",
-    "--break-lock",
-    "provenance",
-    "auditScopeSha",
-    "impactSha",
-    "--evidence",
-    "four states",
-    "three corrections",
+    "#46",
+    "#47",
+    "#48",
+    "#49",
+    "#50",
+    "digestExclude",
+    "docs-only",
 )
 
 
@@ -421,7 +411,7 @@ class TestReleaseHandoff(unittest.TestCase):
         self.assertEqual(pushes, [[
             "push",
             "origin",
-            "refs/tags/docaudit--v0.13.0:refs/tags/docaudit--v0.13.0",
+            f"refs/tags/{TAG}:refs/tags/{TAG}",
         ]])
 
     def test_resume_from_existing_tag_creates_release_and_retests(self):
@@ -433,28 +423,30 @@ class TestReleaseHandoff(unittest.TestCase):
         self.assertEqual(state["suite_runs"], 1)
         self.assertEqual(self.calls("git", ["tag"]), [])
         self.assertEqual(len(self.calls("gh", ["release", "create"])), 1)
-        self.assertEqual(len(self.calls("gh", ["issue", "close"])), 6)
+        self.assertEqual(len(self.calls("gh", ["issue", "close"])), len(ISSUES))
         self.assertEqual(state["rsync_runs"], 1)
 
-    def test_resume_release_with_three_closed_closes_only_remaining_three(self):
+    def test_resume_release_with_preclosed_issues_closes_only_remaining(self):
+        self.assertTrue(PRECLOSED)
+        self.assertTrue(PRECLOSED < ISSUES)
         self.mark_tag_published()
         self.state["releases"][TAG] = self.valid_release()
-        for issue in ("39", "40", "41"):
+        for issue in PRECLOSED:
             self.state["issues"][issue] = "CLOSED"
         self.save_state()
         proc = self.run_handoff(APPROVED, "42")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self.calls("gh", ["release", "create"]), [])
         closed_calls = self.calls("gh", ["issue", "close"])
-        self.assertEqual({call["args"][2] for call in closed_calls}, {"42", "43", "44"})
-        self.assertEqual(len(closed_calls), 3)
+        self.assertEqual({call["args"][2] for call in closed_calls}, ISSUES - PRECLOSED)
+        self.assertEqual(len(closed_calls), len(ISSUES - PRECLOSED))
 
     def test_declined_sync_stops_after_publication_without_rsync(self):
         proc = self.run_handoff(APPROVED, "42", answer="n\n")
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual(len(self.calls("git", ["tag"])), 1)
         self.assertEqual(len(self.calls("gh", ["release", "create"])), 1)
-        self.assertEqual(len(self.calls("gh", ["issue", "close"])), 6)
+        self.assertEqual(len(self.calls("gh", ["issue", "close"])), len(ISSUES))
         self.assertEqual(self.calls("rsync"), [])
 
 

@@ -133,6 +133,9 @@ the mandatory `-s read-only` flag. The evidence state is `completed`, `execution
 `ref-invalid`, `skipped-full-run`, or `not-active`; Phase 5 presents four status classes because
 the middle two share a did-not-run warning. With the default `required:false`, non-completion is a
 warning. With `required:true`, missing or non-`completed` evidence makes the gate **REFUSED**.
+`required:true` together with `enabled:false` is REFUSED. A non-boolean `required` is REFUSED
+regardless of its value. If Phase-4 evidence has a non-object `codexReview`, a non-string `state`,
+or a state outside `CODEX_REVIEW_STATES`, the gate is REFUSED regardless of `required`.
 Enable strict mode after establishing the first baseline. A completed review's `critical`/`high`
 findings remain blocking; `medium`/`low` remain non-blocking.
 
@@ -218,7 +221,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.13.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.13.1  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -278,7 +281,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.1, 0.11.0, or 0.12.0 templates can be updated directly to 0.13.0 with
+Existing unmodified stamped 0.10.1, 0.11.0, 0.12.0, or 0.13.0 templates can be updated directly to 0.13.1 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
@@ -298,11 +301,13 @@ See §5 for the schema and §6 for the impact map.
 The per-project adapter. **All project-specific knowledge lives here; the plugin ships
 none.** (Canonical schema: `skills/audit/references/config-schema.md`.)
 
+This table is an excerpt of the main keys. See `skills/audit/references/config-schema.md` for the complete list.
+
 | key | type | required | meaning |
 |-----|------|----------|---------|
 | `anchorPath` | string | yes | repo-relative path to the anchor state file (convention: `.claude/state/last-doc-audit.json`) |
 | `diffGlobs` | string[] | yes | path globs that scope the change set. `**` matches across `/`; `*` does not. |
-| `docGlobs` | string[] | no | files treated as docs for the heuristic/generic scan (default `["docs/**/*.md","*.md"]`) |
+| `docGlobs` | string[] | no | files treated as docs for the heuristic/generic scan (default `["docs/**/*.md","*.md"]`); for pre-flight fix paths only, omission rejects every path (fail-closed). |
 | `impactMap` | object[] | yes | `{changed: path\|glob, impacts: [docPath,…], note?: string, source?: string}` — the heart (see §6). `source:"audit-scope"` is generated. May start empty `[]`. |
 | `auditScope` | object | no | `{path,sha256,importedAt,rules}` importer metadata; do not edit it by hand. |
 | `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: [path\|path:line,…]}` — cross-doc value consistency |
@@ -314,14 +319,17 @@ none.** (Canonical schema: `skills/audit/references/config-schema.md`.)
 | `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:[string,…], saturationWarnRatio:number=0.5, excludeDocPathTokens:bool=false}` — tune heuristic recall noise; `0` disables the saturation warning. |
 | `regressionRecheck` | object | no | `{enabled:bool=false}` — opt-in recheck of latest prior FAILs whose document content is unchanged. |
 | `frontMatterFields` | string[] | no | generic `format` layer requires these front-matter fields on every doc (WARN if missing); omit to skip |
+| `layerGlobs` | object | no | per-layer generic exclusions for `format`, `existence`, and `semantic`. |
+| `frontMatterOverrides` | object[] | no | ordered generic `format` field overrides selected by matching globs. |
 | `indexFiles` | string[] | no | generic `semantic` layer link-roots for orphan detection (default: any `README.md` in the doc tree) |
+| `auditReportsInCorpus` | boolean | no | only literal `true` keeps matching audit reports in corpus scans. |
 | `harness` | object | no | `{state,decidedAt,engineVersion}`; state is one of the five decisions above. Absence is the compatible `unset` state. |
 | `verdictCache` | object | no | `{enabled:true,minConsecutivePasses:2}`; allowed pass count is 2..10, otherwise cache is disabled with a WARN. |
 | `phase3Backend` | string | no | `"workflow"` (default) or `"codex"`; invalid values are rejected when the run is sealed. |
 | `phase3CodexTimeoutSeconds` | number | no | Codex per-document execution timeout; integer 60..3600, default 600, used only by the Codex Phase-3 backend. |
-| `models.light` | object | no | `{enabled,maxChanged,maxImpacted,maxDiffLines,maxDiffBytes,sensitiveTokens}` deterministic light-run limits. |
+| `models` | object | no | nested `{light:{enabled,maxChanged,maxImpacted,maxDiffLines,maxDiffBytes,sensitiveTokens}}` deterministic light-run limits. |
 | `codexReview` | object | no | `{enabled,required:bool=false,bin,model?,timeoutMs?}`; `required:true` REFUSES a non-completed review. Enable it after establishing a baseline. |
-| `digestExclude` | string[] | no | extra generated paths omitted from the seal; accepted only under `.claude/state/**` or known generated-data directories. |
+| `digestExclude` | string[] | no | Non-glob literal paths only — each accepted prefix itself or any path below it (a trailing `/` is normalized away). Values containing `*`, `?`, or `[` are rejected by `tree-digest.py`; `seal-run.py` fails (exit 2) and the run is not sealed. Accepted `digestExclude` prefixes: `.claude/state`, `.claude/worktrees`, `.mdq`, `.codegraph`, `graphify-out`, `.cocoindex_code`. |
 | `protectedGlobs` | string[] | no | extra paths denied to pre-flight fixes; built-in ADR/decisions/logs/`.claude` protection cannot be removed. |
 
 Rules: `impacts` entries are **doc paths only** — put commentary in `note`. `changed` is a
@@ -444,8 +452,7 @@ cross-cutting complementary layers. The Codex review prompt explicitly checks th
   light and Terra for standard, both at medium effort. Codex review uses the same defaults unless
   `codexReview.model` is set.
 - **Verdict:** `FAIL` ⇒ **NEEDS FIX** (anchor not updated). Only `WARN`/`PASS` ⇒ **CONSISTENT**
-  (anchor updated). Invalid or changed evidence/state ⇒ **REFUSED**. Severity mapping:
-  Phase-3 verdicts are used directly; for Phase-4 tools, high-severity → FAIL, medium → WARN.
+  (anchor updated). Invalid or changed evidence/state ⇒ **REFUSED**. Phase-3 verdicts are used directly.
   Both CONSISTENT and NEEDS FIX run the non-blocking, 30-second `sibling-scan.py`: it checks phrases
   from verifier findings, Phase-4 titles, and removed change-set lines, then reports one status line.
 - **Report:** when `reportPath` is configured, the orchestrator submits one complete placeholder
@@ -456,6 +463,20 @@ cross-cutting complementary layers. The Codex review prompt explicitly checks th
 - **Anchor:** written **only on CONSISTENT**, recording the current HEAD SHA. **Commit it**
   (convention: a `docs(audit): …` commit) so the baseline is shared and survives squash-merges.
   Existing anchors with only `sha` remain compatible; v0.10 adds run/digest metadata.
+
+Phase-4 severity mapping:
+
+| severity | gate effect |
+|---|---|
+| `PASS` | `non-blocking` accepted without blocking the verdict |
+| `WARN` | `non-blocking` accepted without blocking the verdict |
+| `MEDIUM` | `non-blocking` accepted without blocking the verdict |
+| `LOW` | `non-blocking` accepted without blocking the verdict |
+| `INFO` | `non-blocking` accepted without blocking the verdict |
+| `FAIL` | `blocking` contributes a blocking finding |
+| `HIGH` | `blocking` contributes a blocking finding |
+| `CRITICAL` | `blocking` contributes a blocking finding |
+| any other value | `REFUSED` with `unknown finding severity` |
 
 **Correct anchor ordering** (so the anchor records the *consistent* state):
 1. Fix findings and **commit** them.
@@ -607,7 +628,9 @@ doc-audit-harness/
 ├── skills/audit/scripts/classify-run.py
 ├── skills/audit/scripts/cocoindex-probe.sh
 ├── skills/audit/scripts/codegraph-probe.sh
+├── skills/audit/scripts/codex-dispatch.py
 ├── skills/audit/scripts/codex-probe.sh
+├── skills/audit/scripts/codex-review-plan.py
 ├── skills/audit/scripts/compute-baseline.sh
 ├── skills/audit/scripts/decide-verdict.py
 ├── skills/audit/scripts/docaudit_cache.py
@@ -617,11 +640,13 @@ doc-audit-harness/
 ├── skills/audit/scripts/graphify-probe.sh
 ├── skills/audit/scripts/harness-command-kind.py
 ├── skills/audit/scripts/impact-supplement.py
+├── skills/audit/scripts/import-audit-scope.py
 ├── skills/audit/scripts/inventory.py
 ├── skills/audit/scripts/mdq-health.py
 ├── skills/audit/scripts/mdq-index.sh
 ├── skills/audit/scripts/open-run.py
 ├── skills/audit/scripts/plan-dispatch.py
+├── skills/audit/scripts/read-manifest.py
 ├── skills/audit/scripts/resolve-impact.py
 ├── skills/audit/scripts/scaffold.py
 ├── skills/audit/scripts/seal-run.py
@@ -631,7 +656,9 @@ doc-audit-harness/
 ├── skills/audit/scripts/tree-digest.py
 ├── skills/audit/scripts/write-anchor.sh
 ├── skills/audit/scripts/write-evidence.py
+├── skills/audit/scripts/write-template.py
 ├── skills/audit/scripts/write-verdict.py
+├── skills/audit/references/codex-phase3-verdict.schema.json
 ├── skills/audit/references/codex-review-output.schema.json
 ├── skills/audit/references/config-schema.md
 ├── skills/audit/references/default-heuristics.md

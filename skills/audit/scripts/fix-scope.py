@@ -84,6 +84,7 @@ def main():
         raw = sys.stdin.read() if args.paths == "-" else open(args.paths, encoding="utf-8").read()
         allowed = []
         denied = []
+        # Intentionally fail closed: omitted docGlobs rejects every pre-flight fix path.
         doc_globs = config.get("docGlobs", [])
         protected = config.get("protectedGlobs", [])
         for original in [line.strip() for line in raw.splitlines() if line.strip()]:

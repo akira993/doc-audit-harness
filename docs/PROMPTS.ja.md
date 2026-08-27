@@ -222,3 +222,23 @@ pre-flight での選択と最終 findings、その後の監査 verdict を報告
 
 /docaudit:audit を実行してください
 ```
+
+---
+
+## 9. 既存の audit-scope.json を取り込む
+
+別の監査ツールが既に `audit-scope.json` を生成しており、対応する `impactMap` を docaudit に
+生成させる場合に使う。importer は由来情報を記録するため、生成された `auditScope` metadata は
+手編集しない。
+
+```
+<task>
+このリポジトリの既存 audit-scope.json を docaudit の設定へ取り込んでください。
+</task>
+<constraints>
+書き込む前に設定変更案を示して承認を得てください。生成された auditScope metadata と impactMap
+entry は手編集しないでください。
+</constraints>
+
+/docaudit:init --import-audit-scope を実行してください
+```

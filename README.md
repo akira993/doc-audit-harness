@@ -22,7 +22,7 @@ hard-won gotchas. Copy-paste config template: [docs/examples/doc-audit.example.j
 
 - **Required:** [Claude Code](https://code.claude.com/docs), a **git** repo ([git](https://git-scm.com/)), and [Python 3](https://www.python.org/) (standard library only — no `pip install`).
 - **Local harness (optional, prompted by `init`):** no extra dependency; docaudit can generate `/check-docs`, `doc-lint`, and `scripts/check-docs.py`, or integrate compatible commands already in the repository.
-- **Optional (all degrade gracefully):** [`/security-review`](https://code.claude.com/docs) (Claude Code built-in; `/code-review` is offered for the user to run because it is not model-invocable), [`mdq` (markdown-query)](https://github.com/dahatake/skills) (Phase 0 auto-index + token-optimized chunked doc reads — ~90%+ savings on large docs; the audit nudges you to install it when absent, else grep), [`context-mode`](https://github.com/mksglu/context-mode) (sandboxed processing of large machine output — the git diff and review results — so only distilled summaries enter context, complementary to mdq; auto-used when its `ctx_*` tools are present, non-blocking status line when absent), [`ax`](https://ax.yusuke.run/) (read-only, GET-only fetch of external upstream URLs so doc-impact-verifier can corroborate a doc's external-URL-dependent claims; static HTML only — no JS-rendered SPA support; degrades gracefully when absent), [`codex`](https://github.com/openai/codex) (`@openai/codex` CLI, no Claude Code plugin needed — a fourth, adversarial Phase-4 review whose `critical`/`high` findings CAN block the verdict when it completes; degrades gracefully to no-op when absent), [`codegraph`](https://github.com/colbymchenry/codegraph) (symbol graph — lets doc-impact-verifier corroborate a changed file's own-symbol claims via read-only `impact`/`node`; degrades gracefully when absent), [`graphify`](https://github.com/Graphify-Labs/graphify) (unified code+doc graph — a second, independent Phase-2 candidate source for `mapGapCandidates` alongside the token heuristic; degrades gracefully when absent), [CocoIndex](https://github.com/cocoindex-io/cocoindex-code) (`ccc`, local-embedding semantic search — a third, independent Phase-2 candidate source; note the two-step install-then-`ccc init` requirement and that docaudit itself never runs `ccc init`; degrades gracefully when absent or not yet initialized) / [Serena](https://github.com/oraios/serena) (richer `init` discovery).
+- **Optional:** [`/security-review`](https://code.claude.com/docs) (Claude Code built-in; `/code-review` is offered for the user to run because it is not model-invocable), [`mdq` (markdown-query)](https://github.com/dahatake/skills) (Phase 0 auto-index + token-optimized chunked doc reads — ~90%+ savings on large docs; the audit nudges you to install it when absent, else grep), [`context-mode`](https://github.com/mksglu/context-mode) (sandboxed processing of large machine output — the git diff and review results — so only distilled summaries enter context, complementary to mdq; auto-used when its `ctx_*` tools are present, non-blocking status line when absent), [`ax`](https://ax.yusuke.run/) (read-only, GET-only fetch of external upstream URLs so doc-impact-verifier can corroborate a doc's external-URL-dependent claims; static HTML only — no JS-rendered SPA support; degrades gracefully when absent), [`codex`](https://github.com/openai/codex) (`@openai/codex` CLI, no Claude Code plugin needed — an adversarial Phase-4 review whose `critical`/`high` findings can block completion, with non-completion REFUSED when `codexReview.required:true`; also an opt-in, fail-closed Phase-3 backend selected by `phase3Backend:"codex"`), [`codegraph`](https://github.com/colbymchenry/codegraph) (symbol graph — lets doc-impact-verifier corroborate a changed file's own-symbol claims via read-only `impact`/`node`; degrades gracefully when absent), [`graphify`](https://github.com/Graphify-Labs/graphify) (unified code+doc graph — a second, independent Phase-2 candidate source for `mapGapCandidates` alongside the token heuristic; degrades gracefully when absent), [CocoIndex](https://github.com/cocoindex-io/cocoindex-code) (`ccc`, local-embedding semantic search — a third, independent Phase-2 candidate source; note the two-step install-then-`ccc init` requirement and that docaudit itself never runs `ccc init`; degrades gracefully when absent or not yet initialized) / [Serena](https://github.com/oraios/serena) (richer `init` discovery).
 - **`--scaffold` only:** [`skill-creator`](https://github.com/anthropics/skills) (Anthropic) + [`superpowers:writing-skills`](https://github.com/obra/superpowers) to tailor the generated layer skills.
 
 Full table with fallbacks → [docs/ADOPTION.md §2](docs/ADOPTION.md).
@@ -35,6 +35,7 @@ Full table with fallbacks → [docs/ADOPTION.md §2](docs/ADOPTION.md).
 ## Install (global, skills-dir — alternative)
 
     cp -R doc-audit-harness ~/.claude/skills/docaudit    # skills-dir plugin; auto-loads next session as docaudit@skills-dir
+    rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests  # optional: drop development-only files from the copy
     # then in any repo: run /docaudit:init, or add .claude/doc-audit.json by hand
     #   (schema: skills/audit/references/config-schema.md)
     # NOTE: ~/.claude/skills/<name>/ (NOT ~/.claude/plugins/, which is marketplace-cache territory)
@@ -56,29 +57,22 @@ Day-to-day, after editing code / config / docs:
 
 docaudit is report-only unless you explicitly choose the pre-flight “fix and audit” path;
 that exception is mechanically limited to approved documentation paths. Example roll-up
-(illustrative):
+(major output lines only):
 
     Verdict: NEEDS FIX
     Change set:       3 files since anchor a1b2c3d
     Impacted docs:    docs/api.md  (FAIL — endpoint renamed; doc still says POST /v1/login)
                       README.md    (PASS)
     Delegated checks: existence ✔   semantic ✔   format ✔
-    Reviews:          /code-review ⚠ 1 medium    /security-review ✔
+    ✓ codex-review: completed (findings included in verdict when present)
+    ✓ run class: standard (verifier=Sonnet; codex=Terra)
+    Counts: {"impacted":2,"dispatch":2,"verdictFlipsUnchangedContent":0,"verdictFlipsUnchangedContentSameChangeSet":0}
     Report:           docs/logs/doc_audit_2026-06-06.md
 
 Fix the flagged docs, then re-run `/docaudit:audit` until it reports **CONSISTENT** —
 a clean verdict advances the anchor, so the next audit only looks at newer changes.
 
-## What's new in 0.10.0
-
-- Interactive `init` asks once and records a five-state harness decision: install, integrate, adjust, preserve, or decline.
-- Phase 0.5 runs cheap whole-tree checks before sealing and offers a tightly scoped, user-approved fix path.
-- Every audit owns `docaudit-run/<runid>/`; a no-TTL lock prevents concurrent runs.
-- The gate verifies sealed evidence, HEAD, the worktree digest, returns, and persistent-state integrity; failures become `REFUSED`.
-- Deterministic PASS history can skip Phase 3 after two qualifying runs; `--full` always bypasses the cache.
-- Deterministic light/standard classification selects Haiku/Sonnet verification and Luna/Terra Codex review defaults.
-- NEEDS FIX reports scan all `docGlobs` siblings for quoted phrases carried in verifier returns.
-- Full mode now impacts the complete documentation corpus, including on a clean tree.
+Release notes: see [GitHub Releases](https://github.com/akira993/doc-audit-harness/releases); version-specific compatibility impact is documented in [docs/ADOPTION.md §8](docs/ADOPTION.md).
 
 ## Dev / test
 
@@ -92,11 +86,12 @@ a clean verdict advances the anchor, so the next audit only looks at newer chang
         --break-lock    explicitly release a stale audit lock, then stop
         --accept-config acknowledge a config change refused by the previous run
 
-    /docaudit:init [--scaffold] [--harness] [--refresh] [--reask]
+    /docaudit:init [--scaffold] [--harness] [--refresh] [--reask] [--import-audit-scope]
         --scaffold      generate project-tailored layer skills
         --harness       install/integrate the local documentation harness
         --refresh       with --harness, refresh only unmodified stamped templates
         --reask         ask for the harness decision again
+        --import-audit-scope import an existing audit-scope.json into the generated impact map
 
 ## License
 

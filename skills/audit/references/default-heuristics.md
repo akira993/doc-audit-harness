@@ -12,8 +12,8 @@ a changed file's identifier. Tuning lives in `config.heuristics`:
   the report-excluded document corpus is heuristic-only; use it to promote missing map couplings.
 - `excludeDocPathTokens` (default **false**): when true, changed documentation paths do not create
   fallback identifier tokens.
-- `regressionRecheck.enabled` (default **false**): opt in to rechecking documents whose latest
-  recorded verdict was FAIL; these are not impactMap-gap candidates.
+- `regressionRecheck.enabled` (default **false**): opt in to rechecking only unchanged documents
+  whose content hash still matches the latest recorded FAIL; these are not impactMap-gap candidates.
 - Cap: `maxImpactedDocs` (default 200). Mapped docs are kept first; heuristic-only
   docs fill the remainder; overflow is dropped and reported (never silent).
 
