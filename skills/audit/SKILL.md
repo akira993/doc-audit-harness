@@ -143,13 +143,22 @@ and the audit continues unaffected — external-URL corroboration is a bonus, ne
 Then probe **codex** (the `codex` CLI, plain `codex exec` — no openai-codex plugin dependency),
 Phase 4's adversarial fourth review. Like ax, codex is a plain CLI binary with no runtime
 tool-availability signal, so this probe is **deterministic** (ax-pattern), not skill-level: run
-`bash "$SD/scripts/codex-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"` and parse
-`{codexReviewAvailable, codexReviewBin, codexReviewVersion, reason}` (`reason` ∈
-`ok`/`not-installed`/`disabled-by-config`). Bind `CODEX_REVIEW_AVAILABLE` (the
+`CODEX_PROBE_JSON="$(bash "$SD/scripts/codex-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR")"`
+and parse
+`{codexReviewAvailable, codexReviewBin, codexReviewVersion, probeCommands, reason}` (`reason` ∈
+`ok`/`not-installed`/`disabled-by-config`/`probe-exec-failed`). Bind
+`CODEX_REVIEW_AVAILABLE` (the
 `codexReviewAvailable` field) and `CODEX_REVIEW_BIN` (the `codexReviewBin` field, default `codex`)
-for Phase 4 and the Phase-5 codex-review status line. The script always exits 0 and never touches
-the network (`codex --version` reports the local binary's own version); any failure degrades to
-`CODEX_REVIEW_AVAILABLE=false` and the audit continues unaffected. **Unlike the mdq/context-mode/ax
+and bind the probe reason with
+`CODEX_REVIEW_REASON="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["reason"])' "$CODEX_PROBE_JSON")"`
+for Phase 4 and the Phase-5 codex-review status line. The probe confirms only that the CLI exists
+and that its `exec` subcommand is reachable; it does not validate the real Phase-4 invocation's
+sandbox, permissions, or wrapper arguments. Environments that need a wrapper must point
+`codexReview.bin` at an executable wrapper file. For fail-closed assurance, set
+`codexReview.required:true`; enabling it after the first baseline has been established is
+recommended. The script always exits 0 and never touches the network (`codex --version` and
+`codex exec --help` inspect the local binary only); any failure degrades to
+`CODEX_REVIEW_AVAILABLE=false`. **Unlike the mdq/context-mode/ax
 probes above, this one is not purely advisory** — when Phase 4 actually runs a codex review to
 completion, its `critical`/`high` findings DO fold into the verdict (§Phase 4 step 3, §Guardrails);
 the probe itself is still non-fatal, but downstream of it this seam behaves differently from the
@@ -498,39 +507,43 @@ in the orchestrator. Apply the branch as:
 
    After `/security-review`, run the **codex review** (the fourth, adversarial review —
    the one seam among mdq/context-mode/ax/codex whose findings CAN affect the verdict;
-   see Guardrails). `CODEX_REVIEW_AVAILABLE=false` → do nothing, no WARN (mirrors ax).
-   `CODEX_REVIEW_AVAILABLE=true` and `MODE=full` (no Phase-1 `baselineSha`) → skip the
-   review (an unbounded full-corpus review is impractical) and bind
-   `CODEX_REVIEW_STATE=skipped-full-run` — expected, non-error, no WARN.
-   `CODEX_REVIEW_AVAILABLE=true` and `MODE=incremental` with a `BASELINE_SHA`: bind
-   `CODEX_MODEL` on every invocation. If config has a non-empty `codexReview.model`, use it and
-   mark the choice explicit. Otherwise use `gpt-5.6-luna` for `SEALED_RUN_CLASS=light` and
-   `gpt-5.6-terra` for `SEALED_RUN_CLASS=standard`. Every invocation also uses
-   `-c model_reasoning_effort=medium`.
-   (a) **mandatory pre-flight**: run `git rev-parse --verify "$BASELINE_SHA^{commit}"`;
-   on non-zero exit, WARN, bind `CODEX_REVIEW_STATE=ref-invalid`, do NOT invoke
-   `codex exec` at all, fold no findings — codex itself exits 0 and silently
-   self-falls-back on a bad ref, so this check is the only thing that catches a
-   corrupted `baselineSha`;
-   (b) on success, write the review prompt with the Write tool, as its own step, to
-   `$RUN_DIR/codex-review-prompt.txt`: an explicit "review the diff between
-   `$BASELINE_SHA` and HEAD" instruction (the scope lives in the prompt text, never in
-   a `--base`/`--uncommitted` flag) + adversarial framing + the Phase-2 `changeSummary`
-   + `impacted` doc list + an explicit instruction to return ONLY JSON conforming to
-   `$SD/references/codex-review-output.schema.json`;
-   (c) in a **separate** Bash call (never the same call that wrote the prompt file —
+   see Guardrails). First bind `BASELINE_OK` to `true` only when
+   `git rev-parse --verify "$BASELINE_SHA^{commit}"` succeeds, otherwise `false`, then run the
+   deterministic table before constructing a prompt or invoking Codex:
+   `CODEX_REVIEW_PLAN="$(python3 "$SD/scripts/codex-review-plan.py" --mode "$MODE" --config "$CFG" --available "$CODEX_REVIEW_AVAILABLE" --available-reason "$CODEX_REVIEW_REASON" --baseline-ok "$BASELINE_OK")"`
+   Parse and bind its `action`, `state`, `promptVariant`, and `reason`. When `action=skip` or
+   `action=not-active`, bind the returned `state` to `CODEX_REVIEW_STATE`, fold no findings, and
+   do not invoke `codex exec`. Do not repeat full-mode or baseline validity decisions outside this
+   table.
+
+   Only when `action=run`, bind `CODEX_MODEL` on every invocation. If config has a non-empty
+   `codexReview.model`, use it and mark the choice explicit. Otherwise use `gpt-5.6-luna` for
+   `SEALED_RUN_CLASS=light` and `gpt-5.6-terra` for `SEALED_RUN_CLASS=standard`. Every invocation
+   also uses `-c model_reasoning_effort=medium`. Write the review prompt with the Write tool, as
+   its own step, to `$RUN_DIR/codex-review-prompt.txt`. For `promptVariant=diff`, use the current
+   explicit "review the diff between `$BASELINE_SHA` and HEAD" scope plus the Phase-2
+   `changeSummary` and `impacted` doc list. For `promptVariant=full`, review impacted documents in
+   full against code in the current worktree identified by `manifest.head` and sealed by
+   `worktreeDigest`, including uncommitted and untracked files. Both variants must use adversarial
+   framing and explicitly check: (1) contradictions with other documents, `.env*`, `.envrc`, and
+   source comments; (2) that every `X.md §N`-style reference and section exists; and (3) that each
+   procedure states and satisfies its prerequisites. In both variants, instruct Codex to return
+   ONLY JSON conforming to `$SD/references/codex-review-output.schema.json`.
+
+   In a **separate** Bash call (never the same call that wrote the prompt file —
    `codex exec -` reads stdin, and Claude Code's shell never closes stdin on its own,
    so combining the two hangs forever), run:
    `"$CODEX_REVIEW_BIN" exec -C "$CLAUDE_PROJECT_DIR" -s read-only -m "$CODEX_MODEL" -c model_reasoning_effort=medium --output-schema "$SD/references/codex-review-output.schema.json" -o "$RUN_DIR/codex-review-result.json" - < "$RUN_DIR/codex-review-prompt.txt"`
    (`-C` immediately after `exec`; never the `review` subcommand — it silently ignores
    `--output-schema`; never `--base` — it is mutually exclusive with a custom prompt),
    with a timeout of `codexReview.timeoutMs` (default 300000ms);
-   (d) non-zero exit, timeout, or a result file that fails to parse/match the schema → if the
+   A non-zero exit, timeout, or a result file that fails to parse/match the schema → if the
    model came from config, WARN and stop with no retry; if the default model was
-   `gpt-5.6-luna`, retry exactly once with `-m gpt-5.6-terra` and the same medium effort; a
+   `gpt-5.6-luna` for `SEALED_RUN_CLASS=light`, retry exactly once with
+   `-m gpt-5.6-terra` and the same medium effort; a
    standard default failure is not retried. If the final allowed attempt fails, bind
    `CODEX_REVIEW_STATE=execution-failed` and fold no findings — never a FAIL basis by itself;
-   (e) otherwise parse `findings[]` and map `critical`→`CRITICAL`, `high`→`HIGH`
+   Otherwise parse `findings[]` and map `critical`→`CRITICAL`, `high`→`HIGH`
    (blocking), `medium`→`MEDIUM`, `low`→`LOW` (non-blocking), each with
    `source:"codex-review"` and `title` formatted as `"<finding.title> (<finding.file>)"`;
    bind `CODEX_REVIEW_STATE=completed` and fold these into the Phase-4 findings collection
@@ -538,7 +551,8 @@ in the orchestrator. Apply the branch as:
 
 **Record Phase-4 evidence for the gate.** When `SEALED_PHASE4_REQUIRED` is true, collect every
 delegated-layer and review finding as
-`{"findings":[{"severity":"...","source":"...","title":"..."}]}`. Use each finding's own
+`{"findings":[{"severity":"...","source":"...","title":"..."}],"codexReview":{"state":"$CODEX_REVIEW_STATE"}}`.
+Do not include `required` in evidence; the gate reads it from the sealed config. Use each finding's own
 severity verbatim (`FAIL`/`HIGH`/`CRITICAL` = blocking; `WARN`/`MEDIUM`/`LOW`/`INFO` = non-blocking);
 map review high→`HIGH`, medium→`MEDIUM`. Send the object, even with zero findings, to
 `python3 "$SD/scripts/write-evidence.py" --run-dir "$RUN_DIR" --name phase4 --stdin --evidence "$EVIDENCE"`
@@ -639,12 +653,13 @@ this suffix contract inside its lock-held report publication interval.
 - `AX_AVAILABLE` true → `✓ ax: active (external-URL corroboration available; read-only, GET-only)`
 
 **codex-review status line** — always include exactly one, immediately after the ax line; it is
-**3-state** (ax's 2 states plus the `mode=full` skip state) and, unlike the mdq/context-mode/ax
+**4-way display** over the five internal states and, unlike the mdq/context-mode/ax
 lines, the findings it summarizes may already have contributed to the verdict via Phase 4 step 3e
 — word it so this isn't read as another purely-advisory line:
-- `CODEX_REVIEW_AVAILABLE` false → `💡 codex-review: not active — Codex's adversarial pass not included; install: npm install -g @openai/codex`
-- `CODEX_REVIEW_AVAILABLE` true and `CODEX_REVIEW_STATE=skipped-full-run` → `💡 codex-review: skipped (full run — no baseline SHA to scope the review against)`
-- `CODEX_REVIEW_AVAILABLE` true and `CODEX_REVIEW_STATE` ∈ `{completed, execution-failed, ref-invalid}` → `✓ codex-review: active (findings included in verdict when present)`
+- `CODEX_REVIEW_STATE=not-active` → `💡 codex-review: not active (<CODEX_REVIEW_REASON>)`
+- `CODEX_REVIEW_STATE=skipped-full-run` → `💡 codex-review: skipped (full run without codexReview.required)`
+- `CODEX_REVIEW_STATE=completed` → `✓ codex-review: completed (findings included in verdict when present)`
+- `CODEX_REVIEW_STATE` ∈ `{execution-failed, ref-invalid}` → `⚠ codex-review: did not run (<CODEX_REVIEW_STATE>) — findings not folded [non-blocking unless codexReview.required]`
 
 **code-review status line** — include exactly one immediately after the codex-review line:
 - `CODE_REVIEW_STATE=ran` → `✓ code-review: ran (findings folded into phase4)`

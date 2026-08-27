@@ -56,7 +56,34 @@ class TestV013Contracts(unittest.TestCase):
                             for line in lines))
 
     def test_e_codex_review_evidence_order(self):
-        self.skipTest("added in S2..S5")
+        with open(os.path.join(ROOT, "skills", "audit", "SKILL.md"), encoding="utf-8") as handle:
+            lines = handle.readlines()
+        phase0 = next(i for i, line in enumerate(lines) if line.startswith("## Phase 0"))
+        phase4 = next(i for i, line in enumerate(lines) if line.startswith("## Phase 4"))
+        phase5 = next(i for i, line in enumerate(lines) if line.startswith("## Phase 5"))
+
+        reason_line = next(lines[i] for i in range(phase0, phase4)
+                           if "CODEX_REVIEW_REASON=" in lines[i])
+        self.assertIn("CODEX_PROBE_JSON", reason_line)
+        self.assertIn('["reason"]', reason_line)
+
+        plan = next(i for i in range(phase4, phase5)
+                    if "codex-review-plan.py" in lines[i])
+        self.assertIn('--available "$CODEX_REVIEW_AVAILABLE" '
+                      '--available-reason "$CODEX_REVIEW_REASON"', lines[plan])
+        codex_exec = next(i for i in range(phase4, phase5)
+                          if '"$CODEX_REVIEW_BIN" exec ' in lines[i])
+        self.assertLess(plan, codex_exec)
+
+        evidence = "".join(lines[phase4:phase5])
+        self.assertIn('"codexReview":{"state":"$CODEX_REVIEW_STATE"}', evidence)
+        self.assertNotIn('"codexReview":{"required"', evidence)
+
+        statuses = "".join(lines[phase5:])
+        self.assertIn("CODEX_REVIEW_STATE=not-active", statuses)
+        self.assertIn("CODEX_REVIEW_STATE=skipped-full-run", statuses)
+        self.assertIn("CODEX_REVIEW_STATE=completed", statuses)
+        self.assertIn("{execution-failed, ref-invalid}", statuses)
 
     def test_f_sealed_manifest_rebinding(self):
         with open(os.path.join(ROOT, "skills", "audit", "SKILL.md"), encoding="utf-8") as handle:
@@ -146,6 +173,11 @@ class TestV013Contracts(unittest.TestCase):
             schema = handle.read()
         for key in ("saturationWarnRatio", "excludeDocPathTokens", "regressionRecheck", "auditScope", "source"):
             self.assertIn(key, schema)
+        codex_row = next(line for line in schema.splitlines()
+                         if line.startswith("| `codexReview` |"))
+        self.assertIn("required:bool=false", codex_row)
+        codex_section = schema.split("## Codex review (Phase 0/4)", 1)[1].split("\n## ", 1)[0]
+        self.assertIn("probeCommands", codex_section)
 
     def test_i_release_version_matches_all_five_surfaces(self):
         with open(PLUGIN, encoding="utf-8") as handle:
