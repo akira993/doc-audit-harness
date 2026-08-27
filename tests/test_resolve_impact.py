@@ -58,9 +58,10 @@ class TestResolveImpact(unittest.TestCase):
         cfg.update(over)
         return cfg
 
-    @staticmethod
-    def history_entry(path, verdict="FAIL", runid="r"):
-        return {"runid": runid, "path": path, "contentSha": "sha256:x",
+    def history_entry(self, path, verdict="FAIL", runid="r"):
+        with open(os.path.join(self.repo, path), "rb") as handle:
+            current_sha = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+        return {"runid": runid, "path": path, "contentSha": current_sha,
                 "changeSetSha": "sha256:y", "contractVersion": "1",
                 "verdict": verdict, "ts": "t"}
 
@@ -256,8 +257,7 @@ class TestResolveImpact(unittest.TestCase):
                 self.assertEqual(out["counts"]["candidatesBeforeCap"], 4)
 
     def test_regression_recheck_and_history_sha(self):
-        history = {"entries": [{"runid": "r", "path": "docs/other.md", "contentSha": "sha256:x",
-                    "changeSetSha": "sha256:y", "contractVersion": "1", "verdict": "FAIL", "ts": "t"}]}
+        history = {"entries": [self.history_entry("docs/other.md")]}
         out = run([], self.base_config(regressionRecheck={"enabled": True}), self.repo, history=history)
         self.assertIn({"path": "docs/other.md", "provenance": "regression"}, out["impacted"])
         self.assertRegex(out["historySha"], r"^sha256:[0-9a-f]{64}$")
@@ -377,6 +377,33 @@ class TestResolveImpact(unittest.TestCase):
         self.assertEqual([d["provenance"] for d in out["impacted"]], ["mapped", "mapped", "regression"])
         self.assertTrue(out["truncated"])
         self.assertTrue(any("dropped by maxImpactedDocs=3" in w for w in out["warnings"]))
+
+    def test_changed_document_is_not_regression(self):
+        history = {"entries": [self.history_entry("docs/other.md")]}
+        with open(os.path.join(self.repo, "docs/other.md"), "w", encoding="utf-8") as handle:
+            handle.write("fixed after prior FAIL\n")
+        out = run([], self.base_config(regressionRecheck={"enabled": True}), self.repo, history=history)
+        self.assertNotIn("docs/other.md", [d["path"] for d in out["impacted"]])
+        self.assertEqual(out["counts"]["regression"], 0)
+
+    def test_changed_failures_do_not_displace_heuristics_at_cap(self):
+        for name in ("failed1", "failed2", "heur1", "heur2"):
+            with open(os.path.join(self.repo, "docs", name + ".md"), "w", encoding="utf-8") as handle:
+                handle.write("before\n")
+        history = {"entries": [self.history_entry("docs/failed1.md"),
+                               self.history_entry("docs/failed2.md", runid="r2")]}
+        for name in ("failed1", "failed2"):
+            with open(os.path.join(self.repo, "docs", name + ".md"), "w", encoding="utf-8") as handle:
+                handle.write("fixed\n")
+        for name in ("heur1", "heur2"):
+            with open(os.path.join(self.repo, "docs", name + ".md"), "w", encoding="utf-8") as handle:
+                handle.write("heur_signal\n")
+        cfg = self.base_config(maxImpactedDocs=4, regressionRecheck={"enabled": True}, impactMap=[
+            {"changed": "src/change.py", "impacts": ["docs/wcag.md", "DESIGN.md"]}])
+        out = run(["src/change.py", "src/heur_signal.py"], cfg, self.repo, history=history)
+        self.assertEqual([d["provenance"] for d in out["impacted"]],
+                         ["mapped", "mapped", "heuristic", "heuristic"])
+        self.assertEqual(out["counts"]["regression"], 0)
 
     def test_impact_map_source_is_ignored(self):
         base = self.base_config()

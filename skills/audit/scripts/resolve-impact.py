@@ -29,7 +29,7 @@ Rules:
 """
 import argparse, hashlib, json, os, re, sys
 
-from docaudit_cache import parse_history
+from docaudit_cache import content_sha, parse_history
 from docaudit_paths import list_doc_files as safe_list_doc_files, matches_glob, validate_repo_path
 
 DEFAULT_MIN_IDENT = 5
@@ -252,7 +252,8 @@ def main():
                 for entry in entries:
                     last[entry["path"]] = entry
                 for path, entry in last.items():
-                    if entry["verdict"] == "FAIL" and path in doc_files and exists(path):
+                    if (entry["verdict"] == "FAIL" and path in doc_files and exists(path)
+                            and content_sha(repo, path) == entry["contentSha"]):
                         prov.setdefault(path, set()).add("regression")
             except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
                 warnings.append(f"regression recheck skipped: history unreadable ({exc})")

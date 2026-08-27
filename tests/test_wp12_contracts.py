@@ -1,4 +1,5 @@
 import json
+import hashlib
 import fcntl
 import os
 import stat
@@ -321,8 +322,10 @@ class TestImpactAndClassification(unittest.TestCase):
 
 class TestRegressionSealedChainIntegration(unittest.TestCase):
     @staticmethod
-    def history_entry(path, runid):
-        return {"runid": runid, "path": path, "contentSha": "sha256:old-content",
+    def history_entry(fx, path, runid):
+        with open(os.path.join(fx.repo, path), "rb") as handle:
+            content_sha = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+        return {"runid": runid, "path": path, "contentSha": content_sha,
                 "changeSetSha": "sha256:old-change", "contractVersion": "0.10.0",
                 "backend": "workflow", "verdict": "FAIL", "ts": "2026-08-17T00:00:00Z"}
 
@@ -391,7 +394,7 @@ class TestRegressionSealedChainIntegration(unittest.TestCase):
         fx = RunFixture(self, docs=("docs/regression.md",), config_extra={
             "regressionRecheck": {"enabled": True}})
         write(fx.history, json.dumps({"entries": [
-            self.history_entry("docs/regression.md", "old-run")]} ) + "\n")
+            self.history_entry(fx, "docs/regression.md", "old-run")]} ) + "\n")
         self.assertEqual(fx.open().returncode, 0)
 
         impact, dispatch, manifest, gate = self.run_chain(fx, ["src/unrelated.py"])
@@ -419,8 +422,8 @@ class TestRegressionSealedChainIntegration(unittest.TestCase):
         git(fx.repo, "commit", "-m", "prepare integration corpus")
         fx.head = git(fx.repo, "rev-parse", "HEAD").stdout.strip()
         write(fx.history, json.dumps({"entries": [
-            self.history_entry("docs/r1.md", "old-r1"),
-            self.history_entry("docs/r2.md", "old-r2"),
+            self.history_entry(fx, "docs/r1.md", "old-r1"),
+            self.history_entry(fx, "docs/r2.md", "old-r2"),
         ]}) + "\n")
         self.assertEqual(fx.open().returncode, 0)
 

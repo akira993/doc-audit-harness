@@ -170,7 +170,7 @@ mid-run, so an absent `.cocoindex_code/` is its own silent `not-initialized` deg
 from "not installed"; initialization only happens inside `/docaudit:init`, behind explicit user
 approval that discloses the `.gitignore` write.
 
-Impact provenance is `mapped` for `impactMap` only, `regression` for a recheck of a prior FAIL with unchanged content (not an impactMap-gap candidate), `heuristic` for heuristic only, `both` when
+Impact provenance is `mapped` for `impactMap` only, `regression` for a recheck of a prior FAIL only when its current content hash matches history (not an impactMap-gap candidate), `heuristic` for heuristic only, `both` when
 both reach the same document, `graphify` or `semantic` for their optional supplement, and `full`
 for every `docGlobs` document in a no-anchor or explicit `--full` run.
 
@@ -180,8 +180,8 @@ mainly by anchor age, not by `maxImpactedDocs`: measurements on this repository 
 documents (roughly 3.6M tokens) for an old anchor, versus a median of about 18 documents for a
 single-commit window.
 
-`regressionRecheck.enabled` is opt-in. It adds the latest prior FAIL with unchanged document
-content using provenance `regression`; it is not an `impactMap`-gap candidate. A single verifier
+`regressionRecheck.enabled` is opt-in. It adds the latest prior FAIL using provenance `regression`
+only when the document's current content hash matches history; it is not an `impactMap`-gap candidate. A single verifier
 run can vary, so fixing N reported findings and rerunning does not guarantee `CONSISTENT`. Gate
 counts `verdictFlipsUnchangedContent` when content, contract version, and backend match but the
 verdict changes. Code-side changes can legitimately cause that result even when document content

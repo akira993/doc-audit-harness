@@ -154,7 +154,7 @@ exit 0・limit 件を、目に見えて低いスコア帯で返す）。どち�
 扱う。初期化は `/docaudit:init` の中でのみ、`.gitignore` への書き込みを明示したユーザー承認を
 経て行われる。
 
-impact provenance は、`impactMap` のみなら `mapped`、前回 FAIL・内容不変の再検証なら `regression`（impactMap-gap 候補ではない）、heuristic のみなら `heuristic`、両方が同じ
+impact provenance は、`impactMap` のみなら `mapped`、現在の内容ハッシュが履歴と一致する前回 FAIL の再検証なら `regression`（impactMap-gap 候補ではない）、heuristic のみなら `heuristic`、両方が同じ
 文書へ到達した場合は `both`、任意の補完元なら `graphify` / `semantic`、anchor が無いか明示的な
 `--full` の全文書 run では各 `docGlobs` 文書が `full` になる。
 
@@ -163,7 +163,7 @@ impact provenance は、`impactMap` のみなら `mapped`、前回 FAIL・内容
 `maxImpactedDocs` ではなく anchor の古さである。このリポジトリの実測では、古い anchor
 で約 92 文書（約 3.6M tokens）、単一 commit 窓の中央値で約 18 文書だった。
 
-`regressionRecheck.enabled` は opt-in である。内容不変の前回 FAIL を provenance `regression` として
+`regressionRecheck.enabled` は opt-in である。現在の内容ハッシュが履歴と一致する前回 FAIL を provenance `regression` として
 追加するもので、`impactMap` の不足候補ではない。単発の検証結果にはブレがあるため、報告された指摘
 N 件を直して再実行すれば `CONSISTENT` になるとは保証されない。gate は文書内容・契約版・backend が
 同じで verdict が変わった件数を `verdictFlipsUnchangedContent` に出す。文書内容が不変でもコード側の
