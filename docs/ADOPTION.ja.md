@@ -203,7 +203,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.13.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.13.1  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -261,8 +261,8 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.1、0.11.0、または 0.12.0 テンプレートは、
-`/docaudit:init --harness --refresh` で 0.13.0 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.1、0.11.0、0.12.0、または 0.13.0 テンプレートは、
+`/docaudit:init --harness --refresh` で 0.13.1 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
