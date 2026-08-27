@@ -492,6 +492,82 @@ class TestIssue33Paths(unittest.TestCase):
             [("FAIL", "docs/a.md", 1), ("WARN", "docs/a.md", 2)])
 
 
+class TestIssue43IndentedBarePaths(unittest.TestCase):
+    def setUp(self):
+        self.mod = load_script_module()
+
+    def assertBareDetected(self, text, path):
+        self.assertIn(path, [token for token, _ in self.mod.extract_bare_paths(text)])
+
+    def assertBareMasked(self, text, path):
+        self.assertNotIn(path, [token for token, _ in self.mod.extract_bare_paths(text)])
+
+    def test_dash_list_continuation_is_detected(self):
+        self.assertBareDetected("- item\n    docs/dash-a.md\n", "docs/dash-a.md")
+
+    def test_dash_list_code_after_blank_is_masked(self):
+        self.assertBareMasked("- item\n\n      docs/dash-b.md\n", "docs/dash-b.md")
+
+    def test_dash_list_deep_continuation_without_blank_is_detected(self):
+        self.assertBareDetected("- item\n      docs/dash-c.md\n", "docs/dash-c.md")
+
+    def test_ordered_list_continuation_is_detected(self):
+        self.assertBareDetected("10. item\n    docs/order-a.md\n", "docs/order-a.md")
+
+    def test_ordered_list_code_after_blank_is_masked(self):
+        self.assertBareMasked("10. item\n\n        docs/order-b.md\n", "docs/order-b.md")
+
+    def test_ordered_list_deep_continuation_without_blank_is_detected(self):
+        self.assertBareDetected("10. item\n        docs/order-c.md\n", "docs/order-c.md")
+
+    def test_quoted_list_continuation_is_detected(self):
+        self.assertBareDetected("> - item\n>     docs/quote-a.md\n", "docs/quote-a.md")
+
+    def test_quoted_list_code_after_blank_is_masked(self):
+        self.assertBareMasked("> - item\n>\n>       docs/quote-b.md\n", "docs/quote-b.md")
+
+    def test_quoted_list_deep_continuation_without_blank_is_detected(self):
+        self.assertBareDetected("> - item\n>       docs/quote-c.md\n", "docs/quote-c.md")
+
+    def test_tab_from_nonzero_column_continuation_is_detected(self):
+        self.assertBareDetected(" - item\n   \tdocs/tab-a.md\n", "docs/tab-a.md")
+
+    def test_tab_from_nonzero_column_code_after_blank_is_masked(self):
+        self.assertBareMasked(" - item\n\n   \t   docs/tab-b.md\n", "docs/tab-b.md")
+
+    def test_tab_from_nonzero_column_deep_continuation_is_detected(self):
+        self.assertBareDetected(" - item\n   \t   docs/tab-c.md\n", "docs/tab-c.md")
+
+    def test_outside_list_code_after_blank_is_masked(self):
+        self.assertBareMasked("\n    docs/outside-code.md\n", "docs/outside-code.md")
+
+    def test_outside_list_indented_line_after_paragraph_is_detected(self):
+        self.assertBareDetected("paragraph\n    docs/outside-paragraph.md\n",
+                                "docs/outside-paragraph.md")
+
+
+class TestIssue43OtherEngineFixes(unittest.TestCase):
+    def test_multiline_link_mask_preserves_later_bare_path_line(self):
+        repo = tempfile.mkdtemp()
+        write(repo, "docs/from-inline.md", "exists\n")
+        write(repo, "docs/a.md",
+              "[text\nmore\ntext](docs/from-link.md)\n"
+              "`docs/from-inline.md`\n"
+              "https://example.com/docs/from-url.md\n"
+              "docs/after-link.md\n")
+        out = run(repo, "existence")
+        self.assertEqual(out["findings"], [{
+            "layer": "existence",
+            "severity": "WARN",
+            "path": "docs/a.md",
+            "line": 6,
+            "message": "bare path reference does not resolve: docs/after-link.md",
+        }])
+
+    def test_token_base_dead_code_is_absent(self):
+        self.assertFalse(hasattr(load_script_module(), "_token_base"))
+
+
 class TestIssue34LayerConfiguration(unittest.TestCase):
     def setUp(self):
         self.repo = tempfile.mkdtemp()
