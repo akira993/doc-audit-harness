@@ -59,7 +59,78 @@ class TestV013Contracts(unittest.TestCase):
         self.skipTest("added in S2..S5")
 
     def test_f_sealed_manifest_rebinding(self):
-        self.skipTest("added in S2..S5")
+        with open(os.path.join(ROOT, "skills", "audit", "SKILL.md"), encoding="utf-8") as handle:
+            lines = handle.readlines()
+
+        phase3 = next(i for i, line in enumerate(lines)
+                      if line.startswith("## Phase 3"))
+        phase4 = next(i for i, line in enumerate(lines)
+                      if line.startswith("## Phase 4"))
+        phase5 = next(i for i, line in enumerate(lines)
+                      if line.startswith("## Phase 5"))
+        seal = next(i for i in range(phase3, phase4)
+                    if lines[i].lstrip().startswith(
+                        '`python3 "$SD/scripts/seal-run.py"'))
+        read = next(i for i in range(phase3, phase4)
+                    if lines[i].lstrip().startswith("`SEALED_MANIFEST=")
+                    and "read-manifest.py" in lines[i])
+        self.assertLess(seal, read)
+        read_line = lines[read]
+        self.assertIn("SEALED_MANIFEST=", read_line)
+        self.assertIn('--evidence "$EVIDENCE"', read_line)
+
+        for variable in ("SEALED_PHASE3_BACKEND", "SEALED_PHASE3_CODEX_TIMEOUT_SECONDS",
+                         "SEALED_RUN_CLASS", "SEALED_PHASE4_REQUIRED", "SEALED_DIGEST_EXCLUDES",
+                         "SEALED_DISPATCH", "SEALED_CACHED", "SEALED_PROVENANCE"):
+            bind_line = next(lines[i] for i in range(read + 1, phase4)
+                             if lines[i].startswith(f"`{variable}="))
+            self.assertIn('"$SEALED_MANIFEST"', bind_line)
+
+        workflow_line = next(lines[i] for i in range(read + 1, phase4)
+                             if lines[i].lstrip().startswith("`Workflow(")
+                             and "workflow-template.js" in lines[i])
+        self.assertIn("SEALED_DISPATCH", workflow_line)
+        self.assertIn("SEALED_PROVENANCE", workflow_line)
+        self.assertIn("SEALED_RUN_CLASS", workflow_line)
+        self.assertNotRegex(workflow_line, r"(?<!SEALED_)DISPATCH entries")
+
+        phase3_model_lines = [lines[i] for i in range(read + 1, phase4)
+                              if "PHASE3_CODEX_MODEL=" in lines[i]]
+        self.assertEqual(len(phase3_model_lines), 2)
+        self.assertTrue(all("SEALED_RUN_CLASS" in line
+                            for line in phase3_model_lines))
+
+        codex_line = next(lines[i] for i in range(read + 1, phase4)
+                          if lines[i].lstrip().startswith('`python3 "$SD/scripts/codex-dispatch.py"')
+                          and "--timeout-seconds" in lines[i])
+        self.assertIn('--timeout-seconds "$SEALED_PHASE3_CODEX_TIMEOUT_SECONDS"', codex_line)
+        self.assertIn('--evidence "$EVIDENCE"', codex_line)
+        self.assertNotIn("<sealed manifest.phase3CodexTimeoutSeconds>", codex_line)
+
+        digest_line = next(lines[i] for i in range(read + 1, phase4)
+                           if lines[i].lstrip().startswith('`python3 "$SD/scripts/tree-digest.py"')
+                           and "--exclude" in lines[i])
+        self.assertIn('--exclude "$SEALED_DIGEST_EXCLUDE"', digest_line)
+
+        phase4_line = next(lines[i] for i in range(phase4, phase5)
+                           if lines[i].startswith('`if "$SEALED_PHASE4_REQUIRED"; then'))
+        self.assertNotIn("manifest.phase4Required", phase4_line)
+
+        phase4_model_lines = [lines[i] for i in range(phase4, phase5)
+                              if "gpt-5.6-" in lines[i]
+                              and "RUN_CLASS" in lines[i]]
+        self.assertEqual(len(phase4_model_lines), 2)
+        self.assertTrue(all("SEALED_RUN_CLASS" in line
+                            for line in phase4_model_lines))
+
+        run_class_status = next(lines[i] for i in range(phase5, len(lines))
+                                if lines[i].startswith("`✓ run class:"))
+        self.assertIn("<SEALED_RUN_CLASS>", run_class_status)
+
+        unsealed_run_class = [
+            (i + 1, line) for i, line in enumerate(lines[phase3:], start=phase3)
+            if re.search(r"(?<!SEALED_)RUN_CLASS\b", line)]
+        self.assertEqual(unsealed_run_class, [])
 
     def test_g_regression_provenance_consumers(self):
         paths = ["agents/doc-impact-verifier.md", "agents/doc-impact-verifier-light.md",

@@ -341,40 +341,56 @@ Again replace `EVIDENCE` with complete stdout. Parse `manifest.json` for `phase3
 codex-only `phase3CodexTimeoutSeconds`, `phase4Required`, `preflightRequired`, `digestExclude[]`,
 and the dispatch/cached partition, but do not hand-author
 the manifest or evidence. The manifest fixes the impacted set, HEAD, run class, cache partition,
-and Phase-4 requirement; the Phase-5 gate refuses any mismatch.
+and Phase-4 requirement; the Phase-5 gate refuses any mismatch. These are **unsealed values for
+Phase 2 only**; do not use any variable bound by this raw parse after Phase 2. In particular,
+`preflightRequired` belongs only to Phase 0.5 and has already been consumed before this raw parse;
+it is not rebound after sealing.
 
 ## Phase 3 — change-impact verification (sealed backend)
-Use only sealed `manifest.phase3Backend` to select the verifier path. When it is `workflow`,
-immediately before fan-out refresh mdq whenever `MDQ_AVAILABLE` is true: re-run the same
-two-part preflight as Phase 0 — first
-`bash "$SD/scripts/mdq-index.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`, re-parse
-its JSON, and re-bind `MDQ_AVAILABLE`/`MDQ_BIN`; then, if it is still available, run
-`(cd "$CLAUDE_PROJECT_DIR" && python3 "$SD/scripts/mdq-health.py" --bin "<MDQ_BIN>")` and
-re-bind `MDQ_HEALTHY`/`MDQ_CHUNKS`/`MDQ_STATUS`. If either refresh step fails, or the health
-probe is unhealthy, re-bind `MDQ_AVAILABLE=false` when indexing is unavailable and always bind
-`MDQ_HEALTHY=false`; use mdq in fan-out only when both values are true, otherwise use
-grep-degrade. Bind the refresh failure detail for the Phase-5 mdq status line. Phase 0
-establishes the initial index; this repeat is the freshness guarantee immediately before fan-out.
-When sealed `phase3Backend` is `codex`, skip this refresh: the dispatcher deliberately never uses
-mdq and supplies grep-degrade instructions to every Codex process.
-
-Seal the run immediately after the applicable mdq refresh (or immediately for `codex`) and before
-any verifier starts:
+Seal the run before selecting or starting either verifier backend:
 `python3 "$SD/scripts/seal-run.py" --run-dir "$RUN_DIR" --repo-root "$CLAUDE_PROJECT_DIR" --evidence "$EVIDENCE"`.
 On success replace `EVIDENCE` with its complete stdout; its `digest` and updated `manifest` are
 the trusted seal. Exit 5 means the HEAD or complete change set drifted after Phase 1: release the
 run, stop, and say “Phase 1 以降にソースが変わりました。監査を再実行してください。” Do
 not launch either verifier backend and do not calculate a replacement digest by hand.
 
-If `DISPATCH[]` is empty, do not launch either backend. Send the literal empty array `[]` to
+Immediately verify and read that exact sealed manifest once:
+`SEALED_MANIFEST="$(python3 "$SD/scripts/read-manifest.py" --run-dir "$RUN_DIR" --evidence "$EVIDENCE")"`.
+If this command fails, stop without launching a verifier. Parse only `SEALED_MANIFEST` and bind:
+`SEALED_PHASE3_BACKEND="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["phase3Backend"])' "$SEALED_MANIFEST")"`,
+`SEALED_PHASE3_CODEX_TIMEOUT_SECONDS="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("phase3CodexTimeoutSeconds", ""))' "$SEALED_MANIFEST")"`,
+`SEALED_RUN_CLASS="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["runClass"])' "$SEALED_MANIFEST")"`,
+`SEALED_PHASE4_REQUIRED="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["phase4Required"]).lower())' "$SEALED_MANIFEST")"`,
+`SEALED_DIGEST_EXCLUDES="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["digestExclude"], separators=(",", ":")))' "$SEALED_MANIFEST")"`,
+`SEALED_DISPATCH="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["dispatch"], separators=(",", ":")))' "$SEALED_MANIFEST")"`,
+`SEALED_CACHED="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["cached"], separators=(",", ":")))' "$SEALED_MANIFEST")"`, and
+`SEALED_PROVENANCE="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["provenance"], separators=(",", ":"), sort_keys=True))' "$SEALED_MANIFEST")"`.
+Every manifest-derived value used from this point onward must come from `SEALED_MANIFEST`; never
+reuse a Phase-2 manifest variable.
+
+Use only sealed `manifest.phase3Backend`, rebound as `SEALED_PHASE3_BACKEND`, to select the
+verifier path. When it is `workflow`, immediately
+before fan-out refresh mdq whenever `MDQ_AVAILABLE` is true: re-run the same two-part preflight as
+Phase 0 — first `bash "$SD/scripts/mdq-index.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`,
+re-parse its JSON, and re-bind `MDQ_AVAILABLE`/`MDQ_BIN`; then, if it is still available, run
+`(cd "$CLAUDE_PROJECT_DIR" && python3 "$SD/scripts/mdq-health.py" --bin "<MDQ_BIN>")` and re-bind
+`MDQ_HEALTHY`/`MDQ_CHUNKS`/`MDQ_STATUS`. If either refresh step fails, or the health probe is
+unhealthy, re-bind `MDQ_AVAILABLE=false` when indexing is unavailable and always bind
+`MDQ_HEALTHY=false`; use mdq in fan-out only when both values are true, otherwise use grep-degrade.
+Bind the refresh failure detail for the Phase-5 mdq status line. Phase 0 establishes the initial
+index; this repeat is the freshness guarantee immediately before fan-out. When
+`SEALED_PHASE3_BACKEND` is `codex`, skip this refresh: the dispatcher deliberately never uses mdq
+and supplies grep-degrade instructions to every Codex process.
+
+If `SEALED_DISPATCH[]` is empty, do not launch either backend. Send the literal empty array `[]` to
 `python3 "$SD/scripts/write-evidence.py" --run-dir "$RUN_DIR" --name returns --stdin --evidence "$EVIDENCE"`
 and replace `EVIDENCE` with stdout; `returns` must always be a real evidence file and can never use
 the `none` sentinel.
 
-If `DISPATCH[]` is non-empty and sealed `phase3Backend` is `codex`, select
-`PHASE3_CODEX_MODEL=gpt-5.6-luna` for `RUN_CLASS=light` or
-`PHASE3_CODEX_MODEL=gpt-5.6-terra` for `RUN_CLASS=standard`, then run:
-`python3 "$SD/scripts/codex-dispatch.py" --run-dir "$RUN_DIR" --repo-root "$CLAUDE_PROJECT_DIR" --model "$PHASE3_CODEX_MODEL" --effort medium --timeout-seconds <sealed manifest.phase3CodexTimeoutSeconds> --concurrency 4`.
+If `SEALED_DISPATCH[]` is non-empty and `SEALED_PHASE3_BACKEND` is `codex`, select
+`PHASE3_CODEX_MODEL=gpt-5.6-luna` for `SEALED_RUN_CLASS=light` or
+`PHASE3_CODEX_MODEL=gpt-5.6-terra` for `SEALED_RUN_CLASS=standard`, then run:
+`python3 "$SD/scripts/codex-dispatch.py" --run-dir "$RUN_DIR" --repo-root "$CLAUDE_PROJECT_DIR" --model "$PHASE3_CODEX_MODEL" --effort medium --timeout-seconds "$SEALED_PHASE3_CODEX_TIMEOUT_SECONDS" --concurrency 4 --evidence "$EVIDENCE"`.
 Parse and report its stdout summary `returnsPath`/`attempts`/`ok`/`failed`. The dispatcher performs
 up to three cumulative attempts, preserves every failed assignment as a null return row, and
 publishes only validated verdicts. Send its complete `$RUN_DIR/returns.json` through
@@ -390,8 +406,8 @@ fail-closed. Never silently fall back to Workflow: the dispatcher retains null r
 limit, and the gate then REFUSES incomplete evidence. Tell the user to repair/install/authenticate
 Codex, or set `phase3Backend` back to `workflow` and rerun the audit.
 
-If `DISPATCH[]` is non-empty and sealed `phase3Backend` is `workflow`, launch
-`Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted: DISPATCH entries with provenance, verifierModel: RUN_CLASS == "light" ? "haiku" : "sonnet", mdqAvailable: MDQ_AVAILABLE, mdqHealthy: MDQ_HEALTHY, cmAvailable: CM_AVAILABLE, axAvailable: AX_AVAILABLE, symbolGraphAvailable: SYMBOL_GRAPH_AVAILABLE, runId: RUNID, runDir: RUN_DIR, scriptsDir: "$SD/scripts"}})`.
+If `SEALED_DISPATCH[]` is non-empty and `SEALED_PHASE3_BACKEND` is `workflow`, launch
+`Workflow({scriptPath: "$SD/references/workflow-template.js", args: {repoRoot: CLAUDE_PROJECT_DIR, changeSummary, impacted: SEALED_DISPATCH entries with provenance from SEALED_PROVENANCE, verifierModel: SEALED_RUN_CLASS == "light" ? "haiku" : "sonnet", mdqAvailable: MDQ_AVAILABLE, mdqHealthy: MDQ_HEALTHY, cmAvailable: CM_AVAILABLE, axAvailable: AX_AVAILABLE, symbolGraphAvailable: SYMBOL_GRAPH_AVAILABLE, runId: RUNID, runDir: RUN_DIR, scriptsDir: "$SD/scripts"}})`.
 Pass dispatch entries only — never cached paths. The template preserves two runtime-dependent
 facts: Workflow `args` may arrive as a JSON string, and `agentType` is always plugin-namespaced
 (`docaudit:doc-impact-verifier-light` for Haiku or `docaudit:doc-impact-verifier` for Sonnet),
@@ -422,7 +438,10 @@ complete cumulative returns array through `write-evidence.py`, replace `EVIDENCE
 `check-verdicts.py --returns`. The sealed digest is assumed unchanged and will be rechecked by the
 gate; do not use the retired ad-hoc tree-digest calculation. If an exceptional retry decision
 needs an early confirmation, call `tree-digest.py --repo-root "$CLAUDE_PROJECT_DIR"
---include-head` with one `--exclude` for every exact `manifest.digestExclude[]` entry and require
+--include-head` with exactly this command shape, repeating the sealed exclude argument once per
+entry:
+`python3 "$SD/scripts/tree-digest.py" --repo-root "$CLAUDE_PROJECT_DIR" --include-head --exclude "$SEALED_DIGEST_EXCLUDE"`.
+Each `SEALED_DIGEST_EXCLUDE` must be an entry read from `SEALED_DIGEST_EXCLUDES[]`; require
 the result to equal `EVIDENCE.digest`. Never broaden those excludes. After three total attempts,
 continue to Phase 4 with incomplete evidence so the deterministic gate can REFUSE it. The Codex
 path likewise continues after its final checker result. Record the final checker arrays for the
@@ -430,8 +449,10 @@ report. (Built-in `/code-review` and `/security-review` cannot run
 inside Workflow; they remain in Phase 4.)
 
 ## Phase 4 — existing layers + reviews (main loop, sequential)
-Global gate: run this phase's delegated checks **iff** sealed `manifest.json` has
-`phase4Required:true`. Do not re-derive this decision from impacted/SSOT/mode in the orchestrator.
+Global gate: run this phase's delegated checks **iff** `SEALED_PHASE4_REQUIRED` (parsed from
+`SEALED_MANIFEST.phase4Required`) is true. Do not re-derive this decision from impacted/SSOT/mode
+in the orchestrator. Apply the branch as:
+`if "$SEALED_PHASE4_REQUIRED"; then <run Phase 4>; fi`.
 1. From config `docAuditCommands`, run `existence` then `semantic` then `format`
    (e.g. `/check-docs`, `doc-lint`, `/review-docs`) — whole-tree (no per-file arg).
    Invoke each exactly as the config value names it (a skill like `doc-lint` is
@@ -483,8 +504,8 @@ Global gate: run this phase's delegated checks **iff** sealed `manifest.json` ha
    `CODEX_REVIEW_STATE=skipped-full-run` — expected, non-error, no WARN.
    `CODEX_REVIEW_AVAILABLE=true` and `MODE=incremental` with a `BASELINE_SHA`: bind
    `CODEX_MODEL` on every invocation. If config has a non-empty `codexReview.model`, use it and
-   mark the choice explicit. Otherwise use `gpt-5.6-luna` for `RUN_CLASS=light` and
-   `gpt-5.6-terra` for `RUN_CLASS=standard`. Every invocation also uses
+   mark the choice explicit. Otherwise use `gpt-5.6-luna` for `SEALED_RUN_CLASS=light` and
+   `gpt-5.6-terra` for `SEALED_RUN_CLASS=standard`. Every invocation also uses
    `-c model_reasoning_effort=medium`.
    (a) **mandatory pre-flight**: run `git rev-parse --verify "$BASELINE_SHA^{commit}"`;
    on non-zero exit, WARN, bind `CODEX_REVIEW_STATE=ref-invalid`, do NOT invoke
@@ -515,14 +536,14 @@ Global gate: run this phase's delegated checks **iff** sealed `manifest.json` ha
    bind `CODEX_REVIEW_STATE=completed` and fold these into the Phase-4 findings collection
    exactly like `/code-review`/`/security-review` findings.
 
-**Record Phase-4 evidence for the gate.** When `manifest.phase4Required` is true, collect every
+**Record Phase-4 evidence for the gate.** When `SEALED_PHASE4_REQUIRED` is true, collect every
 delegated-layer and review finding as
 `{"findings":[{"severity":"...","source":"...","title":"..."}]}`. Use each finding's own
 severity verbatim (`FAIL`/`HIGH`/`CRITICAL` = blocking; `WARN`/`MEDIUM`/`LOW`/`INFO` = non-blocking);
 map review high→`HIGH`, medium→`MEDIUM`. Send the object, even with zero findings, to
 `python3 "$SD/scripts/write-evidence.py" --run-dir "$RUN_DIR" --name phase4 --stdin --evidence "$EVIDENCE"`
 and replace `EVIDENCE` with stdout. The gate REFUSES if required evidence is absent. When
-`phase4Required` is false, do not write the file and retain the lifecycle's `phase4:"none"`
+`SEALED_PHASE4_REQUIRED` is false, do not write the file and retain the lifecycle's `phase4:"none"`
 sentinel unchanged. Never add that sentinel by hand and never declare a verdict; the gate derives
 it from Phase-4 evidence plus Phase-3 verdicts.
 
@@ -536,8 +557,9 @@ When `reportPath` is configured, generate the complete human report body **befor
 gate**, with the change set, impacted docs and per-doc verdicts, delegated-check results, review
 summaries, `mapGapCandidates`, the Phase-3 attempt count and final
 `missing`/`returnMissing`/`mismatch`/`invalid`/`warnings`, and all required status lines below.
-Include exactly one literal `Phase-3 backend: <manifest.phase3Backend>` line using the sealed
-`workflow` or `codex` value; this is concrete report text, not a `{{GATE_*}}` placeholder.
+Include exactly one literal `Phase-3 backend: <manifest.phase3Backend>` line, filling the
+placeholder from `SEALED_PHASE3_BACKEND` with the sealed `workflow` or `codex` value; this is
+concrete report text, not a `{{GATE_*}}` placeholder.
 Use the following single placeholder contract for every possible verdict; do not predict the
 verdict or create separate success and REFUSED templates:
 
@@ -569,6 +591,8 @@ The gate validates the sealed immutable evidence snapshot, updates persistent st
 and publishes the report while holding the lock, then releases the lock. Parse stdout `verdict`
 (`CONSISTENT`, `NEEDS_FIX`, or `REFUSED`), `reason`, `counts`, `historyStatus`, `warnings`,
 `siblingScan` (always an object for CONSISTENT and NEEDS_FIX), `reportPath`, and `reportStatus`;
+include `counts.verdictFlipsUnchangedContent` and
+`counts.verdictFlipsUnchangedContentSameChangeSet` in the existing report counts line;
 never replace any of them with an orchestrator judgment. Report stdout `reportPath`, `warnings`,
 and `reportStatus` to the user. `reportPath` exists only after successful publication, and
 `reportStatus` is omitted when a pre-lock or non-owned REFUSED path wrote no `last_run` state.
@@ -654,7 +678,7 @@ with `⚠` for `failed`, `non-interactive`, or `broken`. The gate, not this glyp
 recorded FAIL findings block.
 
 **run-class status line** — always include exactly one immediately after pre-flight:
-`✓ run class: <RUN_CLASS> (verifier=<actual model(s) used|not-dispatched>; codex=<actual model(s) used|not-run>)`.
+`✓ run class: <SEALED_RUN_CLASS> (verifier=<actual model(s) used|not-dispatched>; codex=<actual model(s) used|not-run>)`.
 List both Haiku and Sonnet if a light run was re-dispatched, and both Luna and Terra when the
 permitted Codex light fallback ran; report a configured model exactly as configured.
 
