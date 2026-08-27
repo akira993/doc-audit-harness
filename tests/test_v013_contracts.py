@@ -15,7 +15,8 @@ SCAFFOLD = os.path.join(ROOT, "skills", "audit", "scripts", "scaffold.py")
 
 class TestV013Contracts(unittest.TestCase):
     def test_a_init_argument_hint(self):
-        self.skipTest("added in S2..S5")
+        with open(os.path.join(ROOT, "skills", "init", "SKILL.md"), encoding="utf-8") as handle:
+            self.assertIn("--import-audit-scope", handle.readline() + handle.readline() + handle.readline() + handle.readline())
 
     def test_b_audit_history_argument(self):
         skill = os.path.join(ROOT, "skills", "audit", "SKILL.md")
@@ -26,10 +27,33 @@ class TestV013Contracts(unittest.TestCase):
                             for line in commands))
 
     def test_c_audit_scope_check_order(self):
-        self.skipTest("added in S2..S5")
+        with open(os.path.join(ROOT, "skills", "audit", "SKILL.md"), encoding="utf-8") as handle:
+            lines = handle.readlines()
+        check = next(i for i, line in enumerate(lines) if "import-audit-scope.py" in line and "--check" in line)
+        breaking = next(i for i, line in enumerate(lines) if "--break-lock" in line and "run only" in line)
+        opener = next(i for i, line in enumerate(lines) if "open-run.py" in line and "[--accept-config]" in line)
+        self.assertLess(breaking, check); self.assertLess(check, opener)
+        self.assertIn('--scope "$AUDIT_SCOPE_PATH"', lines[check])
+        self.assertTrue(any("auditScope" in line and "AUDIT_SCOPE_PATH" in line for line in lines))
+        self.assertTrue(any("diff.missing" in line and "/docaudit:init --import-audit-scope" in line for line in lines))
+        self.assertTrue(any("not-imported" in line and "continue" in line for line in lines))
 
     def test_d_audit_scope_write_contract(self):
-        self.skipTest("added in S2..S5")
+        with open(os.path.join(ROOT, "skills", "init", "SKILL.md"), encoding="utf-8") as handle:
+            lines = handle.readlines()
+        write_lines = [line for line in lines
+                       if "import-audit-scope.py" in line and "--write" in line]
+        self.assertTrue(any(
+            '--expect-config-sha "$CONFIG_SHA" --expect-scope-sha "$SCOPE_SHA"' in line
+            for line in write_lines))
+        self.assertTrue(any(
+            '--base-config - --expect-base-config-sha "$DRAFT_SHA"' in line
+            and '--expect-scope-sha "$SCOPE_SHA"' in line
+            for line in write_lines))
+        self.assertTrue(any("CONFIG_SHA=" in line and "configSha" in line for line in lines))
+        self.assertTrue(any("SCOPE_SHA=" in line and "scopeSha" in line for line in lines))
+        self.assertTrue(any("DRAFT_SHA=" in line and "DRAFT_CONFIG_PATH" in line
+                            for line in lines))
 
     def test_e_codex_review_evidence_order(self):
         self.skipTest("added in S2..S5")
@@ -49,7 +73,7 @@ class TestV013Contracts(unittest.TestCase):
     def test_h_config_schema_keys(self):
         with open(os.path.join(ROOT, "skills", "audit", "references", "config-schema.md"), encoding="utf-8") as handle:
             schema = handle.read()
-        for key in ("saturationWarnRatio", "excludeDocPathTokens", "regressionRecheck"):
+        for key in ("saturationWarnRatio", "excludeDocPathTokens", "regressionRecheck", "auditScope", "source"):
             self.assertIn(key, schema)
 
     def test_i_release_version_matches_all_five_surfaces(self):

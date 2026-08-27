@@ -328,6 +328,10 @@ A minimal viable config is just `anchorPath` + `diffGlobs` + `impactMap` (the la
 
 ## 6. Building a good `impactMap` (the heart)
 
+### When `audit-scope.json` exists
+
+`audit-scope.json` is the source of truth; `impactMap` entries marked `source:"audit-scope"` are generated output. Phase 0 stops on drift. Restore it with `/docaudit:init --import-audit-scope`. Importing between runs does not need `--accept-config`; exit 6 applies only when an active run refuses a config change. An active run lock rejects imports. `{"impact":"none"}` suppresses generated mapping, but the heuristic can still select that document.
+
 The impact map is what makes the audit *change-driven*. Each entry says **"when this
 source path changes, re-check these docs."**
 

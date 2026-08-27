@@ -1,7 +1,7 @@
 ---
 name: init
 description: Bootstrap docaudit for a repo, or add and refresh its optional local documentation harness. Use when the user asks to set up docaudit, initialize the doc-audit harness, or run docaudit on a repo that lacks /check-docs / /review-docs / doc-lint. Inventories the repo, proposes a doc-audit.json config for approval, writes it, and points to the first audit. Generative and additive by default; existing-tool adjustment requires a separate approved diff.
-argument-hint: "[--scaffold] [--harness] [--refresh] [--reask]"
+argument-hint: "[--scaffold] [--harness] [--refresh] [--reask] [--import-audit-scope]"
 ---
 
 # docaudit:init — bootstrap a repo's doc-audit adapter
@@ -13,13 +13,16 @@ before writing. `SD="${CLAUDE_SKILL_DIR%/init}/audit"` (the audit skill dir hold
 the shared scripts).
 
 If `.claude/doc-audit.json` already exists, normally stop and tell the user (offer
-`/docaudit:audit` instead) — do not overwrite it. **Exception:** with `--harness`, continue through
-Step 1 and change only `harness` and, when required, `docAuditCommands`; preserve every other
-config key. `--refresh` is valid only with `--harness` and is delegated to
+`/docaudit:audit` instead) — do not overwrite it. **Exceptions:** with `--harness`, continue through
+Step 1 and change only `harness` and, when required, `docAuditCommands`; with
+`--import-audit-scope`, follow only the import flow below. Preserve every other config key.
+`--refresh` is valid only with `--harness` and is delegated to
 `scaffold.py --harness --refresh`. `--reask` forces the harness choice even when `harness` is
 already configured. Without `--reask`, never ask again for an existing `harness` key. If its
 state is `installed`, `--harness` may create missing generated files; for any other configured
 state, explain the state and require `--reask` before changing the decision.
+
+With `--import-audit-scope`, an existing config is permitted. Bind `AUDIT_SCOPE_PATH` from config `auditScope.path`, defaulting to `.claude/audit-scope.json`, then run `AUDIT_SCOPE_CHECK="$(python3 "$SD/scripts/import-audit-scope.py" --repo-root "$CLAUDE_PROJECT_DIR" --config "$CFG" --scope "$AUDIT_SCOPE_PATH" --check --json)"`. Show `diff.missing`, `diff.extra`, `translated`, `skippedNoImpact`, `configSha`, and `scopeSha`, then ask with AskUserQuestion. Only after approval bind `CONFIG_SHA="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["configSha"])' "$AUDIT_SCOPE_CHECK")"` and `SCOPE_SHA="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["scopeSha"])' "$AUDIT_SCOPE_CHECK")"`, then run `python3 "$SD/scripts/import-audit-scope.py" --repo-root "$CLAUDE_PROJECT_DIR" --config "$CFG" --scope "$AUDIT_SCOPE_PATH" --write --expect-config-sha "$CONFIG_SHA" --expect-scope-sha "$SCOPE_SHA"`. Do not write without approval.
 
 ## Step 1 — inventory (deterministic)
 Run: `python3 "$SD/scripts/inventory.py" --repo-root "$CLAUDE_PROJECT_DIR"`.
@@ -166,7 +169,7 @@ Build a `doc-audit.json` draft from the inventory:
   `adjusted`; when Step 1.5 selected `installed`, use `scaffold.py --harness`'s return value.
   For `declined` or `existing-untouched`, preserve an existing value but do not invent a new one;
   otherwise **omit the key** so the audit falls back to the built-in generic layers (Plan 2).
-- `impactMap`: propose a STARTER array from `mentions` (for each code dir/key file with
+- `impactMap`: when `audit-scope.json` exists, first run `import-audit-scope.py --check --json --doc-glob <each draft docGlobs value>` and use its `translated` output as the STARTER; this takes priority over `mentions`. Otherwise propose a STARTER array from `mentions` (for each code dir/key file with
   mentions, `{changed: "<dir>/**" or "<file>", impacts: [the mentioned docs], note: "auto: from inventory mentions"}`).
   Tell the user this is a heuristic starter to PRUNE/EDIT; the engine's heuristic +
   `mapGapCandidates` will refine it over time. (Note: inventory samples the primary doc
@@ -178,7 +181,7 @@ edit. Do NOT write anything until approved (spec §8.3). Never invent project fa
 grounded in the inventory.
 
 ## Step 4 — write + next steps
-On approval, write `.claude/doc-audit.json` (create `.claude/` if needed). Then tell the
+When scope was used, use the Write tool to write the approved draft without auto entries to `DRAFT_CONFIG_PATH` outside the repo (for example under `$TMPDIR`). Bind `DRAFT_SHA="$(python3 -c 'import hashlib,sys; print("sha256:"+hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$DRAFT_CONFIG_PATH")"` and bind `SCOPE_SHA="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["scopeSha"])' "$AUDIT_SCOPE_CHECK")"` from the check output. Create the final config once with `python3 "$SD/scripts/import-audit-scope.py" --repo-root "$CLAUDE_PROJECT_DIR" --config "$CFG" --scope "$AUDIT_SCOPE_PATH" --write --base-config - --expect-base-config-sha "$DRAFT_SHA" --expect-scope-sha "$SCOPE_SHA" < "$DRAFT_CONFIG_PATH"`. Otherwise, on approval write `.claude/doc-audit.json` (create `.claude/` if needed). Then tell the
 user: review the impactMap and commit the config. When `harness.state` is `installed`, explicitly
 list and tell the user to commit all three generated files — `.claude/commands/check-docs.md`,
 `.claude/skills/doc-lint/SKILL.md`, and `scripts/check-docs.py` — together with the config before

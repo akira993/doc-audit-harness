@@ -12,7 +12,8 @@ live here; the plugin ships no project knowledge.
 | `layerGlobs` | object | no | per-layer generic exclusions: `{format?:{exclude:string[]},existence?:{exclude:string[]},semantic?:{exclude:string[]}}`; exclusions also apply to explicit `--paths` input |
 | `frontMatterOverrides` | object[] | no | ordered generic `format` overrides: `{globs:string[],fields:string[]}`; the first entry whose `globs` contains a match wins, `fields:[]` skips the check, and no match falls back to `frontMatterFields` |
 | `indexFiles` | string[] | no | generic `semantic` layer treats these as link roots for orphan detection (default: any `README.md` within the doc tree) |
-| `impactMap` | object[] | yes | `{changed: path\|glob, impacts: docPath[], note?: string}` |
+| `impactMap` | object[] | yes | `{changed: path\|glob, impacts: docPath[], note?: string, source?: string}`; `source:"audit-scope"` is reserved for generated entries |
+| `auditScope` | object | no | `{path, sha256, importedAt, rules}` written by the importer; do not edit by hand |
 | `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: (path\|path:line)[]}` — a URL `liveSource` (http/https) is not supported: it is never executed or fetched, and the audit emits a warning |
 | `docAuditCommands` | object | no | `{format, existence, semantic}` slash-command/skill names used by active pre-flight and delegated Phase 4 |
 | `boundaryCommand` | string | no | shell command for project-boundary check |

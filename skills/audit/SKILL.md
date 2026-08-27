@@ -22,6 +22,10 @@ report its JSON (including `holder`), and exit; this path does not acquire a new
 phase. It is an emergency operation that intentionally breaks report serialization; while the
 gate holds its `flock`, including the complete gate+report interval, it MUST be refused with
 `reason:"gate-running"` and must never be bypassed. Otherwise run
+`AUDIT_SCOPE_PATH="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("auditScope",{}).get("path",".claude/audit-scope.json"))' "$CFG")"`.
+Before acquiring a run lock, run `AUDIT_SCOPE_CHECK="$(python3 "$SD/scripts/import-audit-scope.py" --repo-root "$CLAUDE_PROJECT_DIR" --config "$CFG" --scope "$AUDIT_SCOPE_PATH" --check --json)"`.
+Bind `AUDIT_SCOPE_STATE="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["state"])' "$AUDIT_SCOPE_CHECK")"`.
+If `AUDIT_SCOPE_STATE` is `drift`, or `errors[]` is non-empty, stop without calling the lock-acquiring `open-run.py`; show `diff.missing` / `diff.extra` (or `errors[]`) and tell the user to run `/docaudit:init --import-audit-scope` to restore the generated map. If it is `not-imported`, show only `💡 audit-scope.json は未導入です。` and continue. `absent` and `in-sync` are silent.
 `python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" [--accept-config]`,
 adding `--accept-config` only when the skill received it. Assign the complete stdout JSON,
 unchanged, to `EVIDENCE`; bind `RUNID` and `RUN_DIR` from its `runid` and `runDir` fields. Do not

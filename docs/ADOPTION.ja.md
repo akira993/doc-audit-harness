@@ -310,6 +310,10 @@ heuristic に頼る）。
 
 ## 6. 良い `impactMap` を作る（中核）
 
+### `audit-scope.json` がある場合
+
+`audit-scope.json` が正本で、`source:"audit-scope"` の `impactMap` は生成物です。ずれ（drift）があると Phase 0 は停止します。`/docaudit:init --import-audit-scope` で復旧してください。run 間の import に `--accept-config` は不要で、exit 6 は実行中の設定変更を拒否した場合だけです。実行中は lock により import が拒否されます。`{"impact":"none"}` は生成対象から外しますが、heuristic が文書を拾うことはあります。
+
 impact map こそが監査を *change-driven* にする。各エントリは
 **「このソースパスが変わったら、これらのドキュメントを再チェックせよ」** を表す。
 
