@@ -244,8 +244,12 @@ def main():
                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
                 preflight_required = False
+        codex_review = config.get("codexReview", {})
+        if not isinstance(codex_review, dict):
+            codex_review = {}
         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
-                           or args.mode == "full" or preflight_required)
+                           or args.mode == "full" or preflight_required
+                           or bool(codex_review.get("required") is True))
         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
         corpus = list_doc_files(repo, doc_globs)

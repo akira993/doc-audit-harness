@@ -399,6 +399,34 @@ class TestStartRun(unittest.TestCase):
         self.assertEqual(json.loads(proc.stdout)["reason"], "change-set-drift")
 
 
+class TestCodexRequiredPhase4(unittest.TestCase):
+    def test_required_forces_phase4_with_no_impacted_documents_in_both_modes(self):
+        for mode in ("incremental", "full"):
+            with self.subTest(mode=mode):
+                fx = RunFixture(self, docs=(),
+                                config_extra={"codexReview": {"required": True}})
+                self.assertEqual(fx.open().returncode, 0)
+                proc = fx.plan_start_seal(impacted=[], mode=mode)
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                with open(os.path.join(fx.run_dir, "manifest.json"),
+                          encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+                self.assertTrue(manifest["phase4Required"])
+
+    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
+        for value in ([], "x"):
+            for mode, expected in (("incremental", False), ("full", True)):
+                with self.subTest(codexReview=value, mode=mode):
+                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
+                    self.assertEqual(fx.open().returncode, 0)
+                    proc = fx.plan_start_seal(impacted=[], mode=mode)
+                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                    with open(os.path.join(fx.run_dir, "manifest.json"),
+                              encoding="utf-8") as handle:
+                        manifest = json.load(handle)
+                    self.assertIs(manifest["phase4Required"], expected)
+
+
 class TestEndToEnd(unittest.TestCase):
     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
         fx = RunFixture(self)

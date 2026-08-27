@@ -8,8 +8,8 @@
 # *completed* codex review's critical/high findings can be, per spec §5.4).
 #
 # NOTE: no `set -e` — failures are handled explicitly; we ALWAYS emit JSON + exit 0.
-# NOTE: no network use — `codex --version` prints the local binary's own version and
-# does not fetch a URL.
+# NOTE: no network use — `codex --version` and `codex exec --help` inspect only the
+# local binary and do not start a model invocation.
 set -uo pipefail
 
 CONFIG=""; REPO_ROOT="$(pwd)"
@@ -42,17 +42,21 @@ fi
 BIN_J="$(printf '%s' "$BIN" | tr -d '"\\' | tr -d '[:cntrl:]')"
 
 if [[ "$ENABLED" != "1" ]]; then
-  printf '{"codexReviewAvailable":false,"codexReviewBin":"%s","codexReviewVersion":null,"reason":"disabled-by-config"}\n' "$BIN_J"
+  printf '{"codexReviewAvailable":false,"codexReviewBin":"%s","codexReviewVersion":null,"probeCommands":[],"reason":"disabled-by-config"}\n' "$BIN_J"
   exit 0
 fi
 
 if ! command -v "$BIN" >/dev/null 2>&1; then
-  printf '{"codexReviewAvailable":false,"codexReviewBin":"%s","codexReviewVersion":null,"reason":"not-installed"}\n' "$BIN_J"
+  printf '{"codexReviewAvailable":false,"codexReviewBin":"%s","codexReviewVersion":null,"probeCommands":[],"reason":"not-installed"}\n' "$BIN_J"
   exit 0
 fi
 
 # `codex --version` reports the local binary version only — no network call.
 VERSION="$("$BIN" --version 2>/dev/null | tr -d '\r' | head -n1)"
 VERSION_J="$(printf '%s' "$VERSION" | tr -d '"\\' | tr -d '[:cntrl:]')"
-printf '{"codexReviewAvailable":true,"codexReviewBin":"%s","codexReviewVersion":"%s","reason":"ok"}\n' "$BIN_J" "$VERSION_J"
+if ! "$BIN" exec --help >/dev/null 2>&1; then
+  printf '{"codexReviewAvailable":false,"codexReviewBin":"%s","codexReviewVersion":"%s","probeCommands":["%s --version","%s exec --help"],"reason":"probe-exec-failed"}\n' "$BIN_J" "$VERSION_J" "$BIN_J" "$BIN_J"
+  exit 0
+fi
+printf '{"codexReviewAvailable":true,"codexReviewBin":"%s","codexReviewVersion":"%s","probeCommands":["%s --version","%s exec --help"],"reason":"ok"}\n' "$BIN_J" "$VERSION_J" "$BIN_J" "$BIN_J"
 exit 0

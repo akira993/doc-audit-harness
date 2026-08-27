@@ -14,9 +14,9 @@ import subprocess
 import sys
 import tempfile
 
-from docaudit_cache import (VALID_BACKENDS, cache_qualification, content_sha, json_bytes,
-                            parse_history, sha256_bytes, trim_history,
-                            validate_min_passes)
+from docaudit_cache import (CODEX_REVIEW_STATES, VALID_BACKENDS, cache_qualification,
+                            content_sha, json_bytes, parse_history, sha256_bytes,
+                            trim_history, validate_min_passes)
 from docaudit_paths import validate_repo_path
 
 
@@ -606,6 +606,7 @@ def main():
     config_path = os.path.abspath(args.config)
     anchor_absolute = (args.anchor_path if os.path.isabs(args.anchor_path)
                        else os.path.join(repo, args.anchor_path))
+    codex_review_status = {"state": None, "required": False, "degraded": False}
 
     def relative_to_repo(path):
         absolute = os.path.abspath(path)
@@ -631,7 +632,8 @@ def main():
             raise ValueError("anchor must be a regular file when present")
     except ValueError as exc:
         print(json.dumps({"verdict": "REFUSED", "anchorWritten": False,
-                          "reason": f"unsafe state path: {exc}"}, sort_keys=True))
+                          "reason": f"unsafe state path: {exc}",
+                          "codexReview": codex_review_status}, sort_keys=True))
         return 3
     lock_fd = None
     owned = False
@@ -705,6 +707,15 @@ def main():
         config = parse_json(config_raw, "config")
         if not all(isinstance(value, dict) for value in (manifest, dispatch_doc, config)):
             raise Refused("manifest, dispatch, and config must be objects")
+        codex_review_config = config.get("codexReview", {})
+        if not isinstance(codex_review_config, dict):
+            codex_review_config = {}
+        codex_review_required = codex_review_config.get("required", False)
+        if not isinstance(codex_review_required, bool):
+            raise Refused("codexReview.required must be boolean")
+        codex_review_status["required"] = codex_review_required
+        if codex_review_required and codex_review_config.get("enabled") is False:
+            raise Refused("codexReview.required conflicts with enabled:false")
         backend = manifest.get("phase3Backend")
         if (not isinstance(backend, str) or backend not in VALID_BACKENDS
                 or backend != config.get("phase3Backend", "workflow")):
@@ -761,12 +772,30 @@ def main():
         phase4 = None
         phase4_path = os.path.join(run_dir, "phase4.json")
         if expected["phase4"] == "none":
-            if manifest.get("phase4Required") or os.path.exists(phase4_path):
+            if os.path.exists(phase4_path):
+                raise Refused("phase4=none sentinel is invalid")
+            if codex_review_required:
+                raise Refused("codex-review required but state=missing")
+            if manifest.get("phase4Required"):
                 raise Refused("phase4=none sentinel is invalid")
         else:
             raw = read_once(phase4_path, "phase4.json")
             verify_sha(raw, expected["phase4"], "phase4")
             phase4 = parse_json(raw, "phase4.json")
+
+        codex_review_state = None
+        if isinstance(phase4, dict) and "codexReview" in phase4:
+            codex_review_evidence = phase4["codexReview"]
+            if not isinstance(codex_review_evidence, dict):
+                raise Refused("codexReview evidence invalid: codexReview must be an object")
+            codex_review_state = codex_review_evidence.get("state")
+            if not isinstance(codex_review_state, str):
+                raise Refused("codexReview evidence invalid: state must be a string")
+            if codex_review_state not in CODEX_REVIEW_STATES:
+                raise Refused("codexReview evidence invalid: state is not recognized")
+        codex_review_status["state"] = codex_review_state
+        if codex_review_required and codex_review_state != "completed":
+            raise Refused(f"codex-review required but state={codex_review_state or 'missing'}")
 
         head = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True,
                               text=True, check=True).stdout.strip()
@@ -839,6 +868,13 @@ def main():
                 raise Refused(f"final return mismatch for {path}")
 
         enabled, minimum, warnings = validate_min_passes(config)
+        codex_review_status["degraded"] = (
+            not codex_review_required
+            and codex_review_state in {"execution-failed", "ref-invalid"})
+        if codex_review_status["degraded"]:
+            add_warning(
+                warnings,
+                f"codex-review did not run ({codex_review_state}) — verdict excludes the adversarial layer")
         if cached and (not enabled or expected.get("historyStatus") != "ok"):
             raise Refused("cached verdicts are not permitted")
         for path in cached:
@@ -922,9 +958,12 @@ def main():
                   "cached": len(cached),
                   "verdictFlipsUnchangedContent": flips,
                   "verdictFlipsUnchangedContentSameChangeSet": same_change_set_flips}
+        report_verdict = verdict
+        if verdict == "CONSISTENT" and codex_review_status["degraded"]:
+            report_verdict = f"CONSISTENT (codex-review did not run: {codex_review_state})"
         report_path, report_status = finalize_report(
             repo, run_dir, report_rule, manifest["reportDate"], last_run_path,
-            last_state, warnings, verdict, counts=counts,
+            last_state, warnings, report_verdict, counts=counts,
             history_status=expected["historyStatus"], sibling=sibling,
             anchor_written=anchor_written)
         try:
@@ -936,7 +975,8 @@ def main():
         result = {"verdict": verdict, "anchorWritten": anchor_written,
                   "runid": args.runid, "counts": counts,
                   "historyStatus": expected["historyStatus"], "warnings": warnings,
-                  "siblingScan": sibling, "reportStatus": report_status}
+                  "siblingScan": sibling, "reportStatus": report_status,
+                  "codexReview": codex_review_status}
         if report_path is not None:
             result["reportPath"] = report_path
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
@@ -984,7 +1024,8 @@ def main():
                     release_lock(lock_path, lock_inode)
                 except OSError:
                     add_warning(warnings, "lockReleaseFailed")
-        result = {"verdict": "REFUSED", "anchorWritten": False, "reason": reason}
+        result = {"verdict": "REFUSED", "anchorWritten": False, "reason": reason,
+                  "codexReview": codex_review_status}
         if warnings:
             result["warnings"] = warnings
         if report_status is not None:
