@@ -87,3 +87,27 @@ boss: Fable（Claude Code）。PLAN: `PLAN.md`（同ディレクトリ）。ベ�
   boss 確認 `tests.test_v013_contracts`＋`tests.test_v0131_docs_contracts` OK。boss commit `6ba7be3`。追跡後のフルスイートを boss が再実行（結果は route-close に記録）。
 - **最終承認**: 追跡後 HEAD `6ba7be3` で boss 再実行 `Ran 495 tests in 139.173s … OK`（skip 0, exit 0）。手順 5 の最終レビューで検出された P1 は修正済み。
   以降、記録コミット → push → PR → merge → handoff → route-close（handoff 完了後に本ファイルへ追記し、main へ `docs(route)` として commit）。
+
+## route-close（route 手順 7、2026-08-27）
+
+- **対象タスク**: Issues #46〜#50 → docaudit v0.13.1（PLAN rev.8、docs-only パッチ）。
+- **記録時点の HEAD**: `691060893b835a879f0f7da9cd2a579cffbbacfa`（main、PR #51 の merge commit。branch `docs/v0.13.1-issues-46-50` の commit 4 件:
+  `c9f9e1a` S1 docs／`026705f` S2 bump＋tests＋handoff／`6ba7be3` test_g literal 修正／`553832b` route 記録）。本 route-close 追記は
+  `docs(route): v0.13.1 route-close` として main へ直接 commit（ユーザーの自動 push 許可の範囲）。
+- **確定した変更ファイル**（`git diff --name-status 3a6068b..691060893`、記録ディレクトリ除く 17 ファイル）: S1 10（README、ADOPTION en/ja、PROMPTS en/ja、
+  example.json、audit SKILL.md、config-schema.md、default-heuristics.md、fix-scope.py コメント 1 行）、S2 変更 7（plugin.json、engine-shas.json、
+  ADOPTION en/ja 版行・refresh 行、test_v013_contracts.py、test_scaffold.py、test_release_handoff.py）＋新規 2（tests/test_v0131_docs_contracts.py、
+  tasks/route/2026-08-27-issues-46-50-v0.13.1/release-handoff.sh）。runtime script の挙動変更 0（`git diff --numstat -- skills/audit/scripts` = fix-scope.py `1 0`）。
+- **audit verdict**: **N/A — 本リポジトリは docaudit 未導入**（`.claude/doc-audit.json` なし）。代替として、変更した公開文書と実装の整合を
+  契約テスト 8 本（`tests/test_v0131_docs_contracts.py`、赤確認 6/6）＋既存 `test_v013_contracts`（test_i 5 面・test_j 許容リスト）で機械的に確認。
+- **SSoT 更新の有無**: AGENTS.md / PROJECT.md は本リポジトリに存在せず **0 ファイル更新**。durable な規約変更なし（docs-only）。
+- **検査系成果物の実数**: 契約テスト (a) digestExclude 6 値 × 3 文書／(b) `generic-layers.py` 3 行／(c) 実体 42 ⇔ 付録 42 × 2 言語／(d) audit 3 flag・init 5 flag／
+  (f) schema 32 キー・example 20 キー／(g) refresh 段落 各 1・版 5／(h) `##` 15・§5 26・tree 51／(i) severity 3＋5・表 9 行 × 2 言語。
+  unittest **487 → 495**（skip 0）: worker 報告と boss 再実行（追跡後 HEAD、handoff 内 approved SHA でも `Ran 495 … OK`）。
+- **リリース実測（DoD (28)）**: PR #51 MERGED（merge commit）。tag `docaudit--v0.13.1` local/remote = `6910608…`（merge SHA と一致）。
+  Release `docaudit v0.13.1 — documentation consistency (#46–#50)` draft=false。Issue #46〜#50 close（open 0）。`~/.claude/skills/docaudit` 同期 0.13.1。
+- **別 Issue 候補（ユーザー判断）**: (1) `fix-scope.py:87` の `docGlobs` 既定 `[]` を他 12 か所と揃えるか（今回は意図的 fail-closed として文書化）、
+  (2) `seal-run.py` の exit 5 以外の非 0 に SKILL.md の明示停止分岐が無く、後続挙動が backend で非対称（workflow は未 seal で verifier 起動可、
+  codex は非空 dispatch で拒否、gate は `EVIDENCE required keys are missing` で REFUSED）。
+- **教訓**: 新規テストファイルを追加した版では `git add`（追跡）後にフルスイートを再実行してから commit する（`test_j` は `git ls-files` 走査のため、
+  未追跡時の green は無効。最終 `codex exec review` が検出）。`codex exec review --base` は PROMPT と併用不可。
