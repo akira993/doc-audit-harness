@@ -120,21 +120,21 @@ is pre-1.0, so treat its flag surface as subject to change. Every audit prints a
 hint), ✓ when active — it never changes the verdict.
 
 `codex` (the CLI, `@openai/codex` npm package — **not** the openai-codex Claude Code plugin,
-which cannot be invoked autonomously) is Phase 4's fourth review, run after `/code-review` and
-`/security-review`. It is conditional-force the same way (auto-used when installed; opt out
-with `"codexReview": {"enabled": false}`), but it is **the one exception** to every other
-seam in this document: when `codex` is available, the baseline ref validates
-(`git rev-parse --verify`), and the run completes, its `critical`/`high` findings fold into
-`phase4.json` as **blocking**, exactly like `/code-review`'s own high-severity findings
-(`medium`/`low` are non-blocking). Every `codex exec` call carries the mandatory,
-non-configurable `-s read-only` flag and reviews only the audited change set
-(`$BASELINE_SHA..HEAD`, embedded in the prompt text — never the working tree, never a
-`--base` flag). A `mode=full` run (no baseline) skips the review outright (unbounded scope);
-a timeout, non-zero exit, or schema-mismatched result is WARN, never a FAIL basis by itself.
-Every audit prints a **3-state, non-blocking codex-review status line** immediately after the
-ax one: 💡 when not active, 💡 "skipped (full run)" when `mode=full`, ✓ "active (findings
-included in verdict when present)" otherwise — the line itself never blocks, but says plainly
-that the findings it summarizes may already have.
+which cannot be invoked autonomously) is Phase 4's fourth review, after `/code-review` and
+`/security-review`. It is conditional-force (auto-used when installed; opt out with
+`"codexReview": {"enabled": false}`). Phase 0's probe runs only `<bin> --version` and
+`<bin> exec --help`: it confirms CLI presence and `exec` reachability, not the real sandbox,
+permissions, wrapper arguments, or model call. Specify a required wrapper as `codexReview.bin`.
+
+`codex-review-plan.py` decides the action from availability, mode, baseline validity, and
+`codexReview.required`. Incremental runs review `$BASELINE_SHA..HEAD`; a full run reviews the
+sealed current worktree only when `required:true`, otherwise it is skipped. Every invocation has
+the mandatory `-s read-only` flag. The evidence state is `completed`, `execution-failed`,
+`ref-invalid`, `skipped-full-run`, or `not-active`; Phase 5 presents four status classes because
+the middle two share a did-not-run warning. With the default `required:false`, non-completion is a
+warning. With `required:true`, missing or non-`completed` evidence makes the gate **REFUSED**.
+Enable strict mode after establishing the first baseline. A completed review's `critical`/`high`
+findings remain blocking; `medium`/`low` remain non-blocking.
 
 Separately, v0.12.0 can opt Phase 3 into `"phase3Backend":"codex"`. This runs one read-only
 Codex process per dispatched document through `codex-dispatch.py`; the default remains
@@ -180,9 +180,14 @@ mainly by anchor age, not by `maxImpactedDocs`: measurements on this repository 
 documents (roughly 3.6M tokens) for an old anchor, versus a median of about 18 documents for a
 single-commit window.
 
-`regressionRecheck` is opt-in. A single verifier run can vary, so fixing N reported findings and
-rerunning does not guarantee `CONSISTENT`. When one defect is found, sweep the same defect class
-across the relevant corpus instead of repairing only the reported instances.
+`regressionRecheck.enabled` is opt-in. It adds the latest prior FAIL with unchanged document
+content using provenance `regression`; it is not an `impactMap`-gap candidate. A single verifier
+run can vary, so fixing N reported findings and rerunning does not guarantee `CONSISTENT`. Gate
+counts `verdictFlipsUnchangedContent` when content, contract version, and backend match but the
+verdict changes. Code-side changes can legitimately cause that result even when document content
+does not change; `verdictFlipsUnchangedContentSameChangeSet` is the M-item subset with the same
+change set, and is the lower bound for pure instability. When one defect is found, sweep the same
+defect class across the relevant corpus instead of repairing only the reported instances.
 
 Every audit prints three further non-blocking status lines immediately after the codex-review one:
 **symbol-graph** (💡 not active / ✓ active / ⚠ index build failed), **doc-graph** (💡 not active /
@@ -298,14 +303,16 @@ none.** (Canonical schema: `skills/audit/references/config-schema.md`.)
 | `anchorPath` | string | yes | repo-relative path to the anchor state file (convention: `.claude/state/last-doc-audit.json`) |
 | `diffGlobs` | string[] | yes | path globs that scope the change set. `**` matches across `/`; `*` does not. |
 | `docGlobs` | string[] | no | files treated as docs for the heuristic/generic scan (default `["docs/**/*.md","*.md"]`) |
-| `impactMap` | object[] | yes | `{changed: path\|glob, impacts: [docPath,…], note?: string}` — the heart (see §6). May start empty `[]`. |
+| `impactMap` | object[] | yes | `{changed: path\|glob, impacts: [docPath,…], note?: string, source?: string}` — the heart (see §6). `source:"audit-scope"` is generated. May start empty `[]`. |
+| `auditScope` | object | no | `{path,sha256,importedAt,rules}` importer metadata; do not edit it by hand. |
 | `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: [path\|path:line,…]}` — cross-doc value consistency |
 | `docAuditCommands` | object | no | `{format, existence, semantic}` — slash-command/skill names to delegate Phase 4 to. Omit ⇒ generic fallback. |
 | `boundaryCommand` | string | no | shell command for a project-boundary / forbidden-pattern check (e.g. `make check-boundary`) |
 | `reviewCommands` | object | no | `{code, security}` — review command strings with effort embedded (e.g. `"/code-review high"`, `"/security-review"`) |
 | `reportPath` | string | no | report output template; supports `<YYYY-MM-DD>` and a `[_NN]` collision suffix |
 | `maxImpactedDocs` | number | no | cap on impacted docs (default 200); overflow sets `truncated` (surfaced, never silent) |
-| `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:[string,…]}` — tune heuristic recall noise |
+| `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:[string,…], saturationWarnRatio:number=0.5, excludeDocPathTokens:bool=false}` — tune heuristic recall noise; `0` disables the saturation warning. |
+| `regressionRecheck` | object | no | `{enabled:bool=false}` — opt-in recheck of latest prior FAILs whose document content is unchanged. |
 | `frontMatterFields` | string[] | no | generic `format` layer requires these front-matter fields on every doc (WARN if missing); omit to skip |
 | `indexFiles` | string[] | no | generic `semantic` layer link-roots for orphan detection (default: any `README.md` in the doc tree) |
 | `harness` | object | no | `{state,decidedAt,engineVersion}`; state is one of the five decisions above. Absence is the compatible `unset` state. |
@@ -313,7 +320,7 @@ none.** (Canonical schema: `skills/audit/references/config-schema.md`.)
 | `phase3Backend` | string | no | `"workflow"` (default) or `"codex"`; invalid values are rejected when the run is sealed. |
 | `phase3CodexTimeoutSeconds` | number | no | Codex per-document execution timeout; integer 60..3600, default 600, used only by the Codex Phase-3 backend. |
 | `models.light` | object | no | `{enabled,maxChanged,maxImpacted,maxDiffLines,maxDiffBytes,sensitiveTokens}` deterministic light-run limits. |
-| `codexReview` | object | no | `{enabled,bin,model?,timeoutMs?}`; explicit `model` wins, otherwise light uses `gpt-5.6-luna` and standard uses `gpt-5.6-terra`, both at medium effort. |
+| `codexReview` | object | no | `{enabled,required:bool=false,bin,model?,timeoutMs?}`; `required:true` REFUSES a non-completed review. Enable it after establishing a baseline. |
 | `digestExclude` | string[] | no | extra generated paths omitted from the seal; accepted only under `.claude/state/**` or known generated-data directories. |
 | `protectedGlobs` | string[] | no | extra paths denied to pre-flight fixes; built-in ADR/decisions/logs/`.claude` protection cannot be removed. |
 
@@ -396,6 +403,17 @@ the audit emits a warning so you track that value manually.
 
 ---
 
+### Phase 3 structural blind spots
+
+**Phase 3 alone does not guarantee** cross-document consistency (for example, a guide says
+`.dev.vars` while `.env.example` and source say `.env.local`), `X.md §N`-style references outside
+`docGlobs` (source comments, dotfiles, or generated-file headers), or that a procedure's
+prerequisites such as a running development server are satisfiable. Phase 4 code/security review,
+Codex review (incremental, or full with `codexReview.required`), and the gate's sibling scan are
+cross-cutting complementary layers. The Codex review prompt explicitly checks these three areas.
+
+---
+
 ## 8. Running audits — the verdict & anchor lifecycle
 
 - **`/docaudit:audit --full`** — whole-corpus deep audit. Use it for the first run, after big
@@ -443,6 +461,19 @@ the audit emits a warning so you track that value manually.
 1. Fix findings and **commit** them.
 2. Re-run `--full`; on CONSISTENT the engine writes the anchor at the now-current SHA.
 3. **Commit the anchor** (+ report) as a separate, meta commit.
+
+### v0.13.0 compatibility impact
+
+- The gate has additional **REFUSED** conditions for provenance/audit-scope integrity and strict
+  Codex-review evidence. Manifests now carry `provenance` and `auditScopeSha`; dispatch carries
+  `impactSha`.
+- A run in flight across this version boundary must be stopped with `--break-lock` and restarted.
+  Phase 3 and Phase 4 read the sealed manifest through `read-manifest.py`, and `codex-dispatch.py`
+  now requires `--evidence`.
+- Phase 4's Codex path uses its deterministic plan table; Phase 5's Codex line has four display
+  classes. `check-docs` has three correctness fixes. The new `counts` fields and the optional
+  `regressionRecheck`, `excludeDocPathTokens`, `codexReview.required`, and `auditScope` settings
+  are backward-compatible defaults (disabled or absent).
 
 ---
 

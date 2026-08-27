@@ -201,7 +201,6 @@ class TestV013Contracts(unittest.TestCase):
             {"0.13.0"})
 
     def test_j_only_allowlisted_0_12_0_references_remain(self):
-        self.skipTest("enabled in S5 after release-handoff tests move to 0.13.0")
         old_version = "0." "12.0"
         old = re.escape(old_version)
         allowed = {
