@@ -361,7 +361,7 @@ class TestVerifierAgentDefinitions(unittest.TestCase):
     def test_agent_documents_all_current_provenance_values(self):
         _, body = self.split_definition(STANDARD_AGENT)
         text = body.decode("utf-8")
-        for value in ("mapped", "heuristic", "both", "full", "graphify", "semantic"):
+        for value in ("mapped", "heuristic", "both", "full", "regression", "graphify", "semantic"):
             self.assertIn(f"`{value}`", text)
         self.assertIn("`full` means a\n   full-corpus run and is not an impactMap-gap candidate", text)
 

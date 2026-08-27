@@ -14,9 +14,9 @@ import subprocess
 import sys
 import tempfile
 
-from docaudit_cache import (VALID_BACKENDS, cache_qualification, content_sha, json_bytes,
-                            parse_history, sha256_bytes, trim_history,
-                            validate_min_passes)
+from docaudit_cache import (CODEX_REVIEW_STATES, VALID_BACKENDS, cache_qualification,
+                            content_sha, json_bytes, parse_history, sha256_bytes,
+                            trim_history, validate_min_passes)
 from docaudit_paths import validate_repo_path
 
 
@@ -25,6 +25,8 @@ REQUIRED_EXPECT = {"runid", "runDir", "anchor", "config", "lockIno", "preflight"
                    "dispatch", "cached", "history", "historyStatus", "manifest",
                    "digest", "returns", "attempt", "phase4"}
 VALID_VERDICTS = {"PASS", "WARN", "FAIL"}
+VALID_PROVENANCE = {"mapped", "heuristic", "both", "full", "graphify", "semantic",
+                    "regression"}
 FAIL_SEVERITIES = {"FAIL", "HIGH", "CRITICAL"}
 MAX_TEMPLATE_BYTES = 2 * 1024 * 1024
 MAX_REPORT_BYTES = 4 * 1024 * 1024
@@ -172,6 +174,68 @@ def verify_sha(raw, expected, label):
     actual = sha256_bytes(raw)
     if actual != expected:
         raise Refused(f"{label} sha mismatch")
+
+
+def impact_provenance(value):
+    if not isinstance(value, dict) or not isinstance(value.get("impacted"), list):
+        raise Refused("provenance mismatch")
+    provenance = {}
+    for item in value["impacted"]:
+        if (not isinstance(item, dict) or not isinstance(item.get("path"), str)
+                or item["path"] in provenance or "provenance" not in item):
+            raise Refused("provenance mismatch")
+        provenance[item["path"]] = item["provenance"]
+    return provenance
+
+
+def validate_provenance(manifest, impacted, from_impact):
+    provenance = manifest.get("provenance")
+    if not isinstance(provenance, dict) or set(provenance) != set(impacted):
+        raise Refused("provenance mismatch")
+    if provenance != from_impact:
+        raise Refused("provenance mismatch")
+    for path in sorted(provenance):
+        value = provenance[path]
+        if not isinstance(value, str) or value not in VALID_PROVENANCE:
+            raise Refused(f"provenance enum violation: {path}={value}")
+
+
+def verify_audit_scope_at_barrier(repo, config, expected_sha):
+    if expected_sha is None:
+        return
+    try:
+        metadata = config.get("auditScope")
+        if (not isinstance(expected_sha, str) or not isinstance(metadata, dict)
+                or not isinstance(metadata.get("path"), str)):
+            raise ValueError("invalid auditScope metadata")
+        scope_rel = validate_repo_path(repo, metadata["path"])
+        scope_raw = read_once(os.path.join(repo, scope_rel), "audit scope")
+        if sha256_bytes(scope_raw) != expected_sha:
+            raise ValueError("sha mismatch")
+    except (OSError, ValueError, Refused) as exc:
+        raise Refused("audit-scope changed after seal") from exc
+
+
+def verdict_flip_counts(history_entries, additions, dispatched):
+    latest = {}
+    for entry in history_entries:
+        latest[entry["path"]] = entry
+    flips = 0
+    same_change_set = 0
+    dispatched = set(dispatched)
+    for current in additions:
+        if current["path"] not in dispatched:
+            continue
+        previous = latest.get(current["path"])
+        if (previous is not None
+                and previous["contentSha"] == current["contentSha"]
+                and previous["contractVersion"] == current["contractVersion"]
+                and previous.get("backend", "workflow") == current["backend"]
+                and previous["verdict"] != current["verdict"]):
+            flips += 1
+            if previous["changeSetSha"] == current["changeSetSha"]:
+                same_change_set += 1
+    return flips, same_change_set
 
 
 def validate_returns(value):
@@ -542,6 +606,7 @@ def main():
     config_path = os.path.abspath(args.config)
     anchor_absolute = (args.anchor_path if os.path.isabs(args.anchor_path)
                        else os.path.join(repo, args.anchor_path))
+    codex_review_status = {"state": None, "required": False, "degraded": False}
 
     def relative_to_repo(path):
         absolute = os.path.abspath(path)
@@ -567,7 +632,8 @@ def main():
             raise ValueError("anchor must be a regular file when present")
     except ValueError as exc:
         print(json.dumps({"verdict": "REFUSED", "anchorWritten": False,
-                          "reason": f"unsafe state path: {exc}"}, sort_keys=True))
+                          "reason": f"unsafe state path: {exc}",
+                          "codexReview": codex_review_status}, sort_keys=True))
         return 3
     lock_fd = None
     owned = False
@@ -610,6 +676,10 @@ def main():
         # Every evidence file is read exactly once into this immutable snapshot.
         manifest_raw = read_once(os.path.join(run_dir, "manifest.json"), "manifest.json")
         dispatch_raw = read_once(os.path.join(run_dir, "dispatch.json"), "dispatch.json")
+        try:
+            impact_raw = read_once(os.path.join(run_dir, "impact.json"), "impact.json")
+        except Refused as exc:
+            raise Refused("impact sha mismatch") from exc
         returns_raw = read_once(os.path.join(run_dir, "returns.json"), "returns.json")
         config_raw, config_signature = read_state_once(config_path, "config")
         manifest = parse_json(manifest_raw, "manifest.json")
@@ -630,10 +700,22 @@ def main():
             config_taint = True
             raise Refused("run 中に config が変更された。git diff .claude/doc-audit.json で確認し復元せよ")
         dispatch_doc = parse_json(dispatch_raw, "dispatch.json")
+        if not isinstance(dispatch_doc, dict) or sha256_bytes(impact_raw) != dispatch_doc.get("impactSha"):
+            raise Refused("impact sha mismatch")
+        impact_doc = parse_json(impact_raw, "impact.json")
         returns = parse_json(returns_raw, "returns.json")
         config = parse_json(config_raw, "config")
         if not all(isinstance(value, dict) for value in (manifest, dispatch_doc, config)):
             raise Refused("manifest, dispatch, and config must be objects")
+        codex_review_config = config.get("codexReview", {})
+        if not isinstance(codex_review_config, dict):
+            codex_review_config = {}
+        codex_review_required = codex_review_config.get("required", False)
+        if not isinstance(codex_review_required, bool):
+            raise Refused("codexReview.required must be boolean")
+        codex_review_status["required"] = codex_review_required
+        if codex_review_required and codex_review_config.get("enabled") is False:
+            raise Refused("codexReview.required conflicts with enabled:false")
         backend = manifest.get("phase3Backend")
         if (not isinstance(backend, str) or backend not in VALID_BACKENDS
                 or backend != config.get("phase3Backend", "workflow")):
@@ -690,12 +772,30 @@ def main():
         phase4 = None
         phase4_path = os.path.join(run_dir, "phase4.json")
         if expected["phase4"] == "none":
-            if manifest.get("phase4Required") or os.path.exists(phase4_path):
+            if os.path.exists(phase4_path):
+                raise Refused("phase4=none sentinel is invalid")
+            if codex_review_required:
+                raise Refused("codex-review required but state=missing")
+            if manifest.get("phase4Required"):
                 raise Refused("phase4=none sentinel is invalid")
         else:
             raw = read_once(phase4_path, "phase4.json")
             verify_sha(raw, expected["phase4"], "phase4")
             phase4 = parse_json(raw, "phase4.json")
+
+        codex_review_state = None
+        if isinstance(phase4, dict) and "codexReview" in phase4:
+            codex_review_evidence = phase4["codexReview"]
+            if not isinstance(codex_review_evidence, dict):
+                raise Refused("codexReview evidence invalid: codexReview must be an object")
+            codex_review_state = codex_review_evidence.get("state")
+            if not isinstance(codex_review_state, str):
+                raise Refused("codexReview evidence invalid: state must be a string")
+            if codex_review_state not in CODEX_REVIEW_STATES:
+                raise Refused("codexReview evidence invalid: state is not recognized")
+        codex_review_status["state"] = codex_review_state
+        if codex_review_required and codex_review_state != "completed":
+            raise Refused(f"codex-review required but state={codex_review_state or 'missing'}")
 
         head = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True,
                               text=True, check=True).stdout.strip()
@@ -703,6 +803,7 @@ def main():
             raise Refused("HEAD does not match sealed manifest")
         digest = run_tree_digest(repo, manifest)
         if digest != manifest.get("worktreeDigest") or digest != expected.get("digest"):
+            verify_audit_scope_at_barrier(repo, config, manifest.get("auditScopeSha"))
             raise Refused("worktree digest mismatch")
         change_proc = subprocess.run(
             [sys.executable, os.path.join(HERE, "change-set-sha.py"), "--repo-root", repo,
@@ -723,6 +824,7 @@ def main():
             raise Refused("full mode requires impacted documents unless the corpus is empty")
         if set(dispatched) | set(cached) != set(impacted) or set(dispatched) & set(cached):
             raise Refused("manifest dispatch/cached partition is invalid")
+        validate_provenance(manifest, impacted, impact_provenance(impact_doc))
         for field in ("dispatch", "cached", "changeSetSha", "changedSet", "baselineSha",
                       "contractVersion", "historyStatus"):
             if dispatch_doc.get(field) != manifest.get(field) and field not in {"historyStatus"}:
@@ -766,6 +868,13 @@ def main():
                 raise Refused(f"final return mismatch for {path}")
 
         enabled, minimum, warnings = validate_min_passes(config)
+        codex_review_status["degraded"] = (
+            not codex_review_required
+            and codex_review_state in {"execution-failed", "ref-invalid"})
+        if codex_review_status["degraded"]:
+            add_warning(
+                warnings,
+                f"codex-review did not run ({codex_review_state}) — verdict excludes the adversarial layer")
         if cached and (not enabled or expected.get("historyStatus") != "ok"):
             raise Refused("cached verdicts are not permitted")
         for path in cached:
@@ -797,6 +906,7 @@ def main():
         head2 = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True,
                                text=True, check=True).stdout.strip()
         if head2 != head or run_tree_digest(repo, manifest) != digest:
+            verify_audit_scope_at_barrier(repo, config, manifest.get("auditScopeSha"))
             raise Refused("HEAD/worktree changed before state write")
         if not state_unchanged(history_path, history_signature):
             history_taint = True
@@ -807,6 +917,7 @@ def main():
         if not state_unchanged(config_path, config_signature):
             config_taint = True
             raise Refused("config changed before state write")
+        verify_audit_scope_at_barrier(repo, config, manifest.get("auditScopeSha"))
         if history_taint and os.path.exists(history_path):
             os.replace(history_path, history_path + ".tainted-" + args.runid)
             history_entries = []
@@ -823,6 +934,15 @@ def main():
                               "contractVersion": manifest["contractVersion"],
                               "backend": backend,
                               "verdict": verdicts[path]["verdict"], "ts": now})
+        flips, same_change_set_flips = verdict_flip_counts(
+            history_entries, additions, dispatched)
+        if flips:
+            add_warning(
+                warnings,
+                f'verdict instability: {flips} document(s) changed verdict with unchanged '
+                f'content since the previous run ({same_change_set_flips} with an unchanged '
+                'change set) — single-pass verification samples the defect pool; "fix these '
+                f'{flips} and re-run" is not guaranteed to converge (see ADOPTION)')
         atomic(history_path, {"entries": trim_history(history_entries + additions)})
         report_status = "pending" if report_rule is not None else "not-requested"
         last_state = {"runid": args.runid, "verdict": verdict, "ts": now,
@@ -835,10 +955,15 @@ def main():
                                  "contractVersion": manifest["contractVersion"]})
             anchor_written = True
         counts = {"impacted": len(impacted), "dispatch": len(dispatched),
-                  "cached": len(cached)}
+                  "cached": len(cached),
+                  "verdictFlipsUnchangedContent": flips,
+                  "verdictFlipsUnchangedContentSameChangeSet": same_change_set_flips}
+        report_verdict = verdict
+        if verdict == "CONSISTENT" and codex_review_status["degraded"]:
+            report_verdict = f"CONSISTENT (codex-review did not run: {codex_review_state})"
         report_path, report_status = finalize_report(
             repo, run_dir, report_rule, manifest["reportDate"], last_run_path,
-            last_state, warnings, verdict, counts=counts,
+            last_state, warnings, report_verdict, counts=counts,
             history_status=expected["historyStatus"], sibling=sibling,
             anchor_written=anchor_written)
         try:
@@ -850,7 +975,8 @@ def main():
         result = {"verdict": verdict, "anchorWritten": anchor_written,
                   "runid": args.runid, "counts": counts,
                   "historyStatus": expected["historyStatus"], "warnings": warnings,
-                  "siblingScan": sibling, "reportStatus": report_status}
+                  "siblingScan": sibling, "reportStatus": report_status,
+                  "codexReview": codex_review_status}
         if report_path is not None:
             result["reportPath"] = report_path
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
@@ -898,7 +1024,8 @@ def main():
                     release_lock(lock_path, lock_inode)
                 except OSError:
                     add_warning(warnings, "lockReleaseFailed")
-        result = {"verdict": "REFUSED", "anchorWritten": False, "reason": reason}
+        result = {"verdict": "REFUSED", "anchorWritten": False, "reason": reason,
+                  "codexReview": codex_review_status}
         if warnings:
             result["warnings"] = warnings
         if report_status is not None:

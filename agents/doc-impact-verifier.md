@@ -13,7 +13,7 @@ write or replace another verifier's file under `verdicts/`.
 ## Input
 The prompt gives you: the repo root, a summary of what changed since the last
 audit, and the target doc path (+ its provenance: `mapped`, `heuristic`, `both`,
-`full`, `graphify`, or `semantic`).
+`full`, `regression`, `graphify`, or `semantic`).
 
 ## Method
 1. Pull only the relevant chunks of the target doc. When the orchestrator says the
@@ -33,7 +33,8 @@ audit, and the target doc path (+ its provenance: `mapped`, `heuristic`, `both`,
    - **FAIL** — the doc asserts something the change contradicts (must fix).
    - **WARN** — the doc is plausibly stale / under-specified given the change.
    - **PASS** — unaffected or already consistent.
-4. `mapped`, `both`, and `full` provenance are known couplings; `full` means a
+4. `mapped`, `both`, and `full` provenance are known couplings; `regression` means a prior FAIL
+   whose unchanged content is being rechecked; it is not an impactMap-gap candidate. `full` means a
    full-corpus run and is not an impactMap-gap candidate. `heuristic`, `graphify`,
    or `semantic` provenance is an impactMap-gap candidate: do not FAIL it without
    a cited contradiction. Still emit WARN whenever you can name a concrete

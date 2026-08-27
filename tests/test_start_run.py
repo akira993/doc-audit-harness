@@ -1,5 +1,6 @@
 """Run lifecycle tests for the v0.10 run ledger contract."""
 
+import hashlib
 import json
 import os
 import unittest
@@ -8,6 +9,42 @@ from tests.wp12_helpers import RunFixture, git, write
 
 
 class TestStartRun(unittest.TestCase):
+    def plan_only(self, fx, impact):
+        impact_path = os.path.join(fx.run_dir, "impact.json")
+        write(impact_path, json.dumps(impact) + "\n")
+        proc = fx.call(
+            "plan-dispatch.py", "--run-dir", fx.run_dir, "--runid", fx.runid,
+            "--repo-root", fx.repo, "--config", fx.config_path,
+            "--history", fx.history, "--impact-json", impact_path,
+            "--baseline-sha", fx.head, "--mode", "incremental",
+            "--contract-version", "0.10.0", "--evidence", json.dumps(fx.evidence))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        fx.evidence = json.loads(proc.stdout)
+        return impact_path
+
+    def start_only(self, fx, impact_path):
+        return fx.call(
+            "start-run.py", "--run-dir", fx.run_dir, "--runid", fx.runid,
+            "--repo-root", fx.repo, "--impact-json", impact_path,
+            "--dispatch-json", os.path.join(fx.run_dir, "dispatch.json"),
+            "--run-class", "standard", "--mode", "incremental",
+            "--config", fx.config_path, "--evidence", json.dumps(fx.evidence))
+
+    def configure_scope(self, fx, metadata=None):
+        scope_rel = ".claude/audit-scope.json"
+        scope_raw = b'{"src/**/*.py":["docs/a.md"]}\n'
+        write(os.path.join(fx.repo, scope_rel), scope_raw)
+        base = {"path": scope_rel, "sha256": hashlib.sha256(scope_raw).hexdigest(),
+                "rules": 1, "importedAt": "2026-08-27T00:00:00Z"}
+        if metadata:
+            base.update(metadata)
+        fx.config["auditScope"] = base
+        write(fx.config_path, json.dumps(fx.config, indent=2) + "\n")
+        git(fx.repo, "add", "-A")
+        git(fx.repo, "commit", "-m", "configure audit scope")
+        fx.head = git(fx.repo, "rev-parse", "HEAD").stdout.strip()
+        return scope_rel, scope_raw
+
     def test_phase3_backend_defaults_to_workflow_without_codex_timeout(self):
         fx = RunFixture(self)
         self.assertEqual(fx.open().returncode, 0)
@@ -82,10 +119,102 @@ class TestStartRun(unittest.TestCase):
                       "changeSetSha", "impacted", "dispatch", "cached", "runClass",
                       "phase4Required", "preflightRequired", "contractVersion",
                       "digestExclude", "sealed", "worktreeDigest", "reportDate",
-                      "reportCandidateRule"):
+                      "reportCandidateRule", "provenance", "auditScopeSha"):
             self.assertIn(field, manifest)
         self.assertTrue(manifest["sealed"])
+        self.assertEqual(manifest["provenance"], {
+            "docs/a.md": "mapped", "docs/b.md": "mapped"})
+        self.assertIsNone(manifest["auditScopeSha"])
         self.assertTrue(os.path.exists(marker))
+
+    def test_impact_provenance_change_after_plan_dispatch_is_rejected(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open().returncode, 0)
+        impact_path = self.plan_only(fx, {
+            "impacted": [{"path": "docs/a.md", "provenance": "mapped"}]})
+        write(impact_path, json.dumps({
+            "impacted": [{"path": "docs/a.md", "provenance": "heuristic"}]}) + "\n")
+        proc = self.start_only(fx, impact_path)
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("impact.json changed after plan-dispatch", proc.stderr)
+        self.assertFalse(os.path.exists(os.path.join(fx.run_dir, "manifest.json")))
+
+    def test_dispatch_without_impact_sha_is_rejected(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open().returncode, 0)
+        impact_path = self.plan_only(fx, {
+            "impacted": [{"path": "docs/a.md", "provenance": "mapped"}]})
+        dispatch_path = os.path.join(fx.run_dir, "dispatch.json")
+        with open(dispatch_path, encoding="utf-8") as handle:
+            dispatch = json.load(handle)
+        dispatch.pop("impactSha")
+        raw = (json.dumps(dispatch, ensure_ascii=False, sort_keys=True, indent=2)
+               + "\n").encode("utf-8")
+        write(dispatch_path, raw)
+        fx.evidence["dispatch"] = "sha256:" + hashlib.sha256(raw).hexdigest()
+        proc = self.start_only(fx, impact_path)
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("impactSha", proc.stderr)
+
+    def test_unknown_impact_provenance_is_rejected(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open().returncode, 0)
+        impact_path = self.plan_only(fx, {
+            "impacted": [{"path": "docs/a.md", "provenance": "unknown"}]})
+        proc = self.start_only(fx, impact_path)
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("invalid impact provenance", proc.stderr)
+
+    def test_valid_audit_scope_sha_and_provenance_are_sealed(self):
+        fx = RunFixture(self)
+        _scope_rel, scope_raw = self.configure_scope(fx)
+        self.assertEqual(fx.open().returncode, 0)
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertEqual(manifest["auditScopeSha"],
+                         "sha256:" + hashlib.sha256(scope_raw).hexdigest())
+        with open(os.path.join(fx.run_dir, "impact.json"), encoding="utf-8") as handle:
+            impact = json.load(handle)
+        self.assertEqual(manifest["provenance"], {
+            entry["path"]: entry["provenance"] for entry in impact["impacted"]})
+
+    def test_audit_scope_sha_drift_is_rejected(self):
+        fx = RunFixture(self)
+        scope_rel, _scope_raw = self.configure_scope(fx)
+        self.assertEqual(fx.open().returncode, 0)
+        write(os.path.join(fx.repo, scope_rel), b'{"changed":[]}\n')
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("audit-scope drift", proc.stderr)
+
+    def test_audit_scope_metadata_type_contract_is_rejected(self):
+        cases = (
+            ({"path": None}, "auditScope.path invalid"),
+            ({"path": "../scope.json"}, "auditScope.path invalid"),
+            ({"sha256": "bad"}, "auditScope.sha256 invalid"),
+            ({"rules": True}, "auditScope.rules invalid"),
+            ({"rules": -1}, "auditScope.rules invalid"),
+            ({"rules": 1.0}, "auditScope.rules invalid"),
+            ({"importedAt": None}, "auditScope.importedAt invalid"),
+        )
+        for metadata, reason in cases:
+            with self.subTest(metadata=metadata):
+                fx = RunFixture(self)
+                self.configure_scope(fx, metadata)
+                self.assertEqual(fx.open().returncode, 0)
+                proc = fx.plan_start_seal()
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn(reason, proc.stderr)
+
+        for value in (None, [], "scope"):
+            with self.subTest(value=value):
+                fx = RunFixture(self, config_extra={"auditScope": value})
+                self.assertEqual(fx.open().returncode, 0)
+                proc = fx.plan_start_seal()
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+                self.assertIn("auditScope must be an object", proc.stderr)
 
     def test_report_date_and_explicit_suffix_rule_are_sealed_from_runid_utc(self):
         fx = RunFixture(self, config_extra={
@@ -247,7 +376,8 @@ class TestStartRun(unittest.TestCase):
         fx = RunFixture(self)
         fx.open()
         impact_path = os.path.join(fx.run_dir, "impact.json")
-        write(impact_path, json.dumps({"impacted": [{"path": "docs/a.md"}]}) + "\n")
+        write(impact_path, json.dumps({
+            "impacted": [{"path": "docs/a.md", "provenance": "mapped"}]}) + "\n")
         proc = fx.call("plan-dispatch.py", "--run-dir", fx.run_dir, "--runid", fx.runid,
                        "--repo-root", fx.repo, "--config", fx.config_path,
                        "--history", fx.history, "--impact-json", impact_path,
@@ -267,6 +397,34 @@ class TestStartRun(unittest.TestCase):
                        "--evidence", json.dumps(fx.evidence))
         self.assertEqual(proc.returncode, 5, proc.stdout + proc.stderr)
         self.assertEqual(json.loads(proc.stdout)["reason"], "change-set-drift")
+
+
+class TestCodexRequiredPhase4(unittest.TestCase):
+    def test_required_forces_phase4_with_no_impacted_documents_in_both_modes(self):
+        for mode in ("incremental", "full"):
+            with self.subTest(mode=mode):
+                fx = RunFixture(self, docs=(),
+                                config_extra={"codexReview": {"required": True}})
+                self.assertEqual(fx.open().returncode, 0)
+                proc = fx.plan_start_seal(impacted=[], mode=mode)
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                with open(os.path.join(fx.run_dir, "manifest.json"),
+                          encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+                self.assertTrue(manifest["phase4Required"])
+
+    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
+        for value in ([], "x"):
+            for mode, expected in (("incremental", False), ("full", True)):
+                with self.subTest(codexReview=value, mode=mode):
+                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
+                    self.assertEqual(fx.open().returncode, 0)
+                    proc = fx.plan_start_seal(impacted=[], mode=mode)
+                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                    with open(os.path.join(fx.run_dir, "manifest.json"),
+                              encoding="utf-8") as handle:
+                        manifest = json.load(handle)
+                    self.assertIs(manifest["phase4Required"], expected)
 
 
 class TestEndToEnd(unittest.TestCase):

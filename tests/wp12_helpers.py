@@ -133,7 +133,9 @@ class RunFixture:
         with open(os.path.join(self.run_dir, "manifest.json"), encoding="utf-8") as handle:
             manifest = json.load(handle)
         if manifest["phase4Required"]:
-            proc = self.write_evidence("phase4", {"findings": phase4 or []})
+            phase4_value = (phase4 if isinstance(phase4, dict)
+                            else {"findings": phase4 or []})
+            proc = self.write_evidence("phase4", phase4_value)
             if proc.returncode:
                 return proc
         return proc

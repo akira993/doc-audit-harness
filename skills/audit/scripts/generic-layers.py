@@ -198,6 +198,41 @@ def _strip_container_markers(line):
         return rest
 
 
+def _advance_columns(text, column=0):
+    for char in text:
+        column = column + (4 - column % 4) if char == "\t" else column + 1
+    return column
+
+
+def _strip_blockquote_markers(line):
+    rest = line
+    while True:
+        blockquote = re.match(r"^ {0,3}>[ \t]?", rest)
+        if not blockquote:
+            return rest
+        rest = rest[blockquote.end():]
+
+
+def _list_item_info(line):
+    rest = _strip_blockquote_markers(line)
+    column = 0
+    innermost = None
+    while True:
+        item = re.match(r"^([ \t]*)([-*+]|[0-9]+[.)])([ \t]+)", rest)
+        if not item:
+            return innermost
+        marker_column = _advance_columns(item.group(1), column)
+        if marker_column - column > 3:
+            return innermost
+        marker_end = marker_column + len(item.group(2))
+        whitespace_end = _advance_columns(item.group(3), marker_end)
+        whitespace_width = whitespace_end - marker_end
+        content_indent = marker_end + (1 if whitespace_width >= 5 else whitespace_width)
+        rest = rest[item.end():]
+        column = whitespace_end
+        innermost = (content_indent, rest)
+
+
 def _mask_fenced(text):
     # Blank fenced code blocks in place (length + newlines preserved). Tracks the open
     # fence char/length so only a matching closer (same char, >= length, line by itself)
@@ -225,12 +260,36 @@ def _mask_fenced(text):
 
 def _mask_indented(text):
     out = []
+    content_indent = None
+    after_blank = True
+    in_code = False
     for line in text.split("\n"):
-        content = _strip_container_markers(line)
-        if content.startswith("    ") or content.startswith("\t"):
+        item = _list_item_info(line)
+        content = _strip_blockquote_markers(line)
+        if item is not None:
+            content_indent, item_content = item
+            out.append(line)
+            after_blank = not item_content.strip()
+            in_code = False
+            continue
+        if not content.strip():
+            out.append(line)
+            after_blank = True
+            continue
+
+        prefix = re.match(r"^[ \t]*", content).group(0)
+        indent = _advance_columns(prefix)
+        if content_indent is not None and indent < content_indent:
+            content_indent = None
+        threshold = (content_indent + 4) if content_indent is not None else 4
+
+        if (in_code or after_blank) and indent >= threshold:
             out.append(_blank_keep_newlines(line))
+            in_code = True
         else:
             out.append(line)
+            in_code = False
+        after_blank = False
     return "\n".join(out)
 
 
@@ -269,7 +328,7 @@ _BARE_PATH_RE = re.compile(r"[A-Za-z0-9_./+%@~-]+")
 
 def extract_bare_paths(text):
     masked = _mask_indented(_mask_fenced(text))
-    masked = _LINK_RE.sub(lambda m: " " * len(m.group(0)), masked)
+    masked = _LINK_RE.sub(lambda m: _blank_keep_newlines(m.group(0)), masked)
     masked = _INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), masked)
     masked = _URL_RE.sub(lambda m: " " * len(m.group(0)), masked)
     out = []
@@ -301,14 +360,6 @@ def looks_like_repo_path(tok, repo_root):
 def _without_suffix(tok):
     ends = [pos for pos in (tok.find("#"), tok.find("?")) if pos >= 0]
     return tok[:min(ends)] if ends else tok
-
-
-def _token_base(tok, repo_root):
-    base = _without_suffix(tok)
-    locator_base = base.split(":", 1)[0]
-    if locator_base != base and looks_like_repo_path(locator_base, repo_root):
-        return locator_base
-    return base
 
 
 def _decoded_candidate(base):

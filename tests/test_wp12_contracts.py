@@ -1,4 +1,5 @@
 import json
+import hashlib
 import fcntl
 import os
 import stat
@@ -317,6 +318,130 @@ class TestImpactAndClassification(unittest.TestCase):
         self.assertEqual(out["changedCount"], 2)
         self.assertEqual(out["runClass"], "standard")
         self.assertIn("changed-count", out["reasons"])
+
+
+class TestRegressionSealedChainIntegration(unittest.TestCase):
+    @staticmethod
+    def history_entry(fx, path, runid):
+        with open(os.path.join(fx.repo, path), "rb") as handle:
+            content_sha = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+        return {"runid": runid, "path": path, "contentSha": content_sha,
+                "changeSetSha": "sha256:old-change", "contractVersion": "0.10.0",
+                "backend": "workflow", "verdict": "FAIL", "ts": "2026-08-17T00:00:00Z"}
+
+    def run_chain(self, fx, changed):
+        impact_path = os.path.join(fx.run_dir, "impact.json")
+        resolved = fx.call(
+            "resolve-impact.py", "--config", fx.config_path, "--changed", "-",
+            "--repo-root", fx.repo, "--mode", "incremental", "--history", fx.history,
+            input_text="\n".join(changed) + "\n")
+        self.assertEqual(resolved.returncode, 0, resolved.stderr)
+        write(impact_path, resolved.stdout)
+
+        supplemented = fx.call(
+            "impact-supplement.py", "--impact-json", impact_path, "--changed", "-",
+            "--change-summary", "S4a integration", "--repo-root", fx.repo,
+            "--max-impacted-docs", str(fx.config["maxImpactedDocs"]),
+            "--doc-globs", ",".join(fx.config["docGlobs"]), "--config", fx.config_path,
+            input_text="\n".join(changed) + "\n")
+        self.assertEqual(supplemented.returncode, 0, supplemented.stderr)
+
+        planned = fx.call(
+            "plan-dispatch.py", "--run-dir", fx.run_dir, "--runid", fx.runid,
+            "--repo-root", fx.repo, "--config", fx.config_path, "--history", fx.history,
+            "--impact-json", impact_path, "--baseline-sha", fx.head,
+            "--mode", "incremental", "--contract-version", "0.10.0",
+            "--evidence", json.dumps(fx.evidence))
+        self.assertEqual(planned.returncode, 0, planned.stderr)
+        fx.evidence = json.loads(planned.stdout)
+
+        started = fx.call(
+            "start-run.py", "--run-dir", fx.run_dir, "--runid", fx.runid,
+            "--repo-root", fx.repo, "--impact-json", impact_path,
+            "--dispatch-json", os.path.join(fx.run_dir, "dispatch.json"),
+            "--run-class", "standard", "--mode", "incremental",
+            "--config", fx.config_path, "--evidence", json.dumps(fx.evidence))
+        self.assertEqual(started.returncode, 0, started.stderr)
+        fx.evidence = json.loads(started.stdout)
+
+        sealed = fx.call("seal-run.py", "--run-dir", fx.run_dir,
+                         "--repo-root", fx.repo, "--evidence", json.dumps(fx.evidence))
+        self.assertEqual(sealed.returncode, 0, sealed.stderr)
+        fx.evidence = json.loads(sealed.stdout)
+
+        with open(impact_path, encoding="utf-8") as handle:
+            impact = json.load(handle)
+        with open(os.path.join(fx.run_dir, "dispatch.json"), encoding="utf-8") as handle:
+            dispatch = json.load(handle)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        for path in manifest["impacted"]:
+            verdict = fx.write_verdict(path, "PASS")
+            self.assertEqual(verdict.returncode, 0, verdict.stderr)
+        returns = [{"attempt": 1, "assignedPath": path, "returnedPath": path,
+                    "verdict": "PASS", "rationale": "checked", "suggestion": None}
+                   for path in manifest["dispatch"]]
+        written = fx.write_evidence("returns", returns)
+        self.assertEqual(written.returncode, 0, written.stderr)
+        if manifest["phase4Required"]:
+            phase4 = fx.write_evidence("phase4", {"findings": []})
+            self.assertEqual(phase4.returncode, 0, phase4.stderr)
+        gated = fx.gate()
+        self.assertEqual(gated.returncode, 0, gated.stdout + gated.stderr)
+        return impact, dispatch, manifest, json.loads(gated.stdout)
+
+    def test_regression_document_traverses_the_complete_sealed_chain(self):
+        fx = RunFixture(self, docs=("docs/regression.md",), config_extra={
+            "regressionRecheck": {"enabled": True}})
+        write(fx.history, json.dumps({"entries": [
+            self.history_entry(fx, "docs/regression.md", "old-run")]} ) + "\n")
+        self.assertEqual(fx.open().returncode, 0)
+
+        impact, dispatch, manifest, gate = self.run_chain(fx, ["src/unrelated.py"])
+
+        expected = {"docs/regression.md": "regression"}
+        self.assertEqual({item["path"]: item["provenance"]
+                          for item in impact["impacted"]}, expected)
+        self.assertEqual(dispatch["dispatch"], ["docs/regression.md"])
+        self.assertEqual(dispatch["cached"], [])
+        self.assertEqual(manifest["provenance"], expected)
+        self.assertEqual(gate["verdict"], "CONSISTENT")
+
+    def test_cap_keeps_mapped_before_regression_before_heuristic_end_to_end(self):
+        docs = ("docs/m1.md", "docs/m2.md", "docs/r1.md", "docs/r2.md",
+                "docs/h1.md", "docs/h2.md")
+        fx = RunFixture(self, docs=docs, config_extra={
+            "maxImpactedDocs": 3,
+            "regressionRecheck": {"enabled": True},
+            "impactMap": [{"changed": "src/change.py",
+                           "impacts": ["docs/m1.md", "docs/m2.md"]}],
+        })
+        for path in ("docs/h1.md", "docs/h2.md"):
+            write(os.path.join(fx.repo, path), "signal_token\n")
+        git(fx.repo, "add", "-A")
+        git(fx.repo, "commit", "-m", "prepare integration corpus")
+        fx.head = git(fx.repo, "rev-parse", "HEAD").stdout.strip()
+        write(fx.history, json.dumps({"entries": [
+            self.history_entry(fx, "docs/r1.md", "old-r1"),
+            self.history_entry(fx, "docs/r2.md", "old-r2"),
+        ]}) + "\n")
+        self.assertEqual(fx.open().returncode, 0)
+
+        impact, dispatch, manifest, gate = self.run_chain(
+            fx, ["src/change.py", "src/signal_token.py"])
+
+        self.assertEqual(impact["counts"]["candidatesBeforeCap"], 6)
+        self.assertEqual([item["provenance"] for item in impact["impacted"]],
+                         ["mapped", "mapped", "regression"])
+        self.assertTrue(impact["truncated"])
+        self.assertEqual(impact["counts"]["mapped"], 2)
+        self.assertEqual(impact["counts"]["regression"], 1)
+        self.assertEqual(impact["counts"]["heuristicOnly"], 0)
+        self.assertEqual(dispatch["cached"], [])
+        self.assertEqual(set(dispatch["dispatch"]), set(manifest["impacted"]))
+        self.assertEqual(manifest["provenance"], {
+            item["path"]: item["provenance"] for item in impact["impacted"]})
+        self.assertEqual(gate["verdict"], "CONSISTENT")
 
 
 class TestFixScopeAndConfig(unittest.TestCase):

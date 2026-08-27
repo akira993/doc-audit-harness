@@ -61,7 +61,7 @@ report-only です。ファイルは一切編集しないでください。
 
 今は特定のサブシステムや一部のドキュメントだけを気にしたいときに使う。`/docaudit:audit` には
 スコープ／パス指定の引数はなく、常に impacted set 全体を解決する — incremental では
-`impactMap` の mapped と heuristic を合わせ、利用可能なら graphify/semantic 候補で補完し、
+`impactMap` の mapped、opt-in の `regression` 再検証、heuristic を合わせ、利用可能なら graphify/semantic 候補で補完し、
 `--full` では `docGlobs` の全文書を含める。そのためスコープ絞り込みはプロンプト側で行う ——
 `<scope>` に対象のドキュメント／サブシステムを名指しし、その verdict を要約で明示的に
 報告させる。

@@ -26,6 +26,7 @@ class TestReportMatcherContract(unittest.TestCase):
             "change-set-sha.py", "generic-layers.py", "resolve-impact.py",
             "impact-supplement.py", "start-run.py")]
         cls.decide = load("decide-verdict.py")
+        cls.import_scope = load("import-audit-scope.py")
 
     def patterns(self, config):
         return [module.report_pattern(config) for module in self.modules]
@@ -34,9 +35,19 @@ class TestReportMatcherContract(unittest.TestCase):
         patterns = self.patterns(config)
         self.assertEqual(patterns, [patterns[0]] * len(patterns))
         self.assertEqual(self.decide.report_pattern(config), patterns[0])
+        import_pattern = self.import_scope.report_regex(config)
+        self.assertEqual(
+            import_pattern.pattern if import_pattern else None,
+            patterns[0],
+        )
         actual = {path: bool(patterns[0] and re.fullmatch(patterns[0], path))
                   for path in cases}
         self.assertEqual(actual, cases)
+        import_actual = {
+            path: bool(import_pattern and import_pattern.fullmatch(path))
+            for path in cases
+        }
+        self.assertEqual(import_actual, cases)
 
     def test_explicit_suffix_placeholder_cases(self):
         config = {"docGlobs": ["docs/**/*.md"],
@@ -87,6 +98,7 @@ class TestReportMatcherContract(unittest.TestCase):
                 patterns = self.patterns(config)
                 self.assertEqual(patterns, [None] * len(patterns))
                 self.assertIsNone(self.decide.report_pattern(config))
+                self.assertIsNone(self.import_scope.report_regex(config))
 
 
 if __name__ == "__main__":

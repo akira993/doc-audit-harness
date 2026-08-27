@@ -29,9 +29,11 @@ class Base(unittest.TestCase):
         self.runid = "run-check-1"
         self.impact_json = os.path.join(self.run_dir, "impact.json")
 
-    def write_manifest(self, impacted):
+    def write_manifest(self, impacted, provenance=None):
+        provenance = provenance or {path: "mapped" for path in impacted}
         with open(os.path.join(self.run_dir, "manifest.json"), "w", encoding="utf-8") as f:
-            json.dump({"runid": self.runid, "impacted": impacted}, f)
+            json.dump({"runid": self.runid, "impacted": impacted,
+                       "provenance": provenance}, f)
 
     def write_impact(self, impacted):
         with open(self.impact_json, "w", encoding="utf-8") as f:
@@ -75,7 +77,8 @@ class TestCheckVerdicts(Base):
         )
 
     def test_complete_when_every_path_has_one_valid_record(self):
-        self.write_manifest(["docs/a.md", "docs/b.md"])
+        self.write_manifest(["docs/a.md", "docs/b.md"], {
+            "docs/a.md": "mapped", "docs/b.md": "both"})
         self.write_impact([
             {"path": "docs/a.md", "provenance": "mapped"},
             {"path": "docs/b.md", "provenance": "both"},
@@ -90,6 +93,7 @@ class TestCheckVerdicts(Base):
     def test_missing_cached_verdict_is_still_reported(self):
         with open(os.path.join(self.run_dir, "manifest.json"), "w", encoding="utf-8") as f:
             json.dump({"runid": self.runid, "impacted": ["docs/a.md", "docs/b.md"],
+                       "provenance": {"docs/a.md": "mapped", "docs/b.md": "mapped"},
                        "dispatch": ["docs/a.md"], "cached": ["docs/b.md"]}, f)
         self.write_impact([{"path": "docs/a.md", "provenance": "mapped"},
                            {"path": "docs/b.md", "provenance": "mapped"}])
@@ -147,6 +151,15 @@ class TestCheckVerdicts(Base):
             out["missingImpacted"],
             [{"path": "docs/missing.md", "provenance": "unknown"}],
         )
+
+    def test_provenance_mismatch_is_a_manifest_mismatch_diagnostic(self):
+        self.write_manifest(["docs/a.md"], {"docs/a.md": "mapped"})
+        self.write_impact([{"path": "docs/a.md", "provenance": "heuristic"}])
+        self.write_verdict("a.json", "docs/a.md")
+        out = self.check()
+        self.assertTrue(out["manifestMismatch"])
+        self.assertFalse(out["phase3Complete"])
+        self.assertIn("manifest/impact provenance mismatch", out["warnings"])
 
 
 class TestRecoveryDrill(unittest.TestCase):

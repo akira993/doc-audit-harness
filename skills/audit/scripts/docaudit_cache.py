@@ -8,6 +8,8 @@ import os
 
 VALID_VERDICTS = {"PASS", "WARN", "FAIL"}
 VALID_BACKENDS = {"workflow", "codex"}
+CODEX_REVIEW_STATES = ("completed", "execution-failed", "ref-invalid",
+                       "skipped-full-run", "not-active")
 HISTORY_FIELDS = {
     "runid": str,
     "path": str,

@@ -21,6 +21,9 @@ BUILTIN_EXCLUDES = [".claude/state/docaudit-run", ".claude/state/docaudit-histor
                     ".cocoindex_code"]
 VALID_PHASE3_BACKENDS = {"workflow", "codex"}
 DEFAULT_PHASE3_CODEX_TIMEOUT_SECONDS = 600
+VALID_PROVENANCE = {"mapped", "heuristic", "both", "full", "graphify",
+                    "semantic", "regression"}
+HEX_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def phase3_settings(config):
@@ -121,6 +124,52 @@ def impacted_paths(impact, repo):
     return paths
 
 
+def impact_provenance(impact, paths):
+    provenance = {}
+    for entry in impact.get("impacted", []):
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            continue
+        value = entry.get("provenance")
+        if value not in VALID_PROVENANCE:
+            raise ValueError(f"invalid impact provenance: {entry['path']}={value}")
+        provenance[entry["path"]] = value
+    if set(provenance) != set(paths) or len(provenance) != len(paths):
+        raise ValueError("impact provenance keys do not equal impacted")
+    return provenance
+
+
+def audit_scope_sha(config, repo):
+    if "auditScope" not in config:
+        return None
+    value = config["auditScope"]
+    if not isinstance(value, dict):
+        raise ValueError("auditScope must be an object")
+    path = value.get("path")
+    expected = value.get("sha256")
+    rules = value.get("rules")
+    imported_at = value.get("importedAt")
+    try:
+        normalized = validate_repo_path(repo, path, must_exist=False)
+    except ValueError as exc:
+        raise ValueError(f"auditScope.path invalid: {exc}") from exc
+    if not isinstance(expected, str) or not HEX_SHA_RE.fullmatch(expected):
+        raise ValueError("auditScope.sha256 invalid")
+    if isinstance(rules, bool) or not isinstance(rules, int) or rules < 0:
+        raise ValueError("auditScope.rules invalid")
+    if not isinstance(imported_at, str):
+        raise ValueError("auditScope.importedAt invalid")
+    try:
+        normalized = validate_repo_path(repo, normalized)
+    except ValueError as exc:
+        raise ValueError(f"auditScope.path invalid: {exc}") from exc
+    with open(os.path.join(repo, normalized), "rb") as handle:
+        raw = handle.read()
+    actual = hashlib.sha256(raw).hexdigest()
+    if actual != expected:
+        raise ValueError("audit-scope drift")
+    return "sha256:" + actual
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", required=True)
@@ -150,13 +199,19 @@ def main():
         expected_run_dir = os.path.join(repo, ".claude", "state", "docaudit-run", args.runid)
         if os.path.realpath(args.run_dir) != os.path.realpath(expected_run_dir):
             raise ValueError("RUN_DIR is outside the run ledger")
-        with open(args.impact_json, encoding="utf-8") as handle:
-            impact = json.load(handle)
         with open(args.dispatch_json, "rb") as handle:
             dispatch_raw = handle.read()
         if "sha256:" + hashlib.sha256(dispatch_raw).hexdigest() != evidence.get("dispatch"):
             raise ValueError("dispatch sha does not match EVIDENCE")
         dispatch = json.loads(dispatch_raw.decode("utf-8"))
+        expected_impact_sha = dispatch.get("impactSha")
+        if not isinstance(expected_impact_sha, str):
+            raise ValueError("dispatch impactSha is missing")
+        with open(args.impact_json, "rb") as handle:
+            impact_raw = handle.read()
+        if "sha256:" + hashlib.sha256(impact_raw).hexdigest() != expected_impact_sha:
+            raise ValueError("impact.json changed after plan-dispatch")
+        impact = json.loads(impact_raw)
         with open(args.config, "rb") as handle:
             config_raw = handle.read()
         if "sha256:" + hashlib.sha256(config_raw).hexdigest() != evidence.get("config"):
@@ -165,6 +220,8 @@ def main():
         phase3_backend, phase3_codex_timeout = phase3_settings(config)
         report_rule = report_candidate_rule(config, repo, report_date)
         paths = impacted_paths(impact, repo)
+        provenance = impact_provenance(impact, paths)
+        sealed_audit_scope_sha = audit_scope_sha(config, repo)
         for field in ("dispatch", "cached", "changedSet"):
             if not isinstance(dispatch.get(field), list):
                 raise ValueError(f"dispatch.{field} must be an array")
@@ -187,8 +244,12 @@ def main():
                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
                 preflight_required = False
+        codex_review = config.get("codexReview", {})
+        if not isinstance(codex_review, dict):
+            codex_review = {}
         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
-                           or args.mode == "full" or preflight_required)
+                           or args.mode == "full" or preflight_required
+                           or bool(codex_review.get("required") is True))
         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
         corpus = list_doc_files(repo, doc_globs)
@@ -201,6 +262,7 @@ def main():
         manifest = {"runid": args.runid, "head": head, "mode": args.mode,
                     "baselineSha": baseline, "changedSet": dispatch["changedSet"],
                     "changeSetSha": dispatch.get("changeSetSha"), "impacted": paths,
+                    "provenance": provenance, "auditScopeSha": sealed_audit_scope_sha,
                     "dispatch": dispatch["dispatch"], "cached": dispatch["cached"],
                     "runClass": args.run_class, "phase4Required": phase4_required,
                     "preflightRequired": preflight_required,
@@ -218,8 +280,6 @@ def main():
         atomic_write(os.path.join(args.run_dir, "manifest.json"), raw)
         impact_target = os.path.join(args.run_dir, "impact.json")
         if os.path.realpath(args.impact_json) != os.path.realpath(impact_target):
-            with open(args.impact_json, "rb") as handle:
-                impact_raw = handle.read()
             atomic_write(impact_target, impact_raw)
         evidence["manifest"] = "sha256:" + hashlib.sha256(raw).hexdigest()
     except (OSError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:

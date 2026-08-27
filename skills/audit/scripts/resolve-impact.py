@@ -27,8 +27,9 @@ Rules:
   - counts.mapped / counts.heuristicOnly reflect docs in the emitted (post-cap)
     impacted list; counts.candidatesBeforeCap is the pre-cap total of candidates.
 """
-import argparse, json, os, re, sys
+import argparse, hashlib, json, os, re, sys
 
+from docaudit_cache import content_sha, parse_history
 from docaudit_paths import list_doc_files as safe_list_doc_files, matches_glob, validate_repo_path
 
 DEFAULT_MIN_IDENT = 5
@@ -138,6 +139,7 @@ def main():
     ap.add_argument("--changed", required=True)
     ap.add_argument("--repo-root", default=os.getcwd())
     ap.add_argument("--mode", choices=["incremental", "full"], default="incremental")
+    ap.add_argument("--history")
     args = ap.parse_args()
 
     try:
@@ -160,6 +162,8 @@ def main():
 
     repo = args.repo_root
     heur = cfg.get("heuristics", {})
+    if not isinstance(heur, dict):
+        heur = {}
     min_len = int(heur.get("minIdentifierLength", DEFAULT_MIN_IDENT))
     exclude = {b.lower() for b in heur.get("excludeBasenames", [])} | DEFAULT_EXCLUDE_BASENAMES
     max_docs = int(cfg.get("maxImpactedDocs", 200))
@@ -168,6 +172,27 @@ def main():
 
     prov = {}  # path -> set of provenances
     warnings = []
+    saturation = heur.get("saturationWarnRatio", 0.5)
+    if isinstance(saturation, bool):
+        warnings.append(f"heuristics.saturationWarnRatio invalid ({saturation!r}); using default 0.5")
+        saturation = 0.5
+    elif saturation == 0:
+        saturation = None
+    elif not isinstance(saturation, (int, float)) or not 0 <= saturation <= 1:
+        warnings.append(f"heuristics.saturationWarnRatio invalid ({saturation!r}); using default 0.5")
+        saturation = 0.5
+    exclude_doc_tokens = heur.get("excludeDocPathTokens", False)
+    if not isinstance(exclude_doc_tokens, bool):
+        warnings.append(f"heuristics.excludeDocPathTokens invalid ({exclude_doc_tokens!r}); using default false")
+        exclude_doc_tokens = False
+    regression = cfg.get("regressionRecheck", {})
+    if not isinstance(regression, dict):
+        warnings.append("regressionRecheck invalid; using default disabled")
+        regression = {}
+    regression_enabled = regression.get("enabled", False)
+    if not isinstance(regression_enabled, bool):
+        warnings.append("regressionRecheck.enabled invalid; using default false")
+        regression_enabled = False
     doc_globs = cfg.get("docGlobs", ["docs/**/*.md", "*.md"])
     report_rx = None if cfg.get("auditReportsInCorpus") is True else report_pattern(cfg)
 
@@ -201,6 +226,8 @@ def main():
                  if not (report_rx and re.fullmatch(report_rx, doc))]
     all_tokens = set()
     for c in changed:
+        if exclude_doc_tokens and any(matches(c, glob) for glob in doc_globs if isinstance(glob, str)):
+            continue
         all_tokens |= tokens_for(c, min_len, exclude)
     if args.mode != "full" and all_tokens:
         token_list = sorted(all_tokens, key=len, reverse=True)
@@ -212,6 +239,24 @@ def main():
                 continue
             if any(tok in content for tok in token_list):
                 prov.setdefault(doc, set()).add("heuristic")
+
+    history_sha = None
+    if args.mode != "full" and regression_enabled and args.history:
+        if os.path.isfile(args.history):
+            try:
+                with open(args.history, "rb") as handle:
+                    history_raw = handle.read()
+                history_sha = "sha256:" + hashlib.sha256(history_raw).hexdigest()
+                entries = parse_history(json.loads(history_raw.decode("utf-8")))
+                last = {}
+                for entry in entries:
+                    last[entry["path"]] = entry
+                for path, entry in last.items():
+                    if (entry["verdict"] == "FAIL" and path in doc_files and exists(path)
+                            and content_sha(repo, path) == entry["contentSha"]):
+                        prov.setdefault(path, set()).add("regression")
+            except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+                warnings.append(f"regression recheck skipped: history unreadable ({exc})")
 
     # --- ssotRecheck ---
     # Spec §5.2: trigger on CHANGED files, not impacted docs.
@@ -244,16 +289,25 @@ def main():
         s = prov[p]
         if "full" in s:
             return "full"
-        return "both" if {"mapped", "heuristic"} <= s else next(iter(s))
+        if "mapped" in s:
+            return "both" if "heuristic" in s else "mapped"
+        if "heuristic" in s:
+            return "heuristic"
+        if "regression" in s:
+            return "regression"
+        return "heuristic"
 
     mapped_paths = sorted(p for p in prov if "mapped" in prov[p] or "full" in prov[p])
-    heur_only = sorted(p for p in prov if "mapped" not in prov[p] and "full" not in prov[p])
-    ordered = mapped_paths + heur_only
-    candidates_before_cap = len(mapped_paths) + len(heur_only)
+    regression_only = sorted(p for p in prov if "regression" in prov[p] and "mapped" not in prov[p] and "full" not in prov[p])
+    heur_only = sorted(p for p in prov if "heuristic" in prov[p] and "mapped" not in prov[p] and "regression" not in prov[p] and "full" not in prov[p])
+    ordered = mapped_paths + regression_only + heur_only
+    candidates_before_cap = len(ordered)
     truncated = args.mode != "full" and len(ordered) > max_docs
     if truncated:
         dropped = len(ordered) - max_docs
-        print(f"warn: {dropped} impacted docs dropped by maxImpactedDocs={max_docs}", file=sys.stderr)
+        cap_warning = f"{dropped} impacted docs dropped by maxImpactedDocs={max_docs}"
+        print(f"warn: {cap_warning}", file=sys.stderr)
+        warnings.append(cap_warning)
         ordered = ordered[:max_docs]
 
     impacted = [{"path": p, "provenance": provenance(p)} for p in ordered]
@@ -261,17 +315,29 @@ def main():
 
     mapped_n = sum(1 for d in impacted if d["provenance"] in ("mapped", "both"))
     heur_n = sum(1 for d in impacted if d["provenance"] == "heuristic")
+    regression_n = sum(1 for d in impacted if d["provenance"] == "regression")
+    doc_corpus = len(doc_files)
+    heuristic_saturation = round(len(heur_only) / doc_corpus, 3) if doc_corpus else 0.0
+    raw_saturation = len(heur_only) / doc_corpus if doc_corpus else 0.0
+    if saturation is not None and heur_only and raw_saturation >= saturation:
+        pct = round(raw_saturation * 100, 1)
+        warnings.append(
+            f"heuristic saturation: {len(heur_only)}/{doc_corpus} docs ({pct}%) reached only by the token heuristic — impactMap is not carrying the selection; promote couplings from mapGapCandidates to impactMap")
 
-    json.dump({
+    result = {
         "impacted": impacted,
         "mapGapCandidates": map_gap,
         "ssotRecheck": ssot,
         "warnings": list(dict.fromkeys(warnings)),
         "truncated": truncated,
         "counts": {"changed": len(changed), "impacted": len(impacted),
-                   "mapped": mapped_n, "heuristicOnly": heur_n,
+                   "mapped": mapped_n, "heuristicOnly": heur_n, "regression": regression_n,
+                   "docCorpus": doc_corpus, "heuristicSaturation": heuristic_saturation,
                    "candidatesBeforeCap": candidates_before_cap},
-    }, sys.stdout, ensure_ascii=False, indent=2)
+    }
+    if args.mode != "full" and regression_enabled and args.history:
+        result["historySha"] = history_sha
+    json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
 
 

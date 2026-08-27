@@ -861,6 +861,140 @@ exec "$DOCAUDIT_REAL_GIT" "$@"
             self.assertEqual(handle.read(), "{replaced after snapshot")
 
 
+class TestS4aSealedGate(GateBase):
+    FLIP_WARNING = (
+        'verdict instability: 1 document(s) changed verdict with unchanged content since '
+        'the previous run (1 with an unchanged change set) — single-pass verification '
+        'samples the defect pool; "fix these 1 and re-run" is not guaranteed to converge '
+        '(see ADOPTION)')
+
+    @staticmethod
+    def load(path):
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+
+    @staticmethod
+    def rewrite(path, value):
+        raw = (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode()
+        write(path, raw)
+        return "sha256:" + hashlib.sha256(raw).hexdigest()
+
+    def prepared_one(self, *, report=False):
+        extra = ({"reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"}
+                 if report else None)
+        fx = RunFixture(self, docs=("docs/a.md",), config_extra=extra)
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        self.assertEqual(fx.complete({"docs/a.md": "PASS"}).returncode, 0)
+        if report:
+            self.assertEqual(fx.write_template().returncode, 0)
+        first = fx.gate()
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        return fx
+
+    def second_verdict(self, fx, *, report=False):
+        self.assertEqual(fx.open(runid="20260818T120001Z-abcdef13").returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        self.assertEqual(fx.complete({"docs/a.md": "FAIL"}).returncode, 0)
+        if report:
+            self.assertEqual(fx.write_template().returncode, 0)
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        return json.loads(proc.stdout)
+
+    def assert_flip_counts(self, result, flips, same_change_set):
+        self.assertEqual(result["counts"]["verdictFlipsUnchangedContent"], flips)
+        self.assertEqual(
+            result["counts"]["verdictFlipsUnchangedContentSameChangeSet"],
+            same_change_set)
+
+    def test_impact_sha_mismatch_has_fixed_reason(self):
+        fx = self.prepared()
+        impact_path = os.path.join(fx.run_dir, "impact.json")
+        impact = self.load(impact_path)
+        impact["warnings"] = ["changed"]
+        self.rewrite(impact_path, impact)
+        result = json.loads(self.assert_refused(fx).stdout)
+        self.assertEqual(result["reason"], "impact sha mismatch")
+
+    def test_manifest_and_impact_provenance_mismatch_has_fixed_reason(self):
+        fx = self.prepared()
+        impact_path = os.path.join(fx.run_dir, "impact.json")
+        dispatch_path = os.path.join(fx.run_dir, "dispatch.json")
+        impact = self.load(impact_path)
+        impact["impacted"][0]["provenance"] = "heuristic"
+        dispatch = self.load(dispatch_path)
+        dispatch["impactSha"] = self.rewrite(impact_path, impact)
+        fx.evidence["dispatch"] = self.rewrite(dispatch_path, dispatch)
+        result = json.loads(self.assert_refused(fx).stdout)
+        self.assertEqual(result["reason"], "provenance mismatch")
+
+    def test_unknown_provenance_with_all_shas_resealed_has_enum_reason(self):
+        fx = self.prepared()
+        impact_path = os.path.join(fx.run_dir, "impact.json")
+        dispatch_path = os.path.join(fx.run_dir, "dispatch.json")
+        manifest_path = os.path.join(fx.run_dir, "manifest.json")
+        impact = self.load(impact_path)
+        path = impact["impacted"][0]["path"]
+        impact["impacted"][0]["provenance"] = "unknown"
+        dispatch = self.load(dispatch_path)
+        dispatch["impactSha"] = self.rewrite(impact_path, impact)
+        fx.evidence["dispatch"] = self.rewrite(dispatch_path, dispatch)
+        manifest = self.load(manifest_path)
+        manifest["provenance"][path] = "unknown"
+        fx.evidence["manifest"] = self.rewrite(manifest_path, manifest)
+        result = json.loads(self.assert_refused(fx).stdout)
+        self.assertEqual(result["reason"], f"provenance enum violation: {path}=unknown")
+
+    def test_audit_scope_changed_after_seal_has_barrier_reason(self):
+        scope_raw = b'{"version":1,"rules":[]}\n'
+        metadata = {
+            "path": ".claude/audit-scope.json",
+            "sha256": hashlib.sha256(scope_raw).hexdigest(),
+            "rules": 0,
+            "importedAt": "2026-08-18T12:00:00Z",
+        }
+        fx = RunFixture(self, docs=("docs/a.md",), config_extra={"auditScope": metadata})
+        scope_path = os.path.join(fx.repo, metadata["path"])
+        write(scope_path, scope_raw)
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        self.assertEqual(fx.complete().returncode, 0)
+        write(scope_path, b'{"version":1,"rules":[{"changed":true}]}\n')
+        result = json.loads(self.assert_refused(fx).stdout)
+        self.assertEqual(result["reason"], "audit-scope changed after seal")
+
+    def test_flip_same_change_set_is_one_one_and_reaches_report_warning(self):
+        fx = self.prepared_one(report=True)
+        result = self.second_verdict(fx, report=True)
+        self.assert_flip_counts(result, 1, 1)
+        self.assertIn(self.FLIP_WARNING, result["warnings"])
+        report = os.path.join(fx.repo, result["reportPath"])
+        with open(report, encoding="utf-8") as handle:
+            body = handle.read()
+        self.assertIn("verdict instability: 1 document(s)", body)
+        self.assertIn('"verdictFlipsUnchangedContent":1', body)
+        self.assertIn('"verdictFlipsUnchangedContentSameChangeSet":1', body)
+
+    def test_flip_changed_change_set_is_one_zero(self):
+        fx = self.prepared_one()
+        write(os.path.join(fx.repo, "src", "app.py"), "print('changed code')\n")
+        git(fx.repo, "add", "src/app.py")
+        git(fx.repo, "commit", "-m", "change code only")
+        result = self.second_verdict(fx)
+        self.assert_flip_counts(result, 1, 0)
+
+    def test_flip_changed_content_is_zero_zero(self):
+        fx = self.prepared_one()
+        write(os.path.join(fx.repo, "docs", "a.md"), "# changed document\n")
+        git(fx.repo, "add", "docs/a.md")
+        git(fx.repo, "commit", "-m", "change document")
+        result = self.second_verdict(fx)
+        self.assert_flip_counts(result, 0, 0)
+        self.assertFalse(any(item.startswith("verdict instability:")
+                             for item in result["warnings"]))
+
+
 class TestCache(GateBase):
     def two_passes(self, fx):
         for number in range(2):
@@ -980,6 +1114,167 @@ class TestCache(GateBase):
         self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
         self.assertEqual(json.loads(proc.stdout)["verdict"], "REFUSED")
         self.assertTrue(os.path.exists(fx.anchor))
+
+
+class TestCodexReviewGate(GateBase):
+    def prepared_codex(self, config, phase4):
+        fx = RunFixture(self, config_extra=config)
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        self.assertEqual(fx.complete(phase4=phase4).returncode, 0)
+        return fx
+
+    def test_required_state_matrix(self):
+        states = {
+            "completed": 0,
+            "execution-failed": 3,
+            "ref-invalid": 3,
+            "skipped-full-run": 3,
+            "not-active": 3,
+        }
+        for state, returncode in states.items():
+            with self.subTest(state=state):
+                fx = self.prepared_codex(
+                    {"codexReview": {"required": True}},
+                    {"findings": [], "codexReview": {"state": state}})
+                proc = fx.gate()
+                self.assertEqual(proc.returncode, returncode, proc.stdout + proc.stderr)
+                result = json.loads(proc.stdout)
+                if state == "completed":
+                    self.assertEqual(result["verdict"], "CONSISTENT")
+                    self.assertEqual(result["codexReview"],
+                                     {"state": "completed", "required": True,
+                                      "degraded": False})
+                else:
+                    self.assertEqual(result["verdict"], "REFUSED")
+                    self.assertEqual(result["reason"],
+                                     "codex-review required but state=" + state)
+
+    def test_required_missing_codex_review_and_phase4_are_refused(self):
+        missing_key = self.prepared_codex(
+            {"codexReview": {"required": True}}, {"findings": []})
+        proc = missing_key.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["reason"],
+                         "codex-review required but state=missing")
+
+        missing_file = RunFixture(self, config_extra={"codexReview": {"required": True}})
+        self.assertEqual(missing_file.open().returncode, 0)
+        self.assertEqual(missing_file.plan_start_seal().returncode, 0)
+        for path in missing_file.docs:
+            self.assertEqual(missing_file.write_verdict(path).returncode, 0)
+        returns = [{"attempt": 1, "assignedPath": path, "returnedPath": path,
+                    "verdict": "PASS", "rationale": "checked", "suggestion": None}
+                   for path in missing_file.docs]
+        self.assertEqual(missing_file.write_evidence("returns", returns).returncode, 0)
+        proc = missing_file.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["reason"],
+                         "codex-review required but state=missing")
+
+    def test_required_config_errors_are_refused(self):
+        cases = [
+            ({"codexReview": {"required": "yes"}},
+             "codexReview.required must be boolean"),
+            ({"codexReview": {"required": True, "enabled": False}},
+             "codexReview.required conflicts with enabled:false"),
+        ]
+        for config, reason in cases:
+            with self.subTest(reason=reason):
+                fx = self.prepared_codex(
+                    config, {"findings": [], "codexReview": {"state": "completed"}})
+                proc = fx.gate()
+                self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+                self.assertEqual(json.loads(proc.stdout)["reason"], reason)
+
+    def test_codex_review_evidence_shape_is_always_strict(self):
+        cases = [
+            (["completed"], "codexReview must be an object"),
+            ({"state": 7}, "state must be a string"),
+            ({"state": "future-state"}, "state is not recognized"),
+        ]
+        for evidence, detail in cases:
+            with self.subTest(detail=detail):
+                fx = self.prepared_codex(
+                    {}, {"findings": [], "codexReview": evidence})
+                proc = fx.gate()
+                self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+                self.assertEqual(json.loads(proc.stdout)["reason"],
+                                 "codexReview evidence invalid: " + detail)
+
+    def test_absent_codex_review_keeps_backward_compatible_behavior(self):
+        fx = self.prepared_codex({}, {"findings": []})
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["verdict"], "CONSISTENT")
+        self.assertEqual(result["codexReview"],
+                         {"state": None, "required": False, "degraded": False})
+
+    def test_degraded_report_is_decorated_but_state_and_anchor_are_plain(self):
+        fx = self.prepared_codex(
+            {"reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"},
+            {"findings": [],
+             "codexReview": {"state": "execution-failed", "required": True}})
+        self.assertEqual(fx.write_template().returncode, 0)
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        warning = ("codex-review did not run (execution-failed) — verdict excludes "
+                   "the adversarial layer")
+        self.assertEqual(result["verdict"], "CONSISTENT")
+        self.assertIn(warning, result["warnings"])
+        self.assertEqual(result["codexReview"],
+                         {"state": "execution-failed", "required": False,
+                          "degraded": True})
+        with open(os.path.join(fx.repo, result["reportPath"]), encoding="utf-8") as handle:
+            report = handle.read()
+        self.assertIn(
+            "verdict: CONSISTENT (codex-review did not run: execution-failed)", report)
+        with open(fx.last_run, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["verdict"], "CONSISTENT")
+        with open(fx.anchor, encoding="utf-8") as handle:
+            anchor = json.load(handle)
+        self.assertEqual(anchor["sha"], fx.head)
+        self.assertNotIn("codex-review", json.dumps(anchor))
+
+    def test_optional_ref_invalid_warns_without_refusing(self):
+        fx = self.prepared_codex(
+            {}, {"findings": [], "codexReview": {"state": "ref-invalid"}})
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertIn(
+            "codex-review did not run (ref-invalid) — verdict excludes the adversarial layer",
+            result["warnings"])
+
+    def test_required_refusal_preserves_history_and_anchor_and_updates_last_run(self):
+        fx = self.prepared_codex(
+            {"codexReview": {"required": True}},
+            {"findings": [], "codexReview": {"state": "completed"}})
+        first = fx.gate()
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        with open(fx.history, "rb") as handle:
+            history_before = handle.read()
+        with open(fx.anchor, "rb") as handle:
+            anchor_before = handle.read()
+
+        self.assertEqual(fx.open(runid="20260818T120001Z-abcdef12").returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        self.assertEqual(fx.complete(phase4={
+            "findings": [], "codexReview": {"state": "execution-failed"}}).returncode, 0)
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        reason = "codex-review required but state=execution-failed"
+        self.assertEqual(json.loads(proc.stdout)["reason"], reason)
+        with open(fx.history, "rb") as handle:
+            self.assertEqual(handle.read(), history_before)
+        with open(fx.anchor, "rb") as handle:
+            self.assertEqual(handle.read(), anchor_before)
+        with open(fx.last_run, encoding="utf-8") as handle:
+            last_run = json.load(handle)
+        self.assertEqual(last_run["verdict"], "REFUSED")
+        self.assertEqual(last_run["reason"], reason)
 
 
 if __name__ == "__main__":

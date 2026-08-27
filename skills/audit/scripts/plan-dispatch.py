@@ -71,8 +71,10 @@ def main():
             raise ValueError("config changed after open-run")
         config = json.loads(config_raw.decode("utf-8"))
         backend = config.get("phase3Backend", "workflow")
-        with open(args.impact_json, encoding="utf-8") as handle:
-            impacted = paths_from_impact(json.load(handle))
+        with open(args.impact_json, "rb") as handle:
+            impact_raw = handle.read()
+        impact = json.loads(impact_raw.decode("utf-8"))
+        impacted = paths_from_impact(impact)
         mode = "full" if args.full else args.mode
         baseline_sha = args.baseline_sha
         if mode == "full":
@@ -98,6 +100,11 @@ def main():
             except (UnicodeError, ValueError, json.JSONDecodeError):
                 history_status = "corrupt"
                 entries = []
+        expected_history_sha = impact.get("historySha")
+        actual_history_sha = sha256_bytes(history_raw) if history_raw is not None else None
+        if "historySha" in impact and expected_history_sha != actual_history_sha:
+            print("history changed between resolve and dispatch", file=sys.stderr)
+            return 3
         enabled, minimum, warnings = validate_min_passes(config)
         if history_status != "ok" or mode == "full":
             enabled = False
@@ -135,7 +142,8 @@ def main():
                         "changeSetSha": changed["changeSetSha"],
                         "changedSet": changed["changedSet"], "baselineSha": baseline_sha,
                         "minConsecutivePasses": minimum, "contractVersion": args.contract_version,
-                        "historyStatus": history_status, "warnings": warnings}
+                        "historyStatus": history_status, "warnings": warnings,
+                        "impactSha": sha256_bytes(impact_raw)}
         raw = json_bytes(dispatch_doc)
         atomic_write(os.path.join(args.run_dir, "dispatch.json"), raw)
         cached_material = b"".join(cached_bytes[path] for path in sorted(cached_bytes))

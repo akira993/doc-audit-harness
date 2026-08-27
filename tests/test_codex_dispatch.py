@@ -1,5 +1,6 @@
 """Deterministic fake-codex tests for the Phase-3 dispatcher prototype."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -158,8 +159,11 @@ class CodexDispatchFixture:
                     "dispatch": self.docs, "cached": self.cached,
                     "impacted": self.docs + self.cached,
                     "baselineSha": "baseline", "head": "head", "mode": run_mode,
-                    "changedSet": changed_set if changed_set is not None else []}
-        self._write_json(os.path.join(self.run_dir, "manifest.json"), manifest)
+                    "changedSet": changed_set if changed_set is not None else [],
+                    "provenance": {path: "mapped" for path in self.docs + self.cached}}
+        self.manifest_path = os.path.join(self.run_dir, "manifest.json")
+        self._write_json(self.manifest_path, manifest)
+        self.refresh_evidence()
         impact = {"impacted": [{"path": path, "provenance": "mapped"}
                                for path in self.docs + self.cached]}
         self._write_json(os.path.join(self.run_dir, "impact.json"), impact)
@@ -175,6 +179,11 @@ class CodexDispatchFixture:
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(value, handle)
 
+    def refresh_evidence(self):
+        with open(self.manifest_path, "rb") as handle:
+            raw = handle.read()
+        self.evidence = {"manifest": "sha256:" + hashlib.sha256(raw).hexdigest()}
+
     def run(self, mode="normal", timeout="1", concurrency=None, codex_bin=None):
         env = os.environ.copy()
         env["PATH"] = self.bin_dir + os.pathsep + env.get("PATH", "")
@@ -182,7 +191,8 @@ class CodexDispatchFixture:
                     "FAKE_STATE": self.state, "FAKE_COUNTS": self.counts})
         command = [sys.executable, DISPATCH, "--run-dir", self.run_dir,
                    "--repo-root", self.repo, "--model", "gpt-5.6-luna",
-                   "--effort", "medium", "--timeout-seconds", timeout]
+                   "--effort", "medium", "--timeout-seconds", timeout,
+                   "--evidence", json.dumps(self.evidence)]
         if concurrency is not None:
             command.extend(["--concurrency", str(concurrency)])
         if codex_bin is not None:
@@ -212,6 +222,26 @@ class CodexDispatchFixture:
 
 
 class TestCodexDispatch(unittest.TestCase):
+    def test_manifest_sha_mismatch_starts_no_child_process(self):
+        fx = CodexDispatchFixture(self, docs=["docs/a.md"])
+        with open(fx.manifest_path, "ab") as handle:
+            handle.write(b" ")
+        proc = fx.run()
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertEqual(proc.stdout, "")
+        self.assertIn("manifest sha", proc.stderr)
+        self.assertFalse(os.path.exists(fx.log))
+        self.assertFalse(os.path.exists(os.path.join(fx.run_dir, "codex-out")))
+
+    def test_prompt_provenance_comes_only_from_sealed_manifest(self):
+        fx = CodexDispatchFixture(self, docs=["docs/a.md"])
+        fx._write_json(os.path.join(fx.run_dir, "impact.json"), {
+            "impacted": [{"path": "docs/a.md", "provenance": "heuristic"}]})
+        proc = fx.run()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("Impact provenance: mapped.", fx.prompt())
+        self.assertNotIn("Impact provenance: heuristic.", fx.prompt())
+
     def test_prompt_scope_tracks_full_and_incremental_manifest_modes(self):
         full = CodexDispatchFixture(self, docs=["docs/a.md"], run_mode="full")
         proc = full.run()

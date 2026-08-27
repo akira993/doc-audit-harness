@@ -1,6 +1,6 @@
 {
   "name": "docaudit",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Change-driven documentation audit harness with local check-docs onboarding, pre-flight checks, sealed run evidence, deterministic PASS caching, light/standard routing, delegated doc checks, and review-backed CONSISTENT / NEEDS FIX / REFUSED verdicts.",
   "author": { "name": "akira993" },
   "homepage": "https://github.com/akira993/doc-audit-harness",

@@ -105,21 +105,20 @@ context-mode 行の直後に非ブロッキングの **ax 状態行**を出力�
 付き）、稼働なら ✓（verdict は変えない）。
 
 `codex`（CLI 本体、`@openai/codex` npm パッケージ — 自律実行から呼び出せない openai-codex
-Claude Code plugin とは**別物**）は Phase 4 の第4のレビューで、`/code-review`・`/security-review`
-の後に走る。他の任意項目と同じく conditional-force（導入済みなら自動使用、
-`"codexReview": {"enabled": false}` で opt-out 可）だが、**本ドキュメントの他のすべての seam に
-対する唯一の例外**である: `codex` が導入済みで、baseline ref が検証を通り（`git rev-parse
---verify`）、実行が完走した場合、その `critical`/`high` 所見は `/code-review` 自身の
-high-severity 所見と同じ規則で `phase4.json` に**ブロッキングとして**取り込まれる
-（`medium`/`low` は非ブロッキング）。すべての `codex exec` 呼び出しは必須・変更不可の
-`-s read-only` フラグを持ち、レビュー対象は監査対象の変更集合のみ（`$BASELINE_SHA..HEAD`、
-プロンプト本文に埋め込み — working tree ではなく、`--base` フラグでもない）。`mode=full`
-（baseline 無し）の場合はレビュー自体を skip する（範囲が非有界なため）。タイムアウト・
-非ゼロ終了・schema 不一致の出力は WARN のみで、それ単独では FAIL の根拠にしない。各 audit は
-ax 行の直後に **3状態・非ブロッキングの codex-review 状態行**を出力する: 未導入なら 💡、
-`mode=full` なら 💡「skipped (full run)」、それ以外は ✓「active (findings included in
-verdict when present)」 — 行自体は verdict をブロックしないが、その行が要約する所見は既に
-verdict に寄与している場合がある旨を明記する。
+Claude Code plugin とは**別物**）は、`/code-review`・`/security-review` の後に走る Phase 4 の第4の
+レビューである。conditional-force（導入済みなら自動使用、`"codexReview": {"enabled": false}` で
+opt-out 可）である。Phase 0 の probe は `<bin> --version` と `<bin> exec --help` だけを実行し、CLI の
+存在と `exec` 到達性だけを確認する。実際の sandbox・権限・wrapper 引数・モデル呼出しは保証しない。
+wrapper が必要なら `codexReview.bin` に指定する。
+
+`codex-review-plan.py` が利用可否、mode、baseline の有効性、`codexReview.required` から動作を決める。
+incremental は `$BASELINE_SHA..HEAD` を、full は `required:true` の場合だけ seal 済みの現在 worktree を
+レビューし、それ以外の full は skip する。すべての呼出しには必須・変更不可の `-s read-only` を付ける。
+evidence の状態は `completed`、`execution-failed`、`ref-invalid`、`skipped-full-run`、`not-active` の5値で、
+Phase 5 は中央の2値を同じ未実行 WARN として4分類で表示する。既定の `required:false` では未完了は WARN。
+`required:true` では evidence の欠落または `completed` 以外を gate が **REFUSED** にする。strict mode は最初の
+baseline を確立してから有効化する。完走した review の `critical`/`high` 所見はブロッキング、`medium`/`low`
+は非ブロッキングのままである。
 
 これとは別に、v0.12.0 では Phase 3 を `"phase3Backend":"codex"` で opt-in できる。
 `codex-dispatch.py` が dispatched 文書ごとに read-only の Codex process を起動し、既定値は
@@ -146,7 +145,7 @@ Phase-0 probe が毎回 `.codegraph/` を最新化する（初回は `init`、�
 ものだけを採用 — `ccc search` には**足切りが無い**ことが確認済みで、無関係なクエリでも
 exit 0・limit 件を、目に見えて低いスコア帯で返す）。どちらも conditional-force
 （`"docGraph": {"enabled": false}` / `"semanticSearch": {"enabled": false}`）であり、どちらも
-`resolve-impact.py` 自身の cap 適用後に残った枠にのみ、優先順位 `mapped` ≥ `heuristic` ≥
+`resolve-impact.py` 自身の cap 適用後に残った枠にのみ、優先順位 `mapped` ≥ `regression` ≥ `heuristic` ≥
 `graphify` ≥ `semantic` を厳守してマージする — 既存候補を1件たりとも押し出すことはない
 （Issue #8 の再発防止）。**CocoIndex について最も重要な規則: docaudit 自身は `ccc init` を
 絶対に実行しない** — `ccc init` は対象 repo の `.gitignore` に `/.cocoindex_code/` を自動追記する
@@ -155,9 +154,22 @@ exit 0・limit 件を、目に見えて低いスコア帯で返す）。どち�
 扱う。初期化は `/docaudit:init` の中でのみ、`.gitignore` への書き込みを明示したユーザー承認を
 経て行われる。
 
-impact provenance は、`impactMap` のみなら `mapped`、heuristic のみなら `heuristic`、両方が同じ
+impact provenance は、`impactMap` のみなら `mapped`、現在の内容ハッシュが履歴と一致する前回 FAIL の再検証なら `regression`（impactMap-gap 候補ではない）、heuristic のみなら `heuristic`、両方が同じ
 文書へ到達した場合は `both`、任意の補完元なら `graphify` / `semantic`、anchor が無いか明示的な
 `--full` の全文書 run では各 `docGlobs` 文書が `full` になる。
+
+健全な設定では、選択された文書の大半が `mapped` で到達し、token `heuristic` はまだ
+`impactMap` に昇格していない結び付きの残差になる。監査コストの主因は
+`maxImpactedDocs` ではなく anchor の古さである。このリポジトリの実測では、古い anchor
+で約 92 文書（約 3.6M tokens）、単一 commit 窓の中央値で約 18 文書だった。
+
+`regressionRecheck.enabled` は opt-in である。現在の内容ハッシュが履歴と一致する前回 FAIL を provenance `regression` として
+追加するもので、`impactMap` の不足候補ではない。単発の検証結果にはブレがあるため、報告された指摘
+N 件を直して再実行すれば `CONSISTENT` になるとは保証されない。gate は文書内容・契約版・backend が
+同じで verdict が変わった件数を `verdictFlipsUnchangedContent` に出す。文書内容が不変でもコード側の
+変更で verdict が正当に変わり得る。`verdictFlipsUnchangedContentSameChangeSet` は同じ change set でも
+変わった M 件の部分集合で、純粋なブレの下限である。1件の欠陥を見つけたら、報告箇所だけでなく、
+同じ欠陥クラスを対象文書全体で横断的に掃除することを推奨する。
 
 各 audit は codex-review 行の直後にさらに3つの非ブロッキング状態行を出力する:
 **symbol-graph**（💡 未導入 / ✓ 稼働 / ⚠ 索引構築失敗）、**doc-graph**（💡 未導入 / ✓ 稼働 +
@@ -188,7 +200,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.12.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.13.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -246,8 +258,8 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.1 または 0.11.0 テンプレートは、
-`/docaudit:init --harness --refresh` で 0.12.0 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.1、0.11.0、または 0.12.0 テンプレートは、
+`/docaudit:init --harness --refresh` で 0.13.0 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
@@ -272,14 +284,16 @@ cd ~/code/my-project
 | `anchorPath` | string | はい | anchor 状態ファイルの repo 相対パス（慣習: `.claude/state/last-doc-audit.json`） |
 | `diffGlobs` | string[] | はい | 変更集合を絞る path glob。`**` は `/` を跨ぐ、`*` は跨がない。 |
 | `docGlobs` | string[] | いいえ | heuristic/generic スキャンでドキュメントとして扱うファイル（既定 `["docs/**/*.md","*.md"]`） |
-| `impactMap` | object[] | はい | `{changed: path\|glob, impacts: [docPath,…], note?: string}` — 中核（§6）。`[]` で開始してもよい。 |
+| `impactMap` | object[] | はい | `{changed: path\|glob, impacts: [docPath,…], note?: string, source?: string}` — 中核（§6）。`source:"audit-scope"` は生成物。`[]` で開始してもよい。 |
+| `auditScope` | object | いいえ | importer が書く `{path,sha256,importedAt,rules}`。手編集しない。 |
 | `ssotSources` | object[] | いいえ | `{name, value?, liveSource, docsThatCite: [path\|path:line,…]}` — ドキュメント横断の値整合 |
 | `docAuditCommands` | object | いいえ | `{format, existence, semantic}` — Phase 4 を委譲する slash コマンド/スキル名。省略 ⇒ generic fallback。 |
 | `boundaryCommand` | string | いいえ | プロジェクト境界 / 禁止パターンチェックの shell コマンド（例 `make check-boundary`） |
 | `reviewCommands` | object | いいえ | `{code, security}` — effort 込みの review コマンド文字列（例 `"/code-review high"`, `"/security-review"`） |
 | `reportPath` | string | いいえ | レポート出力テンプレート。`<YYYY-MM-DD>` と `[_NN]` 衝突サフィックスをサポート |
 | `maxImpactedDocs` | number | いいえ | 影響ドキュメント数の上限（既定 200）。超過で `truncated` をセット（必ず表面化、暗黙に捨てない） |
-| `heuristics` | object | いいえ | `{minIdentifierLength:int, excludeBasenames:[string,…]}` — heuristic の recall ノイズを調整 |
+| `heuristics` | object | いいえ | `{minIdentifierLength:int, excludeBasenames:[string,…], saturationWarnRatio:number=0.5, excludeDocPathTokens:bool=false}` — heuristic の recall ノイズを調整。`0` で飽和 WARN を無効化。 |
+| `regressionRecheck` | object | いいえ | `{enabled:bool=false}` — 内容不変の直近 FAIL を再検証する opt-in。 |
 | `frontMatterFields` | string[] | いいえ | generic `format` レイヤが全ドキュメントに要求する front-matter フィールド（欠落で WARN）。省略でスキップ |
 | `indexFiles` | string[] | いいえ | generic `semantic` レイヤの orphan 検出のリンク根（既定: doc ツリー内の任意の `README.md`） |
 | `harness` | object | いいえ | `{state,decidedAt,engineVersion}`。state は上記 5 状態のいずれか。未設定は互換用の `unset`。 |
@@ -287,7 +301,7 @@ cd ~/code/my-project
 | `phase3Backend` | string | いいえ | `"workflow"`（既定）または `"codex"`。不正値は run の seal 時に拒否。 |
 | `phase3CodexTimeoutSeconds` | number | いいえ | Codex 文書別実行 timeout。整数 60..3600、既定 600。Codex Phase-3 backend のみで使用。 |
 | `models.light` | object | いいえ | `{enabled,maxChanged,maxImpacted,maxDiffLines,maxDiffBytes,sensitiveTokens}`。light run の決定論的な上限。 |
-| `codexReview` | object | いいえ | `{enabled,bin,model?,timeoutMs?}`。`model` 指定を優先し、未指定なら light=Luna、standard=Terra。effort は両方 medium。 |
+| `codexReview` | object | いいえ | `{enabled,required:bool=false,bin,model?,timeoutMs?}`。`required:true` は未完了 review を REFUSED にする。baseline 確立後に有効化する。 |
 | `digestExclude` | string[] | いいえ | seal から除外する追加生成パス。`.claude/state/**` または既知の生成データディレクトリだけ許可。 |
 | `protectedGlobs` | string[] | いいえ | pre-flight 修正を禁止する追加パス。組込みの ADR/decisions/logs/`.claude` 保護は解除不可。 |
 
@@ -300,6 +314,10 @@ heuristic に頼る）。
 ---
 
 ## 6. 良い `impactMap` を作る（中核）
+
+### `audit-scope.json` がある場合
+
+`audit-scope.json` が正本で、`source:"audit-scope"` の `impactMap` は生成物です。ずれ（drift）があると Phase 0 は停止します。`/docaudit:init --import-audit-scope` で復旧してください。run 間の import に `--accept-config` は不要で、exit 6 は実行中の設定変更を拒否した場合だけです。実行中は lock により import が拒否されます。`{"impact":"none"}` は生成対象から外しますが、heuristic が文書を拾うことはあります。
 
 impact map こそが監査を *change-driven* にする。各エントリは
 **「このソースパスが変わったら、これらのドキュメントを再チェックせよ」** を表す。
@@ -364,6 +382,16 @@ impact map こそが監査を *change-driven* にする。各エントリは
 
 ---
 
+### Phase 3 の構造的盲点
+
+**Phase 3 単独ではこれらを保証しない。** たとえばガイドが `.dev.vars` と書く一方で
+`.env.example` と source は `.env.local` と書くような複数文書間の矛盾、src コメント・dotfile・
+生成物ヘッダにある `X.md §N` 型参照、開発サーバーなど手順の前提条件を満たせるかどうかである。
+Phase 4 の code/security review、codex review（incremental、または `codexReview.required` を伴う full）、
+gate の sibling scan は横断的な補完層である。codex review のプロンプトもこの3観点を明示的に確認する。
+
+---
+
 ## 8. 監査の実行 — verdict & anchor ライフサイクル
 
 - **`/docaudit:audit --full`** — 全コーパスの深掘り監査。初回・大きな変更後・定期実行に使う。
@@ -405,6 +433,16 @@ impact map こそが監査を *change-driven* にする。各エントリは
 1. 指摘を修正して **コミット**。
 2. `--full` を再実行。CONSISTENT になればエンジンが現在の SHA で anchor を書く。
 3. **anchor（+ レポート）を別の meta コミット** としてコミット。
+
+### v0.13.0 の互換性影響
+
+- gate に provenance/audit-scope の整合性と strict Codex-review evidence に関する **REFUSED** 条件が加わった。
+  manifest は `provenance` と `auditScopeSha` を、dispatch は `impactSha` を持つ。
+- この版をまたぐ実行中 run は `--break-lock` で停止してから再実行する。Phase 3 と Phase 4 は seal 済み
+  manifest を `read-manifest.py` 経由で読み、`codex-dispatch.py` は `--evidence` を必須とする。
+- Phase 4 の Codex 分岐は決定論的な判定表を経由し、Phase 5 の Codex 行は4分類で表示する。`check-docs` には
+  3つの正しさ修正がある。新しい `counts` と任意の `regressionRecheck`、`excludeDocPathTokens`、
+  `codexReview.required`、`auditScope` は、既定で無効または不在の後方互換な追加である。
 
 ---
 
