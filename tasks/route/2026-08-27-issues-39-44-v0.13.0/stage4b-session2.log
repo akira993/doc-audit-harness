@@ -1,0 +1,1644 @@
+[0mdirenv: loading ~/Projects/doc-audit-harness/.envrc
+OpenAI Codex v0.149.0
+--------
+workdir: /Users/akiratakahashi/Projects/doc-audit-harness
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR] (network access enabled)
+reasoning effort: medium
+reasoning summaries: none
+session id: 01a04293-f7e4-7493-be7c-1fd2204dd162
+--------
+user
+boss レビュー（S4b 差し戻し 1、軽微）— 1 点。git 操作は不要。
+
+`skills/audit/scripts/start-run.py` の `phase4_required` 追加条件 `config.get("codexReview", {}).get("required") is True` は、
+`codexReview` が object でない（例: 配列・文字列）config で `AttributeError` の traceback 落ちになる。gate（decide-verdict.py）は
+非 object を `{}` 扱いにしているので、start-run も同じく `isinstance(..., dict)` で `{}` に畳んで `required` を読むこと
+（非 object なら required=False として扱い、型異常の REFUSED は gate の責務のまま）。`tests/test_start_run.py` に
+`codexReview: []` と `codexReview: "x"` で start-run が正常終了し `phase4Required` が従来判定になるケースを追加せよ。
+
+完了後、`python3 -m unittest tests.test_start_run tests.test_decide_verdict -v` とフルスイートを実行し、件数を報告せよ。
+
+codex
+差し戻し内容は正しいです。前回、指定された式の字面を優先して、`codexReview` 自体の型が壊れている場合を見落としました。再発防止の記録は、配列・文字列の2ケースを固定する回帰テストとして残します。
+
+修正は `start-run.py` の型を畳む処理と `test_start_run.py` の追加だけに限定し、探索担当には既存テスト内の最適な追加位置と従来判定を読み取り確認してもらいます。修正後、指定の重点テストと全体テストを実行します。
+  → start-runの設定読取と既存テスト構造を確認する
+  • 非objectを空objectとして扱う修正と回帰テストを追加する
+  • 指定重点テストとフルスイートを実行し件数を確認する
+exec
+/bin/zsh -lc "sed -n '330,430p' tests/test_start_run.py" in /Users/akiratakahashi/Projects/doc-audit-harness
+exec
+/bin/zsh -lc "sed -n '236,258p' skills/audit/scripts/start-run.py" in /Users/akiratakahashi/Projects/doc-audit-harness
+ succeeded in 0ms:
+            raise ValueError("baselineSha is missing")
+        harness = config.get("harness", {})
+        state = harness.get("state") if isinstance(harness, dict) else None
+        commands = config.get("docAuditCommands")
+        preflight_required = state in {"installed", "integrated", "adjusted"} or (
+            state in {None, "existing-untouched"} and bool(commands))
+        if state == "installed":
+            generated = [".claude/commands/check-docs.md",
+                         ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+            if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                preflight_required = False
+        phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                           or args.mode == "full" or preflight_required
+                           or bool(config.get("codexReview", {}).get("required") is True))
+        digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+        doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+        corpus = list_doc_files(repo, doc_globs)
+        if config.get("auditReportsInCorpus") is not True:
+            report_rx = report_pattern(config)
+            corpus = [path for path in corpus
+                      if not (report_rx and re.fullmatch(report_rx, path))]
+        if args.mode == "full" and not paths and corpus:
+            raise ValueError("full mode requires impacted documents unless the corpus is empty")
+
+ succeeded in 0ms:
+        self.assertIn("full mode requires impacted", proc.stderr)
+
+    def test_manifest_uses_default_doc_globs_and_excludes_claude_worktrees(self):
+        fx = RunFixture(self)
+        fx.config.pop("docGlobs")
+        write(fx.config_path, json.dumps(fx.config, indent=2) + "\n")
+        git(fx.repo, "add", fx.config_path)
+        git(fx.repo, "commit", "-m", "use default document globs")
+        fx.head = git(fx.repo, "rev-parse", "HEAD").stdout.strip()
+        fx.open()
+        proc = fx.plan_start_seal()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertEqual(manifest["docGlobs"], ["docs/**/*.md", "*.md"])
+        self.assertIn(".claude/worktrees", manifest["digestExclude"])
+
+    def test_preflight_requires_phase4_even_when_incremental_impact_is_empty(self):
+        fx = RunFixture(self, config_extra={"harness": {"state": "integrated"}})
+        fx.open()
+        self.assertEqual(fx.plan_start_seal(impacted=[]).returncode, 0)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertTrue(manifest["preflightRequired"])
+        self.assertTrue(manifest["phase4Required"])
+        fx.write_evidence("preflight", {"state": "integrated", "findings": [],
+                                         "userDecision": None, "parsed": True})
+        fx.write_evidence("returns", [])
+        fx.evidence["phase4"] = "none"
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("phase4=none", json.loads(proc.stdout)["reason"])
+
+    def test_open_rejects_invalid_runid(self):
+        fx = RunFixture(self)
+        proc = fx.open(runid="../escape")
+        self.assertEqual(proc.returncode, 2)
+
+    def test_start_rejects_unsafe_impacted_path(self):
+        fx = RunFixture(self)
+        fx.open()
+        proc = fx.plan_start_seal(impacted=["../outside.md"])
+        self.assertEqual(proc.returncode, 2)
+        self.assertTrue(proc.stderr)
+
+    def test_seal_detects_new_path_after_dispatch(self):
+        fx = RunFixture(self)
+        fx.open()
+        impact_path = os.path.join(fx.run_dir, "impact.json")
+        write(impact_path, json.dumps({
+            "impacted": [{"path": "docs/a.md", "provenance": "mapped"}]}) + "\n")
+        proc = fx.call("plan-dispatch.py", "--run-dir", fx.run_dir, "--runid", fx.runid,
+                       "--repo-root", fx.repo, "--config", fx.config_path,
+                       "--history", fx.history, "--impact-json", impact_path,
+                       "--baseline-sha", fx.head, "--mode", "incremental",
+                       "--contract-version", "0.10.0", "--evidence", json.dumps(fx.evidence))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        fx.evidence = json.loads(proc.stdout)
+        proc = fx.call("start-run.py", "--run-dir", fx.run_dir, "--runid", fx.runid,
+                       "--repo-root", fx.repo, "--impact-json", impact_path,
+                       "--dispatch-json", os.path.join(fx.run_dir, "dispatch.json"),
+                       "--run-class", "standard", "--mode", "incremental",
+                       "--config", fx.config_path, "--evidence", json.dumps(fx.evidence))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        fx.evidence = json.loads(proc.stdout)
+        write(os.path.join(fx.repo, "new.py"), "new\n")
+        proc = fx.call("seal-run.py", "--run-dir", fx.run_dir, "--repo-root", fx.repo,
+                       "--evidence", json.dumps(fx.evidence))
+        self.assertEqual(proc.returncode, 5, proc.stdout + proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["reason"], "change-set-drift")
+
+
+class TestCodexRequiredPhase4(unittest.TestCase):
+    def test_required_forces_phase4_with_no_impacted_documents_in_both_modes(self):
+        for mode in ("incremental", "full"):
+            with self.subTest(mode=mode):
+                fx = RunFixture(self, docs=(),
+                                config_extra={"codexReview": {"required": True}})
+                self.assertEqual(fx.open().returncode, 0)
+                proc = fx.plan_start_seal(impacted=[], mode=mode)
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                with open(os.path.join(fx.run_dir, "manifest.json"),
+                          encoding="utf-8") as handle:
+                    manifest = json.load(handle)
+                self.assertTrue(manifest["phase4Required"])
+
+
+class TestEndToEnd(unittest.TestCase):
+    def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal(impacted=[]).returncode, 0)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            manifest = json.load(handle)
+        self.assertEqual(manifest["mode"], "incremental")
+        self.assertEqual(manifest["changedSet"], [])
+        self.assertEqual(manifest["impacted"], [])
+        self.assertFalse(manifest["phase4Required"])
+        self.assertEqual(fx.complete(verdicts={}, returns_override=[]).returncode, 0)
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+apply patch
+patch: completed
+/Users/akiratakahashi/Projects/doc-audit-harness/skills/audit/scripts/start-run.py
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_start_run.py
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..f91f112abf39f26ca8a5a412508e2204f69bc94c
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,18 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            with self.subTest(codexReview=value):
++                fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                self.assertEqual(fx.open().returncode, 0)
++                proc = fx.plan_start_seal(impacted=[], mode="incremental")
++                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                with open(os.path.join(fx.run_dir, "manifest.json"),
++                          encoding="utf-8") as handle:
++                    manifest = json.load(handle)
++                self.assertFalse(manifest["phase4Required"])
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..f91f112abf39f26ca8a5a412508e2204f69bc94c
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,18 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            with self.subTest(codexReview=value):
++                fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                self.assertEqual(fx.open().returncode, 0)
++                proc = fx.plan_start_seal(impacted=[], mode="incremental")
++                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                with open(os.path.join(fx.run_dir, "manifest.json"),
++                          encoding="utf-8") as handle:
++                    manifest = json.load(handle)
++                self.assertFalse(manifest["phase4Required"])
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+非objectを空objectへ畳む最小修正と、配列・文字列の回帰テストを追加。指定検証へ進む。
+  ✓ start-runの設定読取と既存テスト構造を確認する
+  ✓ 非objectを空objectとして扱う修正と回帰テストを追加する
+  → 指定重点テストとフルスイートを実行し件数を確認する
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..f91f112abf39f26ca8a5a412508e2204f69bc94c
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,18 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            with self.subTest(codexReview=value):
++                fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                self.assertEqual(fx.open().returncode, 0)
++                proc = fx.plan_start_seal(impacted=[], mode="incremental")
++                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                with open(os.path.join(fx.run_dir, "manifest.json"),
++                          encoding="utf-8") as handle:
++                    manifest = json.load(handle)
++                self.assertFalse(manifest["phase4Required"])
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+codex
+修正を適用しました。`codexReview` が辞書形式でなければ空の設定として扱い、配列・文字列の両方で incremental・対象文書0件の従来値 `phase4Required:false` を固定する回帰テストを追加しています。
+
+まず指定の `start-run` と gate の重点テストを実行します。
+exec
+/bin/zsh -lc 'python3 -m unittest tests.test_start_run tests.test_decide_verdict -v' in /Users/akiratakahashi/Projects/doc-audit-harness
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..f91f112abf39f26ca8a5a412508e2204f69bc94c
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,18 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            with self.subTest(codexReview=value):
++                fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                self.assertEqual(fx.open().returncode, 0)
++                proc = fx.plan_start_seal(impacted=[], mode="incremental")
++                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                with open(os.path.join(fx.run_dir, "manifest.json"),
++                          encoding="utf-8") as handle:
++                    manifest = json.load(handle)
++                self.assertFalse(manifest["phase4Required"])
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..f91f112abf39f26ca8a5a412508e2204f69bc94c
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,18 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            with self.subTest(codexReview=value):
++                fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                self.assertEqual(fx.open().returncode, 0)
++                proc = fx.plan_start_seal(impacted=[], mode="incremental")
++                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                with open(os.path.join(fx.run_dir, "manifest.json"),
++                          encoding="utf-8") as handle:
++                    manifest = json.load(handle)
++                self.assertFalse(manifest["phase4Required"])
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+ succeeded in 84839ms:
+ok
+test_required_forces_phase4_with_no_impacted_documents_in_both_modes (tests.test_start_run.TestCodexRequiredPhase4.test_required_forces_phase4_with_no_impacted_documents_in_both_modes) ... ok
+test_consistent_run_writes_compatible_anchor (tests.test_start_run.TestEndToEnd.test_consistent_run_writes_compatible_anchor) ... ok
+test_empty_corpus_cold_start_is_consistent (tests.test_start_run.TestEndToEnd.test_empty_corpus_cold_start_is_consistent) ... ok
+test_failed_doc_yields_needs_fix_without_anchor (tests.test_start_run.TestEndToEnd.test_failed_doc_yields_needs_fix_without_anchor) ... ok
+test_incremental_empty_impact_is_consistent_and_advances_anchor (tests.test_start_run.TestEndToEnd.test_incremental_empty_impact_is_consistent_and_advances_anchor) ... ok
+test_audit_scope_metadata_type_contract_is_rejected (tests.test_start_run.TestStartRun.test_audit_scope_metadata_type_contract_is_rejected) ... ok
+test_audit_scope_sha_drift_is_rejected (tests.test_start_run.TestStartRun.test_audit_scope_sha_drift_is_rejected) ... ok
+test_codex_backend_seals_default_and_explicit_timeout (tests.test_start_run.TestStartRun.test_codex_backend_seals_default_and_explicit_timeout) ... ok
+test_dispatch_without_impact_sha_is_rejected (tests.test_start_run.TestStartRun.test_dispatch_without_impact_sha_is_rejected) ... ok
+test_explicit_suffix_directory_position_is_preserved (tests.test_start_run.TestStartRun.test_explicit_suffix_directory_position_is_preserved) ... ok
+test_explicit_workflow_does_not_seal_codex_timeout (tests.test_start_run.TestStartRun.test_explicit_workflow_does_not_seal_codex_timeout) ... ok
+test_full_rejects_empty_impact_when_corpus_exists (tests.test_start_run.TestStartRun.test_full_rejects_empty_impact_when_corpus_exists) ... ok
+test_full_uses_head_as_baseline (tests.test_start_run.TestStartRun.test_full_uses_head_as_baseline) ... ok
+test_impact_provenance_change_after_plan_dispatch_is_rejected (tests.test_start_run.TestStartRun.test_impact_provenance_change_after_plan_dispatch_is_rejected) ... ok
+test_implicit_suffix_is_inserted_immediately_after_utc_date (tests.test_start_run.TestStartRun.test_implicit_suffix_is_inserted_immediately_after_utc_date) ... ok
+test_implicit_suffix_uses_marker_when_same_date_appears_earlier (tests.test_start_run.TestStartRun.test_implicit_suffix_uses_marker_when_same_date_appears_earlier) ... ok
+test_invalid_calendar_runid_is_rejected_before_manifest_write (tests.test_start_run.TestStartRun.test_invalid_calendar_runid_is_rejected_before_manifest_write) ... ok
+test_invalid_phase3_backend_is_rejected_at_start_run (tests.test_start_run.TestStartRun.test_invalid_phase3_backend_is_rejected_at_start_run) ... ok
+test_invalid_phase3_codex_timeout_is_rejected_at_start_run (tests.test_start_run.TestStartRun.test_invalid_phase3_codex_timeout_is_rejected_at_start_run) ... ok
+test_invalid_report_candidate_pattern_is_rejected (tests.test_start_run.TestStartRun.test_invalid_report_candidate_pattern_is_rejected) ... ok
+test_manifest_has_complete_contract_and_preserves_verdict_directory (tests.test_start_run.TestStartRun.test_manifest_has_complete_contract_and_preserves_verdict_directory) ... ok
+test_manifest_uses_default_doc_globs_and_excludes_claude_worktrees (tests.test_start_run.TestStartRun.test_manifest_uses_default_doc_globs_and_excludes_claude_worktrees) ... ok
+test_open_rejects_invalid_runid (tests.test_start_run.TestStartRun.test_open_rejects_invalid_runid) ... ok
+test_phase3_backend_defaults_to_workflow_without_codex_timeout (tests.test_start_run.TestStartRun.test_phase3_backend_defaults_to_workflow_without_codex_timeout) ... ok
+test_policy_document_keeps_full_corpus_nonempty (tests.test_start_run.TestStartRun.test_policy_document_keeps_full_corpus_nonempty) ... ok
+test_preflight_requires_phase4_even_when_incremental_impact_is_empty (tests.test_start_run.TestStartRun.test_preflight_requires_phase4_even_when_incremental_impact_is_empty) ... ok
+test_report_corpus_opt_in_true_only_restores_nonempty_corpus (tests.test_start_run.TestStartRun.test_report_corpus_opt_in_true_only_restores_nonempty_corpus) ... ok
+test_report_date_and_explicit_suffix_rule_are_sealed_from_runid_utc (tests.test_start_run.TestStartRun.test_report_date_and_explicit_suffix_rule_are_sealed_from_runid_utc) ... ok
+test_report_only_full_corpus_is_empty_by_default (tests.test_start_run.TestStartRun.test_report_only_full_corpus_is_empty_by_default) ... ok
+test_seal_detects_new_path_after_dispatch (tests.test_start_run.TestStartRun.test_seal_detects_new_path_after_dispatch) ... ok
+test_start_rejects_unsafe_impacted_path (tests.test_start_run.TestStartRun.test_start_rejects_unsafe_impacted_path) ... ok
+test_unknown_impact_provenance_is_rejected (tests.test_start_run.TestStartRun.test_unknown_impact_provenance_is_rejected) ... ok
+test_valid_audit_scope_sha_and_provenance_are_sealed (tests.test_start_run.TestStartRun.test_valid_audit_scope_sha_and_provenance_are_sealed) ... ok
+test_anchor_change_is_removed_and_refused (tests.test_decide_verdict.TestAttacks.test_anchor_change_is_removed_and_refused) ... ok
+test_assigned_path_mismatch_refuses (tests.test_decide_verdict.TestAttacks.test_assigned_path_mismatch_refuses) ... ok
+test_clean_head_switch_refuses (tests.test_decide_verdict.TestAttacks.test_clean_head_switch_refuses) ... ok
+test_config_change_refuses_and_poison_blocks_next_open (tests.test_decide_verdict.TestAttacks.test_config_change_refuses_and_poison_blocks_next_open) ... ok
+test_evidence_key_missing_refuses (tests.test_decide_verdict.TestAttacks.test_evidence_key_missing_refuses) ... ok
+test_hand_fed_verdict_argument_does_not_exist (tests.test_decide_verdict.TestAttacks.test_hand_fed_verdict_argument_does_not_exist) ... ok
+test_history_change_is_tainted_and_refused (tests.test_decide_verdict.TestAttacks.test_history_change_is_tainted_and_refused) ... ok
+test_lock_and_history_tamper_still_quarantines_history (tests.test_decide_verdict.TestAttacks.test_lock_and_history_tamper_still_quarantines_history) ... ok
+test_lock_unlink_recreate_is_refused (tests.test_decide_verdict.TestAttacks.test_lock_unlink_recreate_is_refused) ... ok
+test_manifest_modification_refuses (tests.test_decide_verdict.TestAttacks.test_manifest_modification_refuses) ... ok
+test_manifest_replacement_after_snapshot_does_not_change_decision (tests.test_decide_verdict.TestAttacks.test_manifest_replacement_after_snapshot_does_not_change_decision) ... ok
+test_missing_phase4_refuses (tests.test_decide_verdict.TestAttacks.test_missing_phase4_refuses) ... ok
+test_none_sentinel_with_existing_file_refuses (tests.test_decide_verdict.TestAttacks.test_none_sentinel_with_existing_file_refuses) ... ok
+test_old_gate_after_break_does_not_touch_later_run (tests.test_decide_verdict.TestAttacks.test_old_gate_after_break_does_not_touch_later_run) ... ok
+test_return_verdict_mismatch_refuses (tests.test_decide_verdict.TestAttacks.test_return_verdict_mismatch_refuses) ... ok
+test_returns_modification_refuses (tests.test_decide_verdict.TestAttacks.test_returns_modification_refuses) ... ok
+test_seal_after_worktree_change_refuses (tests.test_decide_verdict.TestAttacks.test_seal_after_worktree_change_refuses) ... ok
+test_unsafe_prelock_refused_omits_report_status (tests.test_decide_verdict.TestAttacks.test_unsafe_prelock_refused_omits_report_status) ... ok
+test_all_cached_third_run_is_consistent (tests.test_decide_verdict.TestCache.test_all_cached_third_run_is_consistent) ... ok
+test_cached_content_key_tamper_is_refused_even_with_matching_evidence_sha (tests.test_decide_verdict.TestCache.test_cached_content_key_tamper_is_refused_even_with_matching_evidence_sha) ... ok
+test_codex_backend_is_written_to_history_and_qualifies_codex_cache (tests.test_decide_verdict.TestCache.test_codex_backend_is_written_to_history_and_qualifies_codex_cache) ... ok
+test_contract_version_change_is_cache_miss (tests.test_decide_verdict.TestCache.test_contract_version_change_is_cache_miss) ... ok
+test_corrupt_history_is_quarantined_after_cold_dispatch (tests.test_decide_verdict.TestCache.test_corrupt_history_is_quarantined_after_cold_dispatch) ... ok
+test_full_always_dispatches_after_qualified_history (tests.test_decide_verdict.TestCache.test_full_always_dispatches_after_qualified_history) ... ok
+test_mixed_cache_and_dispatch_is_consistent (tests.test_decide_verdict.TestCache.test_mixed_cache_and_dispatch_is_consistent) ... ok
+test_absent_codex_review_keeps_backward_compatible_behavior (tests.test_decide_verdict.TestCodexReviewGate.test_absent_codex_review_keeps_backward_compatible_behavior) ... ok
+test_codex_review_evidence_shape_is_always_strict (tests.test_decide_verdict.TestCodexReviewGate.test_codex_review_evidence_shape_is_always_strict) ... ok
+test_degraded_report_is_decorated_but_state_and_anchor_are_plain (tests.test_decide_verdict.TestCodexReviewGate.test_degraded_report_is_decorated_but_state_and_anchor_are_plain) ... ok
+test_optional_ref_invalid_warns_without_refusing (tests.test_decide_verdict.TestCodexReviewGate.test_optional_ref_invalid_warns_without_refusing) ... ok
+test_required_config_errors_are_refused (tests.test_decide_verdict.TestCodexReviewGate.test_required_config_errors_are_refused) ... ok
+test_required_missing_codex_review_and_phase4_are_refused (tests.test_decide_verdict.TestCodexReviewGate.test_required_missing_codex_review_and_phase4_are_refused) ... ok
+test_required_refusal_preserves_history_and_anchor_and_updates_last_run (tests.test_decide_verdict.TestCodexReviewGate.test_required_refusal_preserves_history_and_anchor_and_updates_last_run) ... ok
+test_required_state_matrix (tests.test_decide_verdict.TestCodexReviewGate.test_required_state_matrix) ... ok
+test_each_barrier_target_changed_during_scan_is_refused (tests.test_decide_verdict.TestGateWritesReport.test_each_barrier_target_changed_during_scan_is_refused) ... ok
+test_failed_helper_receipt_and_bad_token_contract_are_reportless (tests.test_decide_verdict.TestGateWritesReport.test_failed_helper_receipt_and_bad_token_contract_are_reportless) ... ok
+test_gate_bounded_read_rejects_template_at_two_mib_plus_one (tests.test_decide_verdict.TestGateWritesReport.test_gate_bounded_read_rejects_template_at_two_mib_plus_one) ... ok
+test_gate_report_interval_holds_flock_and_previous_status_is_reread_afterward (tests.test_decide_verdict.TestGateWritesReport.test_gate_report_interval_holds_flock_and_previous_status_is_reread_afterward) ... ok
+test_invalid_utf8_template_is_rejected_by_gate (tests.test_decide_verdict.TestGateWritesReport.test_invalid_utf8_template_is_rejected_by_gate) ... ok
+test_kill_during_report_leaves_stale_lock_for_break_lock_recovery (tests.test_decide_verdict.TestGateWritesReport.test_kill_during_report_leaves_stale_lock_for_break_lock_recovery) ... ok
+test_link_and_directory_fsync_use_the_same_open_parent (tests.test_decide_verdict.TestGateWritesReport.test_link_and_directory_fsync_use_the_same_open_parent) ... ok
+test_normal_report_is_written_inside_gate_and_next_run_is_consistent (tests.test_decide_verdict.TestGateWritesReport.test_normal_report_is_written_inside_gate_and_next_run_is_consistent) ... ok
+test_optional_reason_token_may_be_absent (tests.test_decide_verdict.TestGateWritesReport.test_optional_reason_token_may_be_absent) ... ok
+test_owned_refused_commits_reason_before_report_and_releases_lock (tests.test_decide_verdict.TestGateWritesReport.test_owned_refused_commits_reason_before_report_and_releases_lock) ... ok
+test_post_commit_failures_do_not_reverse_verdict (tests.test_decide_verdict.TestGateWritesReport.test_post_commit_failures_do_not_reverse_verdict) ... ok
+test_rendered_output_limit_and_unknown_token_are_invalid (tests.test_decide_verdict.TestGateWritesReport.test_rendered_output_limit_and_unknown_token_are_invalid) ... ok
+test_report_suffix_start_requires_exact_integer_two (tests.test_decide_verdict.TestGateWritesReport.test_report_suffix_start_requires_exact_integer_two) ... ok
+test_reportless_and_missing_template_statuses_are_distinct (tests.test_decide_verdict.TestGateWritesReport.test_reportless_and_missing_template_statuses_are_distinct) ... ok
+test_scan_then_barrier_then_state_then_link_order (tests.test_decide_verdict.TestGateWritesReport.test_scan_then_barrier_then_state_then_link_order) ... ok
+test_sibling_scan_interval_holds_flock_until_scan_completes (tests.test_decide_verdict.TestGateWritesReport.test_sibling_scan_interval_holds_flock_until_scan_completes) ... ok
+test_suffix_link_is_atomic_and_existing_report_is_not_overwritten (tests.test_decide_verdict.TestGateWritesReport.test_suffix_link_is_atomic_and_existing_report_is_not_overwritten) ... ok
+test_suffix_marker_in_directory_uses_the_sealed_candidate_parent (tests.test_decide_verdict.TestGateWritesReport.test_suffix_marker_in_directory_uses_the_sealed_candidate_parent) ... ok
+test_temp_cleanup_and_parent_creation_failures_are_warnings (tests.test_decide_verdict.TestGateWritesReport.test_temp_cleanup_and_parent_creation_failures_are_warnings) ... ok
+test_token_contract_and_escaping_are_fixed (tests.test_decide_verdict.TestGateWritesReport.test_token_contract_and_escaping_are_fixed) ... ok
+test_all_pass_writes_anchor (tests.test_decide_verdict.TestHappy.test_all_pass_writes_anchor) ... ok
+test_consistent_has_sibling_scan_object (tests.test_decide_verdict.TestHappy.test_consistent_has_sibling_scan_object) ... ok
+test_preflight_command_nonzero_blocks_when_unparsed (tests.test_decide_verdict.TestHappy.test_preflight_command_nonzero_blocks_when_unparsed) ... ok
+test_warn_never_blocks (tests.test_decide_verdict.TestHappy.test_warn_never_blocks) ... ok
+test_audit_scope_changed_after_seal_has_barrier_reason (tests.test_decide_verdict.TestS4aSealedGate.test_audit_scope_changed_after_seal_has_barrier_reason) ... ok
+test_flip_changed_change_set_is_one_zero (tests.test_decide_verdict.TestS4aSealedGate.test_flip_changed_change_set_is_one_zero) ... ok
+test_flip_changed_content_is_zero_zero (tests.test_decide_verdict.TestS4aSealedGate.test_flip_changed_content_is_zero_zero) ... ok
+test_flip_same_change_set_is_one_one_and_reaches_report_warning (tests.test_decide_verdict.TestS4aSealedGate.test_flip_same_change_set_is_one_one_and_reaches_report_warning) ... ok
+test_impact_sha_mismatch_has_fixed_reason (tests.test_decide_verdict.TestS4aSealedGate.test_impact_sha_mismatch_has_fixed_reason) ... ok
+test_manifest_and_impact_provenance_mismatch_has_fixed_reason (tests.test_decide_verdict.TestS4aSealedGate.test_manifest_and_impact_provenance_mismatch_has_fixed_reason) ... ok
+test_unknown_provenance_with_all_shas_resealed_has_enum_reason (tests.test_decide_verdict.TestS4aSealedGate.test_unknown_provenance_with_all_shas_resealed_has_enum_reason) ... ok
+test_main_isolates_sibling_subprocess_failures (tests.test_decide_verdict.TestSiblingFailures.test_main_isolates_sibling_subprocess_failures) ... ok
+test_main_refused_does_not_launch_sibling_scan (tests.test_decide_verdict.TestSiblingFailures.test_main_refused_does_not_launch_sibling_scan) ... ok
+test_nonzero_and_invalid_json_are_stable (tests.test_decide_verdict.TestSiblingFailures.test_nonzero_and_invalid_json_are_stable) ... ok
+test_phase4_fail_blocks (tests.test_decide_verdict.TestSiblingFailures.test_phase4_fail_blocks) ... ok
+test_phase4_finding_without_severity_is_refused (tests.test_decide_verdict.TestSiblingFailures.test_phase4_finding_without_severity_is_refused) ... ok
+test_report_pattern_failure_is_isolated (tests.test_decide_verdict.TestSiblingFailures.test_report_pattern_failure_is_isolated) ... ok
+test_timeout_is_stable_and_uses_30_seconds (tests.test_decide_verdict.TestSiblingFailures.test_timeout_is_stable_and_uses_30_seconds) ... ok
+
+----------------------------------------------------------------------
+Ran 105 tests in 84.866s
+
+OK
+
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..f91f112abf39f26ca8a5a412508e2204f69bc94c
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,18 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            with self.subTest(codexReview=value):
++                fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                self.assertEqual(fx.open().returncode, 0)
++                proc = fx.plan_start_seal(impacted=[], mode="incremental")
++                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                with open(os.path.join(fx.run_dir, "manifest.json"),
++                          encoding="utf-8") as handle:
++                    manifest = json.load(handle)
++                self.assertFalse(manifest["phase4Required"])
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+codex
+重点テストは105件すべて成功しました。探索担当の独立確認でも修正方針は一致しています。回帰テストをさらに明確にするため、非objectの2値それぞれについて、空のincrementalは従来どおりfalse、fullは従来どおりtrueであることまで同じテスト内で固定してから、指定検証を再実行します。
+apply patch
+patch: completed
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_start_run.py
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+exec
+/bin/zsh -lc 'python3 -m unittest tests.test_start_run tests.test_decide_verdict -v' in /Users/akiratakahashi/Projects/doc-audit-harness
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+ succeeded in 85626ms:
+ok
+test_required_forces_phase4_with_no_impacted_documents_in_both_modes (tests.test_start_run.TestCodexRequiredPhase4.test_required_forces_phase4_with_no_impacted_documents_in_both_modes) ... ok
+test_consistent_run_writes_compatible_anchor (tests.test_start_run.TestEndToEnd.test_consistent_run_writes_compatible_anchor) ... ok
+test_empty_corpus_cold_start_is_consistent (tests.test_start_run.TestEndToEnd.test_empty_corpus_cold_start_is_consistent) ... ok
+test_failed_doc_yields_needs_fix_without_anchor (tests.test_start_run.TestEndToEnd.test_failed_doc_yields_needs_fix_without_anchor) ... ok
+test_incremental_empty_impact_is_consistent_and_advances_anchor (tests.test_start_run.TestEndToEnd.test_incremental_empty_impact_is_consistent_and_advances_anchor) ... ok
+test_audit_scope_metadata_type_contract_is_rejected (tests.test_start_run.TestStartRun.test_audit_scope_metadata_type_contract_is_rejected) ... ok
+test_audit_scope_sha_drift_is_rejected (tests.test_start_run.TestStartRun.test_audit_scope_sha_drift_is_rejected) ... ok
+test_codex_backend_seals_default_and_explicit_timeout (tests.test_start_run.TestStartRun.test_codex_backend_seals_default_and_explicit_timeout) ... ok
+test_dispatch_without_impact_sha_is_rejected (tests.test_start_run.TestStartRun.test_dispatch_without_impact_sha_is_rejected) ... ok
+test_explicit_suffix_directory_position_is_preserved (tests.test_start_run.TestStartRun.test_explicit_suffix_directory_position_is_preserved) ... ok
+test_explicit_workflow_does_not_seal_codex_timeout (tests.test_start_run.TestStartRun.test_explicit_workflow_does_not_seal_codex_timeout) ... ok
+test_full_rejects_empty_impact_when_corpus_exists (tests.test_start_run.TestStartRun.test_full_rejects_empty_impact_when_corpus_exists) ... ok
+test_full_uses_head_as_baseline (tests.test_start_run.TestStartRun.test_full_uses_head_as_baseline) ... ok
+test_impact_provenance_change_after_plan_dispatch_is_rejected (tests.test_start_run.TestStartRun.test_impact_provenance_change_after_plan_dispatch_is_rejected) ... ok
+test_implicit_suffix_is_inserted_immediately_after_utc_date (tests.test_start_run.TestStartRun.test_implicit_suffix_is_inserted_immediately_after_utc_date) ... ok
+test_implicit_suffix_uses_marker_when_same_date_appears_earlier (tests.test_start_run.TestStartRun.test_implicit_suffix_uses_marker_when_same_date_appears_earlier) ... ok
+test_invalid_calendar_runid_is_rejected_before_manifest_write (tests.test_start_run.TestStartRun.test_invalid_calendar_runid_is_rejected_before_manifest_write) ... ok
+test_invalid_phase3_backend_is_rejected_at_start_run (tests.test_start_run.TestStartRun.test_invalid_phase3_backend_is_rejected_at_start_run) ... ok
+test_invalid_phase3_codex_timeout_is_rejected_at_start_run (tests.test_start_run.TestStartRun.test_invalid_phase3_codex_timeout_is_rejected_at_start_run) ... ok
+test_invalid_report_candidate_pattern_is_rejected (tests.test_start_run.TestStartRun.test_invalid_report_candidate_pattern_is_rejected) ... ok
+test_manifest_has_complete_contract_and_preserves_verdict_directory (tests.test_start_run.TestStartRun.test_manifest_has_complete_contract_and_preserves_verdict_directory) ... ok
+test_manifest_uses_default_doc_globs_and_excludes_claude_worktrees (tests.test_start_run.TestStartRun.test_manifest_uses_default_doc_globs_and_excludes_claude_worktrees) ... ok
+test_open_rejects_invalid_runid (tests.test_start_run.TestStartRun.test_open_rejects_invalid_runid) ... ok
+test_phase3_backend_defaults_to_workflow_without_codex_timeout (tests.test_start_run.TestStartRun.test_phase3_backend_defaults_to_workflow_without_codex_timeout) ... ok
+test_policy_document_keeps_full_corpus_nonempty (tests.test_start_run.TestStartRun.test_policy_document_keeps_full_corpus_nonempty) ... ok
+test_preflight_requires_phase4_even_when_incremental_impact_is_empty (tests.test_start_run.TestStartRun.test_preflight_requires_phase4_even_when_incremental_impact_is_empty) ... ok
+test_report_corpus_opt_in_true_only_restores_nonempty_corpus (tests.test_start_run.TestStartRun.test_report_corpus_opt_in_true_only_restores_nonempty_corpus) ... ok
+test_report_date_and_explicit_suffix_rule_are_sealed_from_runid_utc (tests.test_start_run.TestStartRun.test_report_date_and_explicit_suffix_rule_are_sealed_from_runid_utc) ... ok
+test_report_only_full_corpus_is_empty_by_default (tests.test_start_run.TestStartRun.test_report_only_full_corpus_is_empty_by_default) ... ok
+test_seal_detects_new_path_after_dispatch (tests.test_start_run.TestStartRun.test_seal_detects_new_path_after_dispatch) ... ok
+test_start_rejects_unsafe_impacted_path (tests.test_start_run.TestStartRun.test_start_rejects_unsafe_impacted_path) ... ok
+test_unknown_impact_provenance_is_rejected (tests.test_start_run.TestStartRun.test_unknown_impact_provenance_is_rejected) ... ok
+test_valid_audit_scope_sha_and_provenance_are_sealed (tests.test_start_run.TestStartRun.test_valid_audit_scope_sha_and_provenance_are_sealed) ... ok
+test_anchor_change_is_removed_and_refused (tests.test_decide_verdict.TestAttacks.test_anchor_change_is_removed_and_refused) ... ok
+test_assigned_path_mismatch_refuses (tests.test_decide_verdict.TestAttacks.test_assigned_path_mismatch_refuses) ... ok
+test_clean_head_switch_refuses (tests.test_decide_verdict.TestAttacks.test_clean_head_switch_refuses) ... ok
+test_config_change_refuses_and_poison_blocks_next_open (tests.test_decide_verdict.TestAttacks.test_config_change_refuses_and_poison_blocks_next_open) ... ok
+test_evidence_key_missing_refuses (tests.test_decide_verdict.TestAttacks.test_evidence_key_missing_refuses) ... ok
+test_hand_fed_verdict_argument_does_not_exist (tests.test_decide_verdict.TestAttacks.test_hand_fed_verdict_argument_does_not_exist) ... ok
+test_history_change_is_tainted_and_refused (tests.test_decide_verdict.TestAttacks.test_history_change_is_tainted_and_refused) ... ok
+test_lock_and_history_tamper_still_quarantines_history (tests.test_decide_verdict.TestAttacks.test_lock_and_history_tamper_still_quarantines_history) ... ok
+test_lock_unlink_recreate_is_refused (tests.test_decide_verdict.TestAttacks.test_lock_unlink_recreate_is_refused) ... ok
+test_manifest_modification_refuses (tests.test_decide_verdict.TestAttacks.test_manifest_modification_refuses) ... ok
+test_manifest_replacement_after_snapshot_does_not_change_decision (tests.test_decide_verdict.TestAttacks.test_manifest_replacement_after_snapshot_does_not_change_decision) ... ok
+test_missing_phase4_refuses (tests.test_decide_verdict.TestAttacks.test_missing_phase4_refuses) ... ok
+test_none_sentinel_with_existing_file_refuses (tests.test_decide_verdict.TestAttacks.test_none_sentinel_with_existing_file_refuses) ... ok
+test_old_gate_after_break_does_not_touch_later_run (tests.test_decide_verdict.TestAttacks.test_old_gate_after_break_does_not_touch_later_run) ... ok
+test_return_verdict_mismatch_refuses (tests.test_decide_verdict.TestAttacks.test_return_verdict_mismatch_refuses) ... ok
+test_returns_modification_refuses (tests.test_decide_verdict.TestAttacks.test_returns_modification_refuses) ... ok
+test_seal_after_worktree_change_refuses (tests.test_decide_verdict.TestAttacks.test_seal_after_worktree_change_refuses) ... ok
+test_unsafe_prelock_refused_omits_report_status (tests.test_decide_verdict.TestAttacks.test_unsafe_prelock_refused_omits_report_status) ... ok
+test_all_cached_third_run_is_consistent (tests.test_decide_verdict.TestCache.test_all_cached_third_run_is_consistent) ... ok
+test_cached_content_key_tamper_is_refused_even_with_matching_evidence_sha (tests.test_decide_verdict.TestCache.test_cached_content_key_tamper_is_refused_even_with_matching_evidence_sha) ... ok
+test_codex_backend_is_written_to_history_and_qualifies_codex_cache (tests.test_decide_verdict.TestCache.test_codex_backend_is_written_to_history_and_qualifies_codex_cache) ... ok
+test_contract_version_change_is_cache_miss (tests.test_decide_verdict.TestCache.test_contract_version_change_is_cache_miss) ... ok
+test_corrupt_history_is_quarantined_after_cold_dispatch (tests.test_decide_verdict.TestCache.test_corrupt_history_is_quarantined_after_cold_dispatch) ... ok
+test_full_always_dispatches_after_qualified_history (tests.test_decide_verdict.TestCache.test_full_always_dispatches_after_qualified_history) ... ok
+test_mixed_cache_and_dispatch_is_consistent (tests.test_decide_verdict.TestCache.test_mixed_cache_and_dispatch_is_consistent) ... ok
+test_absent_codex_review_keeps_backward_compatible_behavior (tests.test_decide_verdict.TestCodexReviewGate.test_absent_codex_review_keeps_backward_compatible_behavior) ... ok
+test_codex_review_evidence_shape_is_always_strict (tests.test_decide_verdict.TestCodexReviewGate.test_codex_review_evidence_shape_is_always_strict) ... ok
+test_degraded_report_is_decorated_but_state_and_anchor_are_plain (tests.test_decide_verdict.TestCodexReviewGate.test_degraded_report_is_decorated_but_state_and_anchor_are_plain) ... ok
+test_optional_ref_invalid_warns_without_refusing (tests.test_decide_verdict.TestCodexReviewGate.test_optional_ref_invalid_warns_without_refusing) ... ok
+test_required_config_errors_are_refused (tests.test_decide_verdict.TestCodexReviewGate.test_required_config_errors_are_refused) ... ok
+test_required_missing_codex_review_and_phase4_are_refused (tests.test_decide_verdict.TestCodexReviewGate.test_required_missing_codex_review_and_phase4_are_refused) ... ok
+test_required_refusal_preserves_history_and_anchor_and_updates_last_run (tests.test_decide_verdict.TestCodexReviewGate.test_required_refusal_preserves_history_and_anchor_and_updates_last_run) ... ok
+test_required_state_matrix (tests.test_decide_verdict.TestCodexReviewGate.test_required_state_matrix) ... ok
+test_each_barrier_target_changed_during_scan_is_refused (tests.test_decide_verdict.TestGateWritesReport.test_each_barrier_target_changed_during_scan_is_refused) ... ok
+test_failed_helper_receipt_and_bad_token_contract_are_reportless (tests.test_decide_verdict.TestGateWritesReport.test_failed_helper_receipt_and_bad_token_contract_are_reportless) ... ok
+test_gate_bounded_read_rejects_template_at_two_mib_plus_one (tests.test_decide_verdict.TestGateWritesReport.test_gate_bounded_read_rejects_template_at_two_mib_plus_one) ... ok
+test_gate_report_interval_holds_flock_and_previous_status_is_reread_afterward (tests.test_decide_verdict.TestGateWritesReport.test_gate_report_interval_holds_flock_and_previous_status_is_reread_afterward) ... ok
+test_invalid_utf8_template_is_rejected_by_gate (tests.test_decide_verdict.TestGateWritesReport.test_invalid_utf8_template_is_rejected_by_gate) ... ok
+test_kill_during_report_leaves_stale_lock_for_break_lock_recovery (tests.test_decide_verdict.TestGateWritesReport.test_kill_during_report_leaves_stale_lock_for_break_lock_recovery) ... ok
+test_link_and_directory_fsync_use_the_same_open_parent (tests.test_decide_verdict.TestGateWritesReport.test_link_and_directory_fsync_use_the_same_open_parent) ... ok
+test_normal_report_is_written_inside_gate_and_next_run_is_consistent (tests.test_decide_verdict.TestGateWritesReport.test_normal_report_is_written_inside_gate_and_next_run_is_consistent) ... ok
+test_optional_reason_token_may_be_absent (tests.test_decide_verdict.TestGateWritesReport.test_optional_reason_token_may_be_absent) ... ok
+test_owned_refused_commits_reason_before_report_and_releases_lock (tests.test_decide_verdict.TestGateWritesReport.test_owned_refused_commits_reason_before_report_and_releases_lock) ... ok
+test_post_commit_failures_do_not_reverse_verdict (tests.test_decide_verdict.TestGateWritesReport.test_post_commit_failures_do_not_reverse_verdict) ... ok
+test_rendered_output_limit_and_unknown_token_are_invalid (tests.test_decide_verdict.TestGateWritesReport.test_rendered_output_limit_and_unknown_token_are_invalid) ... ok
+test_report_suffix_start_requires_exact_integer_two (tests.test_decide_verdict.TestGateWritesReport.test_report_suffix_start_requires_exact_integer_two) ... ok
+test_reportless_and_missing_template_statuses_are_distinct (tests.test_decide_verdict.TestGateWritesReport.test_reportless_and_missing_template_statuses_are_distinct) ... ok
+test_scan_then_barrier_then_state_then_link_order (tests.test_decide_verdict.TestGateWritesReport.test_scan_then_barrier_then_state_then_link_order) ... ok
+test_sibling_scan_interval_holds_flock_until_scan_completes (tests.test_decide_verdict.TestGateWritesReport.test_sibling_scan_interval_holds_flock_until_scan_completes) ... ok
+test_suffix_link_is_atomic_and_existing_report_is_not_overwritten (tests.test_decide_verdict.TestGateWritesReport.test_suffix_link_is_atomic_and_existing_report_is_not_overwritten) ... ok
+test_suffix_marker_in_directory_uses_the_sealed_candidate_parent (tests.test_decide_verdict.TestGateWritesReport.test_suffix_marker_in_directory_uses_the_sealed_candidate_parent) ... ok
+test_temp_cleanup_and_parent_creation_failures_are_warnings (tests.test_decide_verdict.TestGateWritesReport.test_temp_cleanup_and_parent_creation_failures_are_warnings) ... ok
+test_token_contract_and_escaping_are_fixed (tests.test_decide_verdict.TestGateWritesReport.test_token_contract_and_escaping_are_fixed) ... ok
+test_all_pass_writes_anchor (tests.test_decide_verdict.TestHappy.test_all_pass_writes_anchor) ... ok
+test_consistent_has_sibling_scan_object (tests.test_decide_verdict.TestHappy.test_consistent_has_sibling_scan_object) ... ok
+test_preflight_command_nonzero_blocks_when_unparsed (tests.test_decide_verdict.TestHappy.test_preflight_command_nonzero_blocks_when_unparsed) ... ok
+test_warn_never_blocks (tests.test_decide_verdict.TestHappy.test_warn_never_blocks) ... ok
+test_audit_scope_changed_after_seal_has_barrier_reason (tests.test_decide_verdict.TestS4aSealedGate.test_audit_scope_changed_after_seal_has_barrier_reason) ... ok
+test_flip_changed_change_set_is_one_zero (tests.test_decide_verdict.TestS4aSealedGate.test_flip_changed_change_set_is_one_zero) ... ok
+test_flip_changed_content_is_zero_zero (tests.test_decide_verdict.TestS4aSealedGate.test_flip_changed_content_is_zero_zero) ... ok
+test_flip_same_change_set_is_one_one_and_reaches_report_warning (tests.test_decide_verdict.TestS4aSealedGate.test_flip_same_change_set_is_one_one_and_reaches_report_warning) ... ok
+test_impact_sha_mismatch_has_fixed_reason (tests.test_decide_verdict.TestS4aSealedGate.test_impact_sha_mismatch_has_fixed_reason) ... ok
+test_manifest_and_impact_provenance_mismatch_has_fixed_reason (tests.test_decide_verdict.TestS4aSealedGate.test_manifest_and_impact_provenance_mismatch_has_fixed_reason) ... ok
+test_unknown_provenance_with_all_shas_resealed_has_enum_reason (tests.test_decide_verdict.TestS4aSealedGate.test_unknown_provenance_with_all_shas_resealed_has_enum_reason) ... ok
+test_main_isolates_sibling_subprocess_failures (tests.test_decide_verdict.TestSiblingFailures.test_main_isolates_sibling_subprocess_failures) ... ok
+test_main_refused_does_not_launch_sibling_scan (tests.test_decide_verdict.TestSiblingFailures.test_main_refused_does_not_launch_sibling_scan) ... ok
+test_nonzero_and_invalid_json_are_stable (tests.test_decide_verdict.TestSiblingFailures.test_nonzero_and_invalid_json_are_stable) ... ok
+test_phase4_fail_blocks (tests.test_decide_verdict.TestSiblingFailures.test_phase4_fail_blocks) ... ok
+test_phase4_finding_without_severity_is_refused (tests.test_decide_verdict.TestSiblingFailures.test_phase4_finding_without_severity_is_refused) ... ok
+test_report_pattern_failure_is_isolated (tests.test_decide_verdict.TestSiblingFailures.test_report_pattern_failure_is_isolated) ... ok
+test_timeout_is_stable_and_uses_30_seconds (tests.test_decide_verdict.TestSiblingFailures.test_timeout_is_stable_and_uses_30_seconds) ... ok
+
+----------------------------------------------------------------------
+Ran 105 tests in 85.674s
+
+OK
+
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+codex
+指定の重点テストは、拡張後も105件すべて成功しました。非objectの4組合せ（配列／文字列 × incremental／full）も通っています。続けて全体テストを実行します。
+exec
+/bin/zsh -lc 'python3 -m unittest discover -s tests -t .' in /Users/akiratakahashi/Projects/doc-audit-harness
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+ succeeded in 142888ms:
+................................................................................................................................/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpj3lqlexi/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpj3lqlexi/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpdlp5c8cb/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpdlp5c8cb/apps/worker/src/index.ts' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpdlp5c8cb/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpz8yrfw49/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpz8yrfw49/docs/foo:bar' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpz8yrfw49/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpp2rtkvz3/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpp2rtkvz3/docs/real.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpp2rtkvz3/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpk1qmwwir/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpk1qmwwir/apps/worker/src/index.ts' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpk1qmwwir/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp11789qh8/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp11789qh8/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpa_4idsx3/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpa_4idsx3/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpze8ww66v/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpze8ww66v/docs/real.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpze8ww66v/apps/worker/src/index.ts' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpze8ww66v/docs/t.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmprc5p7xu7/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmprc5p7xu7/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpbafursxw/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpbafursxw/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpoqfsbbj3/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpoqfsbbj3/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqmmdf0y1/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpuj8wojfn/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp57rvtgq4/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmppw6_39ob/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpkn757ri4/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpkn757ri4/docs/b.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpzfjkfrpf/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqd6evkix/docs/api.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqd6evkix/docs/foo+bar.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqd6evkix/docs/foo bar.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqd6evkix/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqxx66u2y/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpati2cprt/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqv3pve_p/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpkcm1m36z/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpkcm1m36z/docs/source.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp5q9yjnm4/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpnt_uygs9/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+../Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpou6xacgh/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpnai5lkp6/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmph89_6ap7/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqt5ziptm/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmprt0eqqdo/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3ad4x_5k/docs/skip.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3ad4x_5k/docs/alternate.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3ad4x_5k/docs/first.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3ad4x_5k/docs/fallback.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp805elur1/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3exnwc8s/docs/format.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3exnwc8s/docs/existence.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3exnwc8s/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3exnwc8s/docs/orphan.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp6p1lcz_b/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp6p1lcz_b/docs/source.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp6p1lcz_b/docs/target.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp5xbejesi/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp2l526t5h/docs/logs/doc_audit_2026-08-25.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp2l526t5h/docs/logs/doc_audit_policy.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpl0o1u5vf/docs/logs/doc_audit_2026-08-25.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpl0o1u5vf/docs/logs/doc_audit_policy.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp43tjvoir/docs/logs/doc_audit_2026-08-25.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp43tjvoir/docs/target.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpy8puxlms/docs/logs/doc_audit_2026-08-25.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+../Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpjzn2wwxy/docs/logs/doc_audit_2026-08-25.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp1heq9e_9/docs/logs/doc_audit_2026-08-25.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp1heq9e_9/docs/kept.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+................./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpnzd4b673/docs/from-inline.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpnzd4b673/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+....../Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpsi972hst/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpa2nn_5p0/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp1ol8y24y/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpna0nirrs/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpna0nirrs/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpna0nirrs/docs/orphan.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpytylt4sj/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpmpbb2qa3/index.txt' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpmpbb2qa3/docs/target.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpziwonacv/index.txt' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpziwonacv/docs/target.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqp6bkcyw/index.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp_t2aodfq/docs/target.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpriu2ixwa/docs/target.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp_sn0hj9i/node_modules/pkg/x.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp_sn0hj9i/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpdopbeq88/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpdopbeq88/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpfx7chmtu/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpfx7chmtu/docs/b.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpd1wolinc/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpd1wolinc/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpkkj4bc8o/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp9egd88r5/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp9egd88r5/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp9egd88r5/docs/orphan.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+..........................................................................................................................................................................................................................s.......................................................
+----------------------------------------------------------------------
+Ran 477 tests in 142.931s
+
+OK (skipped=1)
+
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+exec
+/bin/zsh -lc 'git diff -- skills/audit/scripts/start-run.py tests/test_start_run.py | tail -n 90' in /Users/akiratakahashi/Projects/doc-audit-harness
+ succeeded in 0ms:
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index 2eaf22a..0e6735e 100644
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,8 +244,12 @@ def main():
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+-                           or args.mode == "full" or preflight_required)
++                           or args.mode == "full" or preflight_required
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index ebc6de1..2b300cd 100644
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -399,6 +399,34 @@ class TestStartRun(unittest.TestCase):
+         self.assertEqual(json.loads(proc.stdout)["reason"], "change-set-drift")
+ 
+ 
++class TestCodexRequiredPhase4(unittest.TestCase):
++    def test_required_forces_phase4_with_no_impacted_documents_in_both_modes(self):
++        for mode in ("incremental", "full"):
++            with self.subTest(mode=mode):
++                fx = RunFixture(self, docs=(),
++                                config_extra={"codexReview": {"required": True}})
++                self.assertEqual(fx.open().returncode, 0)
++                proc = fx.plan_start_seal(impacted=[], mode=mode)
++                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                with open(os.path.join(fx.run_dir, "manifest.json"),
++                          encoding="utf-8") as handle:
++                    manifest = json.load(handle)
++                self.assertTrue(manifest["phase4Required"])
++
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
++
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+         fx = RunFixture(self)
+
+exec
+/bin/zsh -lc 'git diff --check' in /Users/akiratakahashi/Projects/doc-audit-harness
+ succeeded in 0ms:
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+非object正規化と4組合せの回帰テストを実装し、重点105件・全体477件・diff checkがgreen。
+  ✓ start-runの設定読取と既存テスト構造を確認する
+  ✓ 非objectを空objectとして扱う修正と回帰テストを追加する
+  ✓ 指定重点テストとフルスイートを実行し件数を確認する
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+codex
+差し戻し1点を修正し、全477件が成功しました。
+
+- `codexReview` が辞書形式でなければ `{}` に変換し、`required:false` 相当として処理。
+- `[]`／`"x"` × incremental／full の4組合せを回帰テストで固定。
+  - incremental、対象文書0件 → `phase4Required:false`
+  - full → 従来どおり `phase4Required:true`
+
+検証結果:
+
+- 指定重点テスト: 105件成功
+- フルスイート: 477件成功、対象外1件
+- `git diff --check`: 成功
+- 既存テスト由来の `ResourceWarning` は出ましたが、失敗はありません。
+- git操作は行っていません。
+
+変更ファイル:
+
+- [start-run.py](/Users/akiratakahashi/Projects/doc-audit-harness/skills/audit/scripts/start-run.py)
+- [test_start_run.py](/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_start_run.py)
+diff --git a/skills/audit/scripts/start-run.py b/skills/audit/scripts/start-run.py
+index adf0fa9701b6f05c74a8f21c318a07f6c17d447f..0e6735e98531625edca1a2f9b3688cfcd575716c
+--- a/skills/audit/scripts/start-run.py
++++ b/skills/audit/scripts/start-run.py
+@@ -244,9 +244,12 @@
+                          ".claude/skills/doc-lint/SKILL.md", "scripts/check-docs.py"]
+             if not all(os.path.isfile(os.path.join(repo, path)) for path in generated):
+                 preflight_required = False
++        codex_review = config.get("codexReview", {})
++        if not isinstance(codex_review, dict):
++            codex_review = {}
+         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
+                            or args.mode == "full" or preflight_required
+-                           or bool(config.get("codexReview", {}).get("required") is True))
++                           or bool(codex_review.get("required") is True))
+         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
+         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
+         corpus = list_doc_files(repo, doc_globs)
+diff --git a/tests/test_start_run.py b/tests/test_start_run.py
+index 6c09ce9e512eb265459b403c8fa7deb52c6f9ab0..2b300cd95c1afc9c14016cd2453421efabe824d5
+--- a/tests/test_start_run.py
++++ b/tests/test_start_run.py
+@@ -413,6 +413,19 @@
+                     manifest = json.load(handle)
+                 self.assertTrue(manifest["phase4Required"])
+ 
++    def test_non_object_codex_review_preserves_optional_phase4_behavior(self):
++        for value in ([], "x"):
++            for mode, expected in (("incremental", False), ("full", True)):
++                with self.subTest(codexReview=value, mode=mode):
++                    fx = RunFixture(self, docs=(), config_extra={"codexReview": value})
++                    self.assertEqual(fx.open().returncode, 0)
++                    proc = fx.plan_start_seal(impacted=[], mode=mode)
++                    self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
++                    with open(os.path.join(fx.run_dir, "manifest.json"),
++                              encoding="utf-8") as handle:
++                        manifest = json.load(handle)
++                    self.assertIs(manifest["phase4Required"], expected)
++
+ 
+ class TestEndToEnd(unittest.TestCase):
+     def test_incremental_empty_impact_is_consistent_and_advances_anchor(self):
+
+tokens used
+177,704
+差し戻し1点を修正し、全477件が成功しました。
+
+- `codexReview` が辞書形式でなければ `{}` に変換し、`required:false` 相当として処理。
+- `[]`／`"x"` × incremental／full の4組合せを回帰テストで固定。
+  - incremental、対象文書0件 → `phase4Required:false`
+  - full → 従来どおり `phase4Required:true`
+
+検証結果:
+
+- 指定重点テスト: 105件成功
+- フルスイート: 477件成功、対象外1件
+- `git diff --check`: 成功
+- 既存テスト由来の `ResourceWarning` は出ましたが、失敗はありません。
+- git操作は行っていません。
+
+変更ファイル:
+
+- [start-run.py](/Users/akiratakahashi/Projects/doc-audit-harness/skills/audit/scripts/start-run.py)
+- [test_start_run.py](/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_start_run.py)
