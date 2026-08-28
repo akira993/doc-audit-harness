@@ -133,3 +133,14 @@
 - 判定: **差し戻し（S1b R4）**
 - S1b R4（最終レビュー P2 対応）— 承認（commit `7a1d532`）: `rebind.codex-review.bin`（complete＝`codexReviewBin`、unknown＝null）、Phase-5 codex 行の先頭に `invalid-config` 枝、順序 assert。boss 再実測 `final-full-tests-v.log` **Ran 580 tests OK, skipped 0 行**、diff 精読一致。
 - 最終判定: **承認**
+
+## route-close（手順 7）
+- 対象タスク: Issues #56（第 1 段）・#57・#58・#59（最小案）・#60 → docaudit v0.14.0（minor）。PR #61（branch `fix/v0.14.0-issues-56-60`、merge はユーザー）。
+- 記録時点の HEAD: `b22f9c18d529b348855abbf441693e5cccbf6f28`。`git status --short` は既存の未追跡 `?? .claude/` のみ。
+- 確定した変更ファイル（`git diff --name-only dfdb8a9 HEAD`、tasks/ 除く）: .claude-plugin/plugin.json docs/ADOPTION.ja.md docs/ADOPTION.md skills/audit/SKILL.md skills/audit/references/config-schema.md skills/audit/references/engine-shas.json skills/audit/scripts/ax-probe.sh skills/audit/scripts/codex-probe.sh skills/audit/scripts/import-audit-scope.py skills/audit/scripts/mdq-index.sh skills/audit/scripts/probe-record.py tests/test_ax_probe.py tests/test_codex_probe.py tests/test_codex_review_plan.py tests/test_decide_verdict.py tests/test_import_audit_scope.py tests/test_mdq_index.py tests/test_probe_record.py tests/test_release_handoff.py tests/test_scaffold.py tests/test_v0131_docs_contracts.py tests/test_v0132_contracts.py tests/test_v013_contracts.py tests/test_v014_contracts.py 
+  ＋ `tasks/route/2026-08-28-issues-56-60/**`（PLAN rev.8・REVIEW・allowlist・baseline-hashes・scope-check.py・59-design-note・批判/実装記録・release-handoff.sh・pr-body）。
+- audit verdict: `.claude/doc-audit.json` 未導入のため `/docaudit:audit` は不実行。代替: 変更した公開挙動（invalid-config 意味論・probe 永続化と再束縛・caller CODEX_HOME・絶対パス受理・§7）と既存文書（SKILL.md・config-schema.md・ADOPTION en/ja・付録）の整合を契約テスト `test_v014_contracts.py` 9 本＋既存契約テスト（test_v013/test_v0131/test_v0132/test_wp12/test_harness）で機械判定 → フルスイート **Ran 580 tests, OK, skipped 0**（`final-full-tests-v.log`）。
+- SSoT 更新: **0 ファイル**（AGENTS.md／PROJECT.md は本 repo に存在しない。規約・仕様の変更は config-schema.md／ADOPTION §7／SKILL.md に記録済み）。
+- 検査系成果物の実数: #58 絶対パス **20 ID**／#56 判定表 **3 probe × 20 ID** ＋ contextMode 式 **13 ID**（実行）＋ キー集合 5/4/5 分岐／#60 caller env **7 ID** ＋ 5 分岐／#57 probe-record **固定 33 ID・7 テスト**（10 seam schema・rebind 値・display 1 行性・symlink 4 種）／契約テスト test_v014 **9 本**／§7 固定文 **en 6・ja 6**／付録ファイル **43**・行 **52**／スコープ検査 3 段（allowlist 24 path・保護 root 25 entry）各 Stage で clean／禁止 engine ファイル **20 path** byte 一致。
+- 計画レビューの実数: Sol **5 往復**（R1 17・R2 17・R3 18・R4 15・R5 11 件、全件反映または #59 見送りへ転記）、Opus **2 ラウンド**（O1〜O8・N1〜N5）、最終 `codex exec review` **P2 ×2 → 修正済み**。
+- 見送り（ユーザー判断待ち）: #59 ledger（`59-design-note.md`）、#56 第 2 段。出荷後: PR merge → `release-handoff.sh <merge-sha> 61`（tag `docaudit--v0.14.0`・Release・#57/#58/#60 close・skills-dir 同期）。
