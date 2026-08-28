@@ -112,3 +112,4 @@
 - scope-check（SCOPE_COMMIT 8abfb91 / BOSS_COMMIT c4eefcb）: scope-clean。禁止ファイル byte 比較: forbidden-clean。`bash -n` 3 probe OK。
 - diff 精読: `import-audit-scope.py`（成分検査→apparent/real root 接頭辞→`validate_repo_path`、`main` で apparent root 保持）、3 probe（`CONFIG_SET` で指定有無分離、評価順序どおり、bin は base64 受け渡し・NUL 拒否、JSON は `json.dumps`、既存分岐のキー集合不変＋codex の 3 キー）、SKILL.md（CM 3 値式 verbatim、MDQ_REASON/AX_REASON、ゲート、Phase-5 3 行、caller 接尾辞は `rebind` 参照、診断文、Phase 4 注記、#59 注記、防御 1 句）、config-schema 4 行（`roots`/`tool` の既存記述は温存）、ADOPTION en/ja。
 - 指摘: なし（軽微メモ: bin の末尾改行は `$(…)` で落ちるが判定表外・非ブロッキング）。
+- 実装セッション S1b（Terra workspace-write, high）: session `01a0477e-2278-7883-9c32-0c9a62606ec1`（起動 2026-08-28T08:30:51Z）
