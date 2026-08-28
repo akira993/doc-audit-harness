@@ -188,3 +188,8 @@
 ### cr1 実装 R1〜R2 — 承認（commit `04a0624`）
 - R1: worker 報告 Ran 585 failures=1（自己修正後の再実行未了）。boss 再実測で `test_v0132_contracts::test_semantic_search_schema_describes_probe_validation_and_phase2_min_score` 失敗 → config-schema の固定句分断 → 差し戻し。
 - R2: 固定句復元。boss 最終再実測 `cr1-final-full-tests-v.log` **Ran 585 tests OK, skipped 0**、scope-check（BASE ef995f0）scope-clean、forbidden-clean、bash -n 6 probe、mkdtemp 0、旧文言 0、ADOPTION 単一置換 bytes 一致、`(caller info unavailable)` 1 回。diff 精読: SKILL（reopen 順序・無条件記録・CM 正規化・unknown 文言・gating・共通規則・C9）、3 graph probe（制御文字判定、disabled 分岐の既定名正規化）、config-schema 表 3 行。
+
+## 追補 2: PR #62 の `/code-review xhigh`（ユーザー実行）— 15 件
+- 実物確認: #1 `contextModeAvailable` キー名が SKILL から消失、#2 `test_mdq_index.setUp` の corpus 作成が `tmpdir()` の return 後に取り残され到達不能、#3 graphify の `gitignoreOk` assert が新テストへ迷子 — いずれも cr1 の worker 実装ミスで、**boss がテスト差分を精読しなかった見落とし**（教訓: 検収は runtime diff だけでなくテスト diff も全行）。
+- 他: #4 空白 bin、#5/#7 codex 行の (state, reviewState) 組み合わせ矛盾、#6 §7 に graph probe の変更未記載、#8 `Fix mdq first` 分岐、#9 sentinel 不使用・空白パス正例欠落（DoD 未達を boss が見逃し）、#10 `-` 先頭 bin、#11 lone surrogate、#12 scope-check の既定 base、#13 述語重複、#14 段落位置、#15 wrap 依存 assert。
+- 計画 `PLAN-cr2.md`（同 branch に追加 commit、版据え置き）。scope-check は `BASE_COMMIT` 必須化（boss 修正）。

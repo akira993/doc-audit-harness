@@ -6,9 +6,9 @@ def show(c,p): return subprocess.run(['git','show',f'{c}:{p}'],capture_output=Tr
 def z(cmd): return [p for p in subprocess.run(cmd,capture_output=True,text=True,check=True).stdout.split('\0') if p]
 allow={l.strip() for l in show(os.environ['SCOPE_COMMIT'],T+'allowlist.txt').splitlines() if l.strip() and not l.startswith('#')}|{T+'release-handoff.sh'}
 logs=[T+'*-session.log',T+'*-prompt.md',T+'*-answer.md',T+'investigate-*',T+'*.log',T+'*-report.md',T+'*-report[0-9].md',T+'stage*',T+'final-review.md',T+'pr-body*.md']
-boss_docs=[T+n for n in ('PLAN.md','PLAN-cr1.md','REVIEW.md','allowlist.txt','baseline-hashes.txt','59-design-note.md','scope-check.py')]
+boss_docs=[T+n for n in ('PLAN.md','PLAN-cr1.md','PLAN-cr2.md','REVIEW.md','allowlist.txt','baseline-hashes.txt','59-design-note.md','scope-check.py')]
 bad=[]
-BASE=os.environ.get('BASE_COMMIT','dfdb8a9')
+BASE=os.environ['BASE_COMMIT']  # 必須: このブランチの merge-base（例 ef995f0）
 changed=set(z(['git','diff','--name-only','-z',BASE,'HEAD']))
 st=z(['git','status','--porcelain=v1','-z','--untracked-files=all']); i=0
 while i<len(st):
