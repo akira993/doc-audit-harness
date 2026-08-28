@@ -213,3 +213,6 @@
 ### Sol cr2-R5（rev.5 → rev.6、上限到達）— (A) 4 件（文面・検査精度）
 - CR2-37 dash は正例のみ（C9 の負例から削除）／CR2-38 DoD の旧 ID を新 6 ID に統一／CR2-39 expected failure は結果行のみ検出／CR2-40 保護ファイルは `st_nlink==1`（boss 修正）
 - 判定: **上限到達。(A) 全件を rev.6 に反映し、Opus 全体敵対レビューへ**
+### Opus O-R4（PLAN-cr2 rev.6 → rev.7）— 条件付き合格。§8 の 3 検査片を現 HEAD で実走し偽陽性 0（検出は所見 #2 の実物 1 件のみ）、baseline Ran 585 OK
+- O1 既存メソッド名は改名・削除しない（`test_bin_boundary_table` は新規）／O2 cr1 §D10 のエイリアス統合を撤回（DoD (8)(c) 優先）／O3 26 ID は判定表、`test_bin_boundary_table` は制御文字（graph は空白・surrogate も）に分担／N1 33 文字全走査は 6 本で実施（+20〜40 秒許容）／N2 DoD 番号整理
+- 判定: **rev.7 で実装承認**
