@@ -99,3 +99,9 @@
 - O6 「`rebind` からのみ」が Phase-3 refresh 失敗 `<detail>` を初回でも壊す → 会話変数からの補完を唯一の例外として明記
 - N1 9 seam 厳密 schema の費用対効果 → 余分キー許容に緩和（必須キー・型・分岐は維持）／N2 最小 env に PATH 必須を明記／N3 reason 列挙 3 か所を mdq 散文・ax・codex に特定（graph 3 seam は不変）
 - 判定: **差し戻し → rev.7 で反映。O1 の是正案（codexReviewState seam）は同一エージェントへ resume で追認依頼（S1b 開始前）**
+- 実装セッション S1a（Terra workspace-write, medium）: session `01a04763-b5e9-7b52-a183-86346bb15998`（起動 2026-08-28T08:02:00Z）
+### O-R2（rev.7 → rev.8、resume）— 条件付き合格。O1〜O6/N1〜N3 の反映は全件追認
+- O7 `SEALED_PHASE4_REQUIRED=false` の正常 run で codex 行が unknown に誤発火 → 分岐外で `{"state":"phase4-not-required"}` を記録、専用枝 `💡 codex-review: not run (phase 4 not required)`、完全性条件から `codexReviewState` を除外
+- O8 `--evidence` を取るが置換しない規約 → SKILL.md:36-42 に固定文、DoD (11) に検査
+- N4 文面残り（余分キー拒否・9 seam）→ 修正／N5 再開後に Phase 4 の運用変数が失われる → `rebind` からの復元を 1 文許可（`Closes #57` を維持）
+- 判定: **rev.8 で実装承認（Opus「この 4 点を反映すれば追加指摘なし」）**

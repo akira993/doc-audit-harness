@@ -1,4 +1,4 @@
-# PLAN — Issues #56(第1段)・#57・#58・#59(最小案)・#60 → docaudit v0.14.0（rev.7, 2026-08-28 — Sol R1〜R5・Opus O1〜O6/N1〜N3・advisor 反映。#59 ledger は見送り。実装承認）
+# PLAN — Issues #56(第1段)・#57・#58・#59(最小案)・#60 → docaudit v0.14.0（rev.8, 2026-08-28 — Sol R1〜R5・Opus O1〜O8/N1〜N5・advisor 反映。#59 ledger は見送り。実装承認）
 
 ## 0. 決定事項（route 手順 1 の代替 — 自律実行につき boss 裁定。前回 v0.13.2 §0 と同じ方式）
 
@@ -57,7 +57,7 @@ except Exception:
      **`mdqHealth`: `mdq-health.py` の実出力 `{files:int≥0, chunks:int≥0, searchSmoke:bool, healthy:bool, status∈{ok,empty-index,search-broken,probe-error}}`（R5-1 — 5 キー verbatim）**；`mdqDegrade`: `{degrade∈{n/a,user-approved,non-interactive}}`；
      `contextMode`: (true,{contextModeAvailable,contextModeHealthy:bool,status∈{ok,degraded,probe-error}})／(false,{…,contextModeHealthy:null,status∈{disabled-by-config,not-installed,probe-error,invalid-config}})；
      `webExtract`: `{axAvailable,axBin:str,axVersion:str|null,reason}`、`axAvailable == (reason=="ok")`、reason∈{ok,not-installed,disabled-by-config,invalid-config}；
-     `codexReview`: `codex-probe.sh` の 5 キー＋§0-8 の 3 キー、`codexReviewAvailable == (reason=="ok")`、reason∈{ok,not-installed,disabled-by-config,probe-exec-failed,invalid-config}；`codexReviewState`: `{state∈{completed,execution-failed,ref-invalid,skipped-full-run,not-active}}`（`docaudit_cache.CODEX_REVIEW_STATES` と同一集合）；
+     `codexReview`: `codex-probe.sh` の 5 キー＋§0-8 の 3 キー、`codexReviewAvailable == (reason=="ok")`、reason∈{ok,not-installed,disabled-by-config,probe-exec-failed,invalid-config}；`codexReviewState`: `{state∈{completed,execution-failed,ref-invalid,skipped-full-run,not-active,phase4-not-required}}`（`docaudit_cache.CODEX_REVIEW_STATES` ＋ `phase4-not-required`。後者は **`SEALED_PHASE4_REQUIRED=false` の run で Phase 4 の分岐外から記録**する — Opus O7。Phase-5 codex 行にこの値専用の枝 `💡 codex-review: not run (phase 4 not required)` を追加。`codexReviewState` は codex-review 行の `state` 完全性に算入せず `reviewState` のみを供給する）；
      `symbolGraph`／`docGraph`／`semanticSearch`: 各 probe script の分岐どおり（キー集合は v0.13.2 の Opus B5 不変、reason 集合は SKILL の列挙と一致、`available == (reason ∈ OK_REASONS[seam])` — worker が script から表を起こし、テストが SKILL の列挙と照合）。
      違反 exit 2・ファイル不変。stdout に保存後の全体。
    - `--read`: 同じ検査で読み、stdout に `{"schemaVersion":1,"seams":{...},"rebind":{...}}`。**`rebind` は 7 行それぞれの「Phase-5 入力の正規化済み値」を script が算出**（R4-7 — 完全性だけでなく値まで）:
@@ -66,15 +66,17 @@ except Exception:
      `symbol-graph`／`doc-graph`／`semantic-search`: `{state,available,reason,bin,(docGraph のみ gitignoreOk)}`。
      完全性条件: mdq は `indexing`＋`mdqDegrade`、`indexing.mdqAvailable:true` なら `mdqHealth` も。他は各 seam 1 件。不在ファイル → 7 行 `unknown`（値は null）exit 0。破損／schema 違反 → exit 2。
    - **Phase 5 は初回・再開を問わず状態行入力を `probe-record.py --read` の `rebind` から取る**（R4-2/R4-7 — 表示用エスケープと対応表の適用を script に一本化し、SKILL の python -c 表示式を置かない）。**唯一の例外（Opus O6）**: mdq 行の Phase-3 refresh 失敗接尾辞 `[Phase-3 refresh failed: <detail>; grep-degrade]` の `<detail>` は従来どおり会話変数（SKILL.md:411）から補い、再開後は接尾辞を省く。
-     Phase 0〜4 が使う運用変数（`MDQ_AVAILABLE`、`CODEX_REVIEW_AVAILABLE`、`AX_BIN` 等）は従来どおり probe JSON から束縛（不変）。状態行は既存どおり **gate 起動前**に生成する（SKILL.md:596-599 — gate stdout は使えない。Opus O1）。
+     Phase 0〜4 が使う運用変数（`MDQ_AVAILABLE`、`CODEX_REVIEW_AVAILABLE`、`AX_BIN` 等）は従来どおり probe JSON から束縛（不変）。**再開後に Phase 4 がこれらの運用変数を失っていた場合は、`--read` の `rebind`（`available`／`reason`／`bin`）から復元してよい**（Opus N5 — `/code-review` 中断後の `codex-review-plan.py --available … --available-reason …` を成立させる。SKILL の再開段落に 1 文）。状態行は既存どおり **gate 起動前**に生成する（SKILL.md:596-599 — gate stdout は使えない。Opus O1）。
    - **codex-review 行の規則（R5-2 改・Opus O1/O2）**: 基本状態（4-way）は `CODEX_REVIEW_STATE` で分岐する既存文言（`test_v013_contracts.py:82-86` が固定するリテラルを温存）。Phase 5 では `CODEX_REVIEW_STATE` を `rebind["codex-review"].reviewState` から再束縛する（初回は Phase 4 で記録した値と同一）。`reviewState` が `null`（記録前に中断・再開）→ `⚠ codex-review: state unknown after resume [non-blocking]`。
      `rebind["codex-review"].state` が `unknown`（probe 記録欠損）で `reviewState` が非 null → 4-way の行は出し、接尾辞を ` (caller info unknown after resume)` にする。
    - **失敗規約（fail-open）**: 記録（write）失敗は `⚠ probe-record: <seam> not recorded (<stderr 先頭行>) [non-blocking]` を Phase-5 に 1 行添えて続行。`--read` 失敗（exit 2）は 7 行すべて unknown 形。いずれも verdict 不変。
-   - **EVIDENCE には入れない・gate は読まない・verdict 不変**（`grep -c phase0-probes decide-verdict.py`=0）。
+   - **EVIDENCE には入れない・gate は読まない・verdict 不変**（`grep -c phase0-probes decide-verdict.py`=0）。**SKILL.md:36-42 の EVIDENCE 置換規約段落に固定文を追加**（Opus O8）:
+     `probe-record.py also receives --evidence "$EVIDENCE" for run-dir validation only; it is not an evidence producer and its stdout MUST NOT replace EVIDENCE.`
+   - SKILL.md Phase 4: evidence 書き込み（`write-evidence.py --name phase4` → `EVIDENCE` 置換）の**直後**に `codexReviewState` を記録。`SEALED_PHASE4_REQUIRED=false` の分岐（`if … fi` の else）で `{"state":"phase4-not-required"}` を記録。
    - SKILL.md Phase 0: 各 probe 直後に記録行（9 seam。`MDQ_PROBE_JSON`／`AX_PROBE_JSON` を新設。mdqHealth は verbatim、mdqDegrade はゲート評価後、contextMode は合成 JSON）。Phase 3 の mdq 再索引（:407-412）後に `indexing`／`mdqHealth` 再記録。
    - **7 行の unknown 文言**: `⚠ mdq: state unknown after resume [non-blocking]`／`⚠ context-mode: …`／`⚠ ax: …`／`⚠ symbol-graph: …`／`⚠ doc-graph: …`／`⚠ semantic-search: …`（codex-review は上記の規則）。7 行の順序は既存どおり。Phase-3 refresh 失敗接尾辞は再開後は付けない（文書化）。code-review 行は対象外。
    - 再開規約（:41-56）に段落追加（固定文言）: `Phase-5 status lines are always rendered from probe-record.py --read (its "rebind" map is authoritative, on fresh and resumed runs alike; only the Phase-3 refresh-failure detail comes from the conversation and is omitted after a resume); a line marked unknown prints its "state unknown after resume" form; CODEX_REVIEW_STATE is rebound from rebind.codex-review.reviewState; a failed read marks all lines unknown; none of this changes the verdict.`
-   - テスト `tests/test_probe_record.py`（固定 ID ≥ 24）: upsert／上書き／原子性／固定 seam 集合／分岐別 schema 違反（9 seam 各 1 ＋ 矛盾例）／余分キー拒否／**`mdq-health.py` の実 stdout（probe-error 分岐は実行で取得、ok 分岐は `test_mdq_health.py` の fixture）を write→read**／非 object stdin／`--read` 不在→全 unknown／破損→exit 2／
+   - テスト `tests/test_probe_record.py`（固定 ID ≥ 24）: upsert／上書き／原子性／固定 seam 集合／分岐別 schema 違反（10 seam 各 1 ＋ 矛盾例）／余分キー許容（無視されることの確認）／**`mdq-health.py` の実 stdout（probe-error 分岐は実行で取得、ok 分岐は `test_mdq_health.py` の fixture）を write→read**／非 object stdin／`--read` 不在→全 unknown／破損→exit 2／
      **`rebind` 値（producer 出力 → write → read → 7 行の期待値と完全一致。完全・`mdqHealth` 欠損×available 真偽・部分欠損）**／**display の 1 行性（改行・制御文字・`"`・`\` 入り `callerCodexHome`）と 199 文字＋改行の切り詰め境界**／中間 symlink 拒否／run dir symlink 拒否／ファイル symlink 拒否／runDir 不一致／RUNID 不正／symlink repo-root 受理。
      契約テスト: Phase 0 節に 9 seam 記録行、Phase 3 再記録 2 行、Phase 5 が `--read` を呼ぶ行、再開段落固定文（`"rebind" map is authoritative` を含む）、6 unknown 文言＋codex の null 文言、fail-open 固定文、Guardrails 1 句、SKILL に表示用 python -c 式が**無い**こと（`grep -c 'callerCodexHome"\]' SKILL.md` = 0）。
 7. **#59 最小案**: SKILL.md Phase 4（codex review 段落末尾）と ADOPTION en/ja に運用注記（固定文）:
@@ -144,7 +146,7 @@ S1a Terra `medium`／S1b Terra `high`／S2 Luna `medium`（`codex exec -m … -s
 
 ### S1b-#57
 - (10) `tests/test_probe_record.py`（固定 ID ≥ 24、§0-6 列挙。`rebind` 値の完全一致・display 1 行性・mdq-health 実出力を含む）。
-- (11) `test_v014_contracts.py`: Phase 0 に 9 seam 記録行＋Phase 4 に `codexReviewState` 記録行（計 10 seam）、Phase 3 再記録 2 行、Phase 5 の `--read` 行、`CODEX_REVIEW_STATE=` 既存リテラル 4 つの温存（`test_v013_contracts.py::test_e` green）、再開段落固定文、6 unknown 文言、fail-open 固定文、Guardrails 1 句、SKILL に表示用 python -c 式が無い、`grep -c phase0-probes skills/audit/scripts/decide-verdict.py` = 0。
+- (11) `test_v014_contracts.py`: Phase 0 に 9 seam 記録行＋Phase 4 に `codexReviewState` 記録行（計 10 seam）、Phase 3 再記録 2 行、Phase 5 の `--read` 行、`CODEX_REVIEW_STATE=` 既存リテラル 4 つの温存（`test_v013_contracts.py::test_e` green）、`phase4-not-required` 枝の固定文、EVIDENCE 規約段落の O8 固定文、再開段落の運用変数復元 1 文、再開段落固定文、6 unknown 文言、fail-open 固定文、Guardrails 1 句、SKILL に表示用 python -c 式が無い、`grep -c phase0-probes skills/audit/scripts/decide-verdict.py` = 0。
 
 ### S2
 - (12) `python3 -m unittest tests.test_v013_contracts tests.test_scaffold tests.test_release_handoff tests.test_v014_contracts` green。5 面 `0.14.0`、engine-shas `0.14.0`、refresh 段落更新。
