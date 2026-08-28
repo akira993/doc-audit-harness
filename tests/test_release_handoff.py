@@ -1,4 +1,4 @@
-"""Branch, publication, and archive-boundary tests for the v0.13.1 handoff."""
+"""Branch, publication, and archive-boundary tests for the v0.13.2 handoff."""
 
 import io
 import json
@@ -15,24 +15,22 @@ HANDOFF = os.path.join(
     ROOT,
     "tasks",
     "route",
-    "2026-08-27-issues-46-50-v0.13.1",
+    "2026-08-28-issues-52-54-v0.13.2",
     "release-handoff.sh",
 )
 APPROVED = "a" * 40
 WRONG = "c" * 40
-TAG = "docaudit--v0.13.1"
-TITLE = "docaudit v0.13.1 — documentation consistency (#46–#50)"
-ISSUES = {str(number) for number in range(46, 51)}
-PRECLOSED = {"46", "47"}
+TAG = "docaudit--v0.13.2"
+TITLE = "docaudit v0.13.2 — report-only probes, docGlobs default, seal stop (#52–#54)"
+ISSUES = {str(number) for number in range(52, 55)}
+PRECLOSED = {"52", "53"}
 REQUIRED_BODY = (
     APPROVED,
-    "#46",
-    "#47",
-    "#48",
-    "#49",
-    "#50",
-    "digestExclude",
-    "docs-only",
+    "#52",
+    "#53",
+    "#54",
+    "not-configured",
+    "settings.yml",
 )
 
 

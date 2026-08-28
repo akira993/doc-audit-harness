@@ -222,7 +222,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.13.1  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.13.2  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -251,6 +251,16 @@ after the gate, `previousReportStatus` surfaces an earlier `pending`, `failed`, 
 `written-durability-unknown` report state. Phase 3 also has the explicit, fail-closed
 `phase3Backend:"codex"` opt-in described below. Report filenames and front-matter dates are
 derived from the run ID in **UTC**, so they may differ from the local date around midnight.
+
+**v0.13.2 behavior changes:** omitted `docGlobs` now defaults to
+`["docs/**/*.md","*.md"]` for pre-flight fix classification; `CLAUDE.md` and `AGENTS.md`
+are always denied (case-insensitive); an absent `docGraph` / `semanticSearch` /
+`symbolGraph` key reports `not-configured` and never runs the tool; an invalid key reports
+`invalid-config`. CocoIndex counts as initialized only when `.cocoindex_code/settings.yml`
+exists; a `.gitignore` change during `ccc index` reports `gitignore-modified` and is never
+reverted by the audit; any `seal-run.py` or `read-manifest.py` failure releases the run and
+stops; `read-manifest.py` rejects an unsealed manifest; configs that relied on auto-detection
+must add the key via `/docaudit:init`.
 
 ---
 
@@ -282,7 +292,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.1, 0.11.0, 0.12.0, or 0.13.0 templates can be updated directly to 0.13.1 with
+Existing unmodified stamped 0.10.1, 0.11.0, 0.12.0, 0.13.0, or 0.13.1 templates can be updated directly to 0.13.2 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so

@@ -202,7 +202,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.13.1  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.13.2  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -232,6 +232,12 @@ Phase 3 には明示的かつ fail-closed な `phase3Backend:"codex"` opt-in も
 ファイル名と front matter の日付は run ID 由来の **UTC 基準**なので、日付境界ではローカル日付と
 異なる場合がある。
 
+**v0.13.2 の挙動変更:** `docGlobs` を省略した場合、pre-flight fix の分類は `["docs/**/*.md","*.md"]` を既定とする。`CLAUDE.md` と `AGENTS.md` は大文字小文字を区別せず常に拒否される。
+`docGraph` / `semanticSearch` / `symbolGraph` のキーが無い場合は `not-configured` を報告し tool を一切起動しない。キーが不正な場合は `invalid-config` を報告する。
+CocoIndex は `.cocoindex_code/settings.yml` が存在する場合のみ初期化済みとみなす。`ccc index` の実行中に `.gitignore` が変化した場合は `gitignore-modified` を報告し、監査は復元しない。
+`seal-run.py` または `read-manifest.py` が失敗した場合は run を解放して停止する。`read-manifest.py` は未 seal の manifest を拒否する。
+自動検出に頼っていた config は `/docaudit:init` でキーを追加するまで `not-configured` になる。
+
 ---
 
 ## 4. プロジェクトをオンボードする
@@ -260,8 +266,8 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.1、0.11.0、0.12.0、または 0.13.0 テンプレートは、
-`/docaudit:init --harness --refresh` で 0.13.1 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.1、0.11.0、0.12.0、0.13.0、または 0.13.1 テンプレートは、
+`/docaudit:init --harness --refresh` で 0.13.2 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、

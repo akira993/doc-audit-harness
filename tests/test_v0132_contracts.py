@@ -114,6 +114,37 @@ class TestFixScopeDefaults(unittest.TestCase):
 
 
 class TestV0132S1aContracts(unittest.TestCase):
+    def test_v0132_behavior_changes_paragraph(self):
+        """DoD (17): both §7 paragraphs preserve the five fixed behavior statements."""
+        expected = {
+            "docs/ADOPTION.md": (
+                "v0.13.2 behavior changes:",
+                (
+                    'omitted docGlobs now defaults to ["docs/**/*.md","*.md"] for pre-flight fix classification; CLAUDE.md and AGENTS.md are always denied (case-insensitive)',
+                    "an absent docGraph / semanticSearch / symbolGraph key reports not-configured and never runs the tool; an invalid key reports invalid-config",
+                    "CocoIndex counts as initialized only when .cocoindex_code/settings.yml exists; a .gitignore change during ccc index reports gitignore-modified and is never reverted by the audit",
+                    "any seal-run.py or read-manifest.py failure releases the run and stops; read-manifest.py rejects an unsealed manifest",
+                    "configs that relied on auto-detection must add the key via /docaudit:init",
+                ),
+            ),
+            "docs/ADOPTION.ja.md": (
+                "v0.13.2 の挙動変更:",
+                (
+                    'docGlobs を省略した場合、pre-flight fix の分類は ["docs/**/*.md","*.md"] を既定とする。CLAUDE.md と AGENTS.md は大文字小文字を区別せず常に拒否される',
+                    "docGraph / semanticSearch / symbolGraph のキーが無い場合は not-configured を報告し tool を一切起動しない。キーが不正な場合は invalid-config を報告する",
+                    "CocoIndex は .cocoindex_code/settings.yml が存在する場合のみ初期化済みとみなす。ccc index の実行中に .gitignore が変化した場合は gitignore-modified を報告し、監査は復元しない",
+                    "seal-run.py または read-manifest.py が失敗した場合は run を解放して停止する。read-manifest.py は未 seal の manifest を拒否する",
+                    "自動検出に頼っていた config は /docaudit:init でキーを追加するまで not-configured になる",
+                ),
+            ),
+        }
+        for path, (heading, sentences) in expected.items():
+            paragraphs = [part for part in re.split(r"\n\s*\n", read_repo_file(path)) if heading in part]
+            self.assertEqual(len(paragraphs), 1, f"{path}: v0.13.2 paragraphs={len(paragraphs)}")
+            normalized = " ".join(paragraphs[0].split()).replace("`", "")
+            for sentence in sentences:
+                self.assertIn(sentence, normalized)
+
     def test_builtin_deny_documented_in_five_places(self):
         """DoD (4): all five built-in deny descriptions name both agent files and casing."""
         schema = read_repo_file("skills/audit/references/config-schema.md")
