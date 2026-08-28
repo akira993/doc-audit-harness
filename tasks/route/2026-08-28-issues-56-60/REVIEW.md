@@ -175,3 +175,7 @@
 - CR4-3 codex 表に whole-record unknown を新設すると既知 reviewState の部分回復が到達不能 → codex は invalid-config → reviewState=null → 4-way を維持、state=unknown は接尾辞のみ
 - CR4-4 ADOPTION 検査は差分 0 件でも通る → ef995f0 基準の単一置換期待バイト列と完全一致／CR4-5 DoD (3) に disabled 側 33 件を明記
 - 判定: **差し戻し（rev.5 で最終ラウンド R5）**
+### Sol CR1-R5（rev.5 → rev.6、上限到達）— (A) 2 件・(B) 2 件、いずれも文言・検査精度
+- CR5-1 `Fix mdq first` 選択時も Phase 0.5 へ進むと読める → 条件付き文に／CR5-2 DoD (1) の 7 表一括順序が codex の例外を反転 → 6 表＋codex を分離
+- CR5-3 ADOPTION 検査を bytes 比較に／CR5-4 reopen の 5 要素相対順を 1 本の順序テストで固定
+- 判定: **上限到達。(A) 全件を rev.6 に反映し、Opus 全体敵対レビューへ**
