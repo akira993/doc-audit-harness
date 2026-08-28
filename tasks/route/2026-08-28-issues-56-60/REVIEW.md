@@ -222,3 +222,7 @@
 - R1: 機械検査は全て clean（Ran 603 OK・skip 0・expected failure 0、AST/-v ログ・ADOPTION 段落・scope-clean）だったが、**boss のテスト全行精読**で DoD (2) 未達 5 点（graph の全 reason 生成が 3 分岐のみ、正例の起動回数 assert 無し、`-x` が絶対パス、`enabled:false`＋妥当カスタム bin の 3 形欠落、sentinel が既定名のみ）と共通規則文の短縮を検出 → 差し戻し。
 - R2: 全件修正。boss 再実測 `cr2-final-full-tests-v.log` **Ran 603 tests OK, skipped 0, expected failure 0**、scope-clean（BASE ef995f0 / SCOPE 0cec02a）、AST 片 tests-ast-clean、ADOPTION 期待段落一致、forbidden-clean、`bash -n` 6 probe。diff 精読: SKILL（CM 3 キー・codex 5 条件句・Fix-mdq-first 例外・規則段落の独立配置）、6 probe（統一検証・disabled 3 形・`command -v --`・UTF-8 バイト伝送）、config-schema 6 行、ADOPTION §7 en/ja、テスト（fixture 修復・起動回数 assert・全 reason 生成・sentinel 網羅）。
 - 教訓の再確認: 「テスト名がある」と「テストが判別する」は別。boss の検収はテスト本体の全文精読を必須にする。
+
+## 追補 3: 3 回目 `/code-review xhigh`（2026-08-29、セッション上限 429 で途中終了）
+- 完了した検証サブエージェント 1 本の CONFIRMED 所見 V9: cr2 で入った JSON emit の `ensure_ascii=False`（9 か所）は要求外で、U+0085/U+2028/U+2029 bin で 1 行契約が破れ、非 UTF-8 `CODEX_HOME` で codex probe が空出力・exit 0 になる回帰。boss の cr2 検収で「無害」と誤判定した箇所。
+- 計画 `PLAN-cr3.md`（1 件、9 か所を既定 `ensure_ascii=True` に戻す＋回帰テスト 6 本）。
