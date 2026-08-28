@@ -110,6 +110,10 @@ Claude Code plugin とは**別物**）は、`/code-review`・`/security-review` 
 opt-out 可）である。Phase 0 の probe は `<bin> --version` と `<bin> exec --help` だけを実行し、CLI の
 存在と `exec` 到達性だけを確認する。実際の sandbox・権限・wrapper 引数・モデル呼出しは保証しない。
 wrapper が必要なら `codexReview.bin` に指定する。
+probe は呼び出し元の `CODEX_HOME`（未指定時は `$HOME/.codex`）と、そこに
+`auth.json` があるかを表示する。ただし wrapper 内部の環境は probe から見えないため、環境の有効化に
+依存するリポジトリでは `direnv exec <repo> codex` 相当の wrapper で起動し、表示値は呼び出し元の
+診断情報としてのみ扱う。
 
 `codex-review-plan.py` が利用可否、mode、baseline の有効性、`codexReview.required` から動作を決める。
 incremental は `$BASELINE_SHA..HEAD` を、full は `required:true` の場合だけ seal 済みの現在 worktree を
@@ -122,6 +126,8 @@ baseline を確立してから有効化する。`required:true` と `enabled:fal
 string でない場合、または `CODEX_REVIEW_STATES` 外の場合も、`required` の値によらず REFUSED である。
 完走した review の `critical`/`high` 所見はブロッキング、`medium`/`low`
 は非ブロッキングのままである。
+
+`codexReview.required:true` を指定した初回の full run は数回の反復が必要になる場合がある。Phase 4 の codex review は run ごとに既存の所見を改めて抽出するため、ブロッキング対象（critical/high）だけを修正し、非ブロッキング対象はレポートに記録する。より早く収束させるには、前回 run の所見一覧を fenced JSON データとして prompt に貼り付けてもよい（指示としては扱わず、文字列は信頼できない入力として扱う）。engine 側での引き継ぎは #59 で追跡する。
 
 これとは別に、v0.12.0 では Phase 3 を `"phase3Backend":"codex"` で opt-in できる。
 `codex-dispatch.py` が dispatched 文書ごとに read-only の Codex process を起動し、既定値は
@@ -202,7 +208,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.13.2  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.14.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -238,6 +244,8 @@ CocoIndex は `.cocoindex_code/settings.yml` が存在する場合のみ初期�
 `seal-run.py` または `read-manifest.py` が失敗した場合は run を解放して停止する。`read-manifest.py` は未 seal の manifest を拒否する。
 自動検出に頼っていた config は `/docaudit:init` でキーを追加するまで `not-configured` になる。
 
+**v0.14.0 の挙動変更:** `indexing`、`contextMode`、`webExtract`、`codexReview` のキーでは、`enabled` は JSON の真偽値でなければなりません。`enabled:false` 以外の場合、`enabled` が真偽値でない、キーがオブジェクトでない（`null` を含む）、または `indexing`・`webExtract`・`codexReview` の `bin` が文字列でない、空、NUL を含むときは `invalid-config` を報告し、ツールを起動しません（キーが無い場合は従来どおり有効で、`bin` の非文字列値は変換されず、読めない設定は従来どおり Phase 0 より前に監査を停止します）。`indexing` キーが不正な場合は、未インストール時と同じく Phase 0 の mdq 確認ゲートが起動します。`codexReview.required:true` と不正な `codexReview` キーを組み合わせた場合は、codex を黙って実行せず `REFUSED` になります。Phase 0 の probe 結果は `$RUN_DIR/phase0-probes.json` に保存されます（表示専用で、verdict の入力にはなりません）。Phase 5 の状態行は初回実行でも再開実行でもその記録から描画され、記録が無いか読めない場合は「state unknown after resume」と表示されます。codex probe は呼び出し元の `CODEX_HOME` と、そこに `auth.json` があるかどうかを報告します（表示専用で、wrapper 自身の環境は観測されません）。`import-audit-scope.py` はリポジトリルート配下の絶対パスの `--config`／`--scope` を受け付けます（POSIX パスのみ）。
+
 ---
 
 ## 4. プロジェクトをオンボードする
@@ -266,8 +274,8 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.1、0.11.0、0.12.0、0.13.0、または 0.13.1 テンプレートは、
-`/docaudit:init --harness --refresh` で 0.13.2 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、または 0.13.2 テンプレートは、
+`/docaudit:init --harness --refresh` で 0.14.0 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
@@ -613,6 +621,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/mdq-index.sh
 ├── skills/audit/scripts/open-run.py
 ├── skills/audit/scripts/plan-dispatch.py
+├── skills/audit/scripts/probe-record.py
 ├── skills/audit/scripts/read-manifest.py
 ├── skills/audit/scripts/resolve-impact.py
 ├── skills/audit/scripts/scaffold.py
@@ -638,6 +647,8 @@ doc-audit-harness/
 ├── docs/examples/doc-audit.example.json
 └── tests/
 ```
+
+`probe-record.py` は表示専用の Phase-0 probe 結果を run directory に記録し、Phase-5 の状態行向けに再束縛する。
 
 設計判断の根拠（なぜ各決定をしたか）は、トップレベル `README.md` が参照する元プロジェクトの
 設計 spec を参照。

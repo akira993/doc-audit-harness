@@ -12,51 +12,77 @@
 # local binary and do not start a model invocation.
 set -uo pipefail
 
-CONFIG=""; REPO_ROOT="$(pwd)"
+CONFIG=""; CONFIG_SET=0; REPO_ROOT="$(pwd)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --config) CONFIG="$2"; shift 2;;
+    --config) CONFIG_SET=1; CONFIG="$2"; shift 2;;
     --repo-root) REPO_ROOT="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
 
-# codexReview.enabled (default true) + codexReview.bin (default "codex"); tolerate a
-# missing/invalid config by falling back to defaults.
-ENABLED="1"; BIN="codex"
-if [[ -n "$CONFIG" ]]; then
-  IFS=$'\t' read -r ENABLED BIN < <(python3 -c '
-import json,sys
-e=True; b="codex"
+DECISION="$(python3 -c '
+import base64,json,sys
+state="enabled"; binary="codex"
 try:
-    w=(json.load(open(sys.argv[1])).get("codexReview") or {})
-    e=bool(w.get("enabled",True)); b=str(w.get("bin","codex") or "codex")
+    if sys.argv[1] == "1":
+        if not sys.argv[2]: raise ValueError
+        config=json.load(open(sys.argv[2]))
+        if not isinstance(config,dict): raise ValueError
+        if "codexReview" in config:
+            seam=config["codexReview"]
+            if not isinstance(seam,dict): raise ValueError
+            if "enabled" in seam and not isinstance(seam["enabled"],bool): raise ValueError
+            if seam.get("enabled") is False: state="disabled"
+            elif "bin" in seam:
+                value=seam["bin"]
+                if not isinstance(value,str) or not value or "\0" in value: raise ValueError
+                binary=value
 except Exception:
-    pass
-print(("1" if e else "0")+"\t"+b)
-' "$CONFIG")
-fi
-[[ -n "$BIN" ]] || BIN="codex"
-[[ -n "$ENABLED" ]] || ENABLED="1"
-# JSON-safe copy of BIN for echoing into the JSON (BIN comes from user config).
-BIN_J="$(printf '%s' "$BIN" | tr -d '"\\' | tr -d '[:cntrl:]')"
+    state="invalid"; binary="codex"
+print(state+"\t"+base64.b64encode(binary.encode()).decode())
+' "$CONFIG_SET" "$CONFIG")"
+IFS=$'\t' read -r CONFIG_STATE BIN_B64 <<< "$DECISION"
+BIN="$(python3 -c 'import base64,sys; print(base64.b64decode(sys.argv[1]).decode(),end="")' "$BIN_B64")"
 
-if [[ "$ENABLED" != "1" ]]; then
-  printf '{"codexReviewAvailable":false,"codexReviewBin":"%s","codexReviewVersion":null,"probeCommands":[],"reason":"disabled-by-config"}\n' "$BIN_J"
+CALLER_HOME=""; CALLER_SOURCE="unknown"; CALLER_AUTH="unknown"; CALLER_NULL=1
+if [[ -n "${CODEX_HOME:-}" ]]; then
+  CALLER_HOME="$CODEX_HOME"; CALLER_SOURCE="env"; CALLER_NULL=0
+elif [[ -n "${HOME:-}" ]]; then
+  CALLER_HOME="$HOME/.codex"; CALLER_SOURCE="default"; CALLER_NULL=0
+fi
+if [[ "$CALLER_NULL" == "0" ]]; then
+  if [[ -f "$CALLER_HOME/auth.json" ]]; then CALLER_AUTH="present"; else CALLER_AUTH="absent"; fi
+fi
+
+emit_json() {
+  python3 -c 'import json,sys
+version=None if sys.argv[3]=="__NULL__" else sys.argv[3]
+commands=[] if sys.argv[4]=="0" else [sys.argv[2]+" --version",sys.argv[2]+" exec --help"]
+home=None if sys.argv[9]=="1" else sys.argv[6]
+print(json.dumps({"codexReviewAvailable":sys.argv[1]=="1","codexReviewBin":sys.argv[2],"codexReviewVersion":version,"probeCommands":commands,"reason":sys.argv[5],"callerCodexHome":home,"callerCodexHomeSource":sys.argv[7],"callerAuthFile":sys.argv[8]}))' \
+    "$1" "$2" "$3" "$4" "$5" "$CALLER_HOME" "$CALLER_SOURCE" "$CALLER_AUTH" "$CALLER_NULL"
+}
+
+if [[ "$CONFIG_STATE" == "invalid" ]]; then
+  emit_json 0 codex __NULL__ 0 invalid-config
+  exit 0
+fi
+if [[ "$CONFIG_STATE" == "disabled" ]]; then
+  emit_json 0 codex __NULL__ 0 disabled-by-config
   exit 0
 fi
 
 if ! command -v "$BIN" >/dev/null 2>&1; then
-  printf '{"codexReviewAvailable":false,"codexReviewBin":"%s","codexReviewVersion":null,"probeCommands":[],"reason":"not-installed"}\n' "$BIN_J"
+  emit_json 0 "$BIN" __NULL__ 0 not-installed
   exit 0
 fi
 
 # `codex --version` reports the local binary version only — no network call.
 VERSION="$("$BIN" --version 2>/dev/null | tr -d '\r' | head -n1)"
-VERSION_J="$(printf '%s' "$VERSION" | tr -d '"\\' | tr -d '[:cntrl:]')"
 if ! "$BIN" exec --help >/dev/null 2>&1; then
-  printf '{"codexReviewAvailable":false,"codexReviewBin":"%s","codexReviewVersion":"%s","probeCommands":["%s --version","%s exec --help"],"reason":"probe-exec-failed"}\n' "$BIN_J" "$VERSION_J" "$BIN_J" "$BIN_J"
+  emit_json 0 "$BIN" "$VERSION" 1 probe-exec-failed
   exit 0
 fi
-printf '{"codexReviewAvailable":true,"codexReviewBin":"%s","codexReviewVersion":"%s","probeCommands":["%s --version","%s exec --help"],"reason":"ok"}\n' "$BIN_J" "$VERSION_J" "$BIN_J" "$BIN_J"
+emit_json 1 "$BIN" "$VERSION" 1 ok
 exit 0

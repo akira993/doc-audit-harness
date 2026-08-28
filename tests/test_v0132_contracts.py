@@ -224,6 +224,8 @@ class TestV0132S1bContracts(unittest.TestCase):
     def test_probe_reason_enumerations_match_fixed_sets(self):
         """DoD (9): probe reason enumerations are complete and exact in both documents."""
         skill_blocks = {
+            "webExtract": self._phase0_block("Then probe **ax**", "Then probe **codex**"),
+            "codexReview": self._phase0_block("Then probe **codex**", "Then probe **codegraph**"),
             "symbolGraph": self._phase0_block("Then probe **codegraph**", "Then probe **graphify**"),
             "docGraph": self._phase0_block("Then probe **graphify**", "Then probe **CocoIndex**"),
             "semanticSearch": self._phase0_block("Then probe **CocoIndex**", "**Harness question"),
@@ -235,17 +237,21 @@ class TestV0132S1bContracts(unittest.TestCase):
             "semanticSearch": schema.split("## CocoIndex", 1)[1].split("## Generic", 1)[0],
         }
         expected = {
+            "webExtract": {"ok", "not-installed", "disabled-by-config", "invalid-config"},
+            "codexReview": {"ok", "not-installed", "disabled-by-config", "probe-exec-failed", "invalid-config"},
             "symbolGraph": {"ok", "not-installed", "disabled-by-config", "index-failed", "not-configured", "invalid-config"},
             "docGraph": {"ok", "not-installed", "disabled-by-config", "update-failed", "not-configured", "invalid-config"},
             "semanticSearch": {"ok", "not-installed", "disabled-by-config", "not-initialized", "index-failed", "not-configured", "invalid-config", "gitignore-modified"},
         }
         for seam, reasons in expected.items():
             with self.subTest(document="skill", seam=seam):
-                listed = re.search(r"`reason` ∈\s*\n([^\n]+(?:\n[^\n]+)?)\. Bind", skill_blocks[seam])
+                listed = re.search(r"\(`reason` ∈\s*([^)]*)\)\.?\s*Bind",
+                                   skill_blocks[seam])
                 self.assertIsNotNone(listed)
                 self.assertEqual(set(re.findall(r"`([a-z-]+)`", listed.group(1))), reasons)
-            with self.subTest(document="schema", seam=seam):
-                self.assertEqual(set(re.findall(r"`([a-z-]+)`", schema_blocks[seam].split("Its probe reasons are", 1)[1])), reasons)
+            if seam in schema_blocks:
+                with self.subTest(document="schema", seam=seam):
+                    self.assertEqual(set(re.findall(r"`([a-z-]+)`", schema_blocks[seam].split("Its probe reasons are", 1)[1])), reasons)
 
     def test_phase5_status_lines_map_each_reason_to_one_branch(self):
         """DoD (10): every Phase-5 reason has one exclusive user-facing branch."""

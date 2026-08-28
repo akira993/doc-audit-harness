@@ -11,47 +11,54 @@
 # does not fetch a URL.
 set -uo pipefail
 
-CONFIG=""; REPO_ROOT="$(pwd)"
+CONFIG=""; CONFIG_SET=0; REPO_ROOT="$(pwd)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --config) CONFIG="$2"; shift 2;;
+    --config) CONFIG_SET=1; CONFIG="$2"; shift 2;;
     --repo-root) REPO_ROOT="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
 
-# webExtract.enabled (default true) + webExtract.bin (default "ax"); tolerate a
-# missing/invalid config by falling back to defaults.
-ENABLED="1"; BIN="ax"
-if [[ -n "$CONFIG" ]]; then
-  IFS=$'\t' read -r ENABLED BIN < <(python3 -c '
-import json,sys
-e=True; b="ax"
+DECISION="$(python3 -c '
+import base64,json,sys
+state="enabled"; binary="ax"
 try:
-    w=(json.load(open(sys.argv[1])).get("webExtract") or {})
-    e=bool(w.get("enabled",True)); b=str(w.get("bin","ax") or "ax")
+    if sys.argv[1] == "1":
+        if not sys.argv[2]: raise ValueError
+        config=json.load(open(sys.argv[2]))
+        if not isinstance(config,dict): raise ValueError
+        if "webExtract" in config:
+            seam=config["webExtract"]
+            if not isinstance(seam,dict): raise ValueError
+            if "enabled" in seam and not isinstance(seam["enabled"],bool): raise ValueError
+            if seam.get("enabled") is False: state="disabled"
+            elif "bin" in seam:
+                value=seam["bin"]
+                if not isinstance(value,str) or not value or "\0" in value: raise ValueError
+                binary=value
 except Exception:
-    pass
-print(("1" if e else "0")+"\t"+b)
-' "$CONFIG")
-fi
-[[ -n "$BIN" ]] || BIN="ax"
-[[ -n "$ENABLED" ]] || ENABLED="1"
-# JSON-safe copy of BIN for echoing into the JSON (BIN comes from user config).
-BIN_J="$(printf '%s' "$BIN" | tr -d '"\\' | tr -d '[:cntrl:]')"
+    state="invalid"; binary="ax"
+print(state+"\t"+base64.b64encode(binary.encode()).decode())
+' "$CONFIG_SET" "$CONFIG")"
+IFS=$'\t' read -r CONFIG_STATE BIN_B64 <<< "$DECISION"
+BIN="$(python3 -c 'import base64,sys; print(base64.b64decode(sys.argv[1]).decode(),end="")' "$BIN_B64")"
 
-if [[ "$ENABLED" != "1" ]]; then
-  printf '{"axAvailable":false,"axBin":"%s","axVersion":null,"reason":"disabled-by-config"}\n' "$BIN_J"
+if [[ "$CONFIG_STATE" == "invalid" ]]; then
+  printf '{"axAvailable":false,"axBin":"ax","axVersion":null,"reason":"invalid-config"}\n'
+  exit 0
+fi
+if [[ "$CONFIG_STATE" == "disabled" ]]; then
+  printf '{"axAvailable":false,"axBin":"ax","axVersion":null,"reason":"disabled-by-config"}\n'
   exit 0
 fi
 
 if ! command -v "$BIN" >/dev/null 2>&1; then
-  printf '{"axAvailable":false,"axBin":"%s","axVersion":null,"reason":"not-installed"}\n' "$BIN_J"
+  python3 -c 'import json,sys; print(json.dumps({"axAvailable":False,"axBin":sys.argv[1],"axVersion":None,"reason":"not-installed"}))' "$BIN"
   exit 0
 fi
 
 # `ax --version` reports the local binary version only — no network call.
 VERSION="$("$BIN" --version 2>/dev/null | tr -d '\r' | head -n1)"
-VERSION_J="$(printf '%s' "$VERSION" | tr -d '"\\' | tr -d '[:cntrl:]')"
-printf '{"axAvailable":true,"axBin":"%s","axVersion":"%s","reason":"ok"}\n' "$BIN_J" "$VERSION_J"
+python3 -c 'import json,sys; print(json.dumps({"axAvailable":True,"axBin":sys.argv[1],"axVersion":sys.argv[2],"reason":"ok"}))' "$BIN" "$VERSION"
 exit 0

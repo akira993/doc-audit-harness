@@ -45,6 +45,7 @@ parse hashes into separate carried variables, merge JSON by hand, add sentinel f
 reconstruct an earlier value. Operational values such as `MODE`, tool availability, and status
 lines may be bound normally, but the only carried evidence state is `RUNID` plus the one
 `EVIDENCE` string. The gate receives it only as `--expect-json "$EVIDENCE"`.
+probe-record.py also receives --evidence "$EVIDENCE" for run-dir validation only; it is not an evidence producer and its stdout MUST NOT replace EVIDENCE.
 
 **Cross-turn checkpoint rule.** At every turn-ending pause, state `RUNID` and the complete,
 unabridged `EVIDENCE` JSON. On resume, restore both exactly. If either cannot be restored, do not
@@ -64,19 +65,24 @@ inside `EVIDENCE`, not separate transport variables:
 | (g) waiting for `/code-review` | same as (f) |
 | (h) Phase-4 evidence complete | (g) + phase4 |
 
+Phase-5 status lines are always rendered from probe-record.py --read (its "rebind" map is authoritative, on fresh and resumed runs alike; only the Phase-3 refresh-failure detail comes from the conversation and is omitted after a resume); a line marked unknown prints its "state unknown after resume" form; CODEX_REVIEW_STATE is rebound from rebind.codex-review.reviewState; a failed read marks all lines unknown; none of this changes the verdict. After a resume, Phase 4 may restore any missing operational availability, reason, or binary variables from `rebind` before it constructs the codex review plan.
+
 Before gate invocation, any terminal path after a successful open MUST release the run with
 the matching `open-run.py --release --runid "$RUNID"` command above. A temporary
 `AskUserQuestion` pause follows the checkpoint rule instead; release only when the chosen answer
 terminates this audit.
 
 ## Phase 0 — index preflight (deterministic)
-Run: `bash "$SD/scripts/mdq-index.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`.
-Parse `{mdqAvailable, reason, bin}` and bind `MDQ_AVAILABLE` (true/false) for Phase 3 and `MDQ_BIN` (the `bin` field, default `mdq`).
+Run: `MDQ_PROBE_JSON="$(bash "$SD/scripts/mdq-index.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR")"`.
+Immediately record its display-only output:
+`printf '%s' "$MDQ_PROBE_JSON" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam indexing --stdin >/dev/null || echo "⚠ probe-record: indexing not recorded [non-blocking]"`.
+Parse `{mdqAvailable, reason, bin}` and bind `MDQ_AVAILABLE` (true/false), `MDQ_REASON`
+(the `reason` field), for Phase 3 and `MDQ_BIN` (the `bin` field, default `mdq`).
 Resolve config `phase3Backend` as `workflow` when omitted and bind `PHASE3_BACKEND_CONFIG`.
 When it is `codex`, Phase 3 always uses grep-degrade and never uses mdq, so mdq availability or
 health does not affect Phase-3 dispatch.
 `mdqAvailable:false` is EXPECTED, not an error (`reason` is `not-installed` /
-`disabled-by-config` / `index-failed`): record the reason and proceed in grep-degrade
+`disabled-by-config` / `index-failed` / `invalid-config`): record the reason and proceed in grep-degrade
 mode — the engine is fully functional without mdq. When `mdqAvailable:true`, the whole
 repo's Markdown is now indexed under `$CLAUDE_PROJECT_DIR/.mdq/` (mdq's own default DB
 resolution — e.g. `index-<lang>-<strategy>.sqlite` on current mdq); indexing runs in a subprocess,
@@ -84,17 +90,19 @@ so doc bodies never enter context — only this JSON summary does. This probe al
 inside Phase 0 (both incremental and `--full`), after `open-run.py` has acquired the run lock.
 
 When `MDQ_AVAILABLE` is true, also run
-`(cd "$CLAUDE_PROJECT_DIR" && python3 "$SD/scripts/mdq-health.py" --bin "<MDQ_BIN>")`
+`MDQ_HEALTH_PROBE_JSON="$(cd "$CLAUDE_PROJECT_DIR" && python3 "$SD/scripts/mdq-health.py" --bin "$MDQ_BIN")"`
 (no `--db`: mdq resolves its own default DB relative to the CWD, so the probe inspects
 the same DB the Phase-0 indexer just wrote — `--db` remains an explicit override only)
 and bind `MDQ_HEALTHY` / `MDQ_CHUNKS` / `MDQ_STATUS` from its JSON
 `{healthy, chunks, status}` (`status` ∈ `ok`/`empty-index`/`search-broken`/`probe-error`).
+Save this exact mdq-health JSON as `MDQ_HEALTH_PROBE_JSON` and immediately record it:
+`printf '%s' "$MDQ_HEALTH_PROBE_JSON" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam mdqHealth --stdin >/dev/null || echo "⚠ probe-record: mdqHealth not recorded [non-blocking]"`.
 The probe is report-only and always exits 0; if it cannot run, treat `MDQ_HEALTHY` as
 `false` and `MDQ_STATUS` as `probe-error` and continue. These feed the Phase-5 mdq status line.
 
 **Confirmation gate (mdq unavailable or unhealthy).** Evaluate this immediately, except when
 `PHASE3_BACKEND_CONFIG` is `codex`: the gate fires when `reason` is `not-installed` or
-`index-failed`, or when `MDQ_AVAILABLE` is true
+`index-failed` or `invalid-config`, or when `MDQ_AVAILABLE` is true
 and `MDQ_HEALTHY` is false. It does NOT fire for `reason:disabled-by-config` (an explicit
 user opt-out, which keeps degrading silently as before). When it fires, STOP before Phase 1
 and ask via `AskUserQuestion` — quote the probe's own `reason` (or `MDQ_STATUS` when the
@@ -111,13 +119,25 @@ If `AskUserQuestion` is unavailable in this session (non-interactive), or the us
 in grep-degrade mode as before, but bind `MDQ_DEGRADE="non-interactive"` so the Phase-5 mdq
 status line surfaces the unconfirmed degrade instead of staying silent about it. When the
 gate does not fire, bind `MDQ_DEGRADE="n/a"`.
+After that confirmation-gate evaluation, record its result:
+`printf '{"degrade":"%s"}' "$MDQ_DEGRADE" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam mdqDegrade --stdin >/dev/null || echo "⚠ probe-record: mdqDegrade not recorded [non-blocking]"`.
 
 Then probe **context-mode** (complementary to mdq — mdq optimizes Markdown *reads*,
 context-mode optimizes *processing of large machine output*). This probe is
 **skill-level — no shipped script** (do NOT grep `~/.claude` plugin paths; judge purely
 by tool availability). First read the opt-out:
-`CM_ENABLED="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("contextMode",{}).get("enabled",True))' "$CFG")"`.
-- If `CM_ENABLED` is `False`, SKIP the probe: bind `CM_AVAILABLE=false`, `CM_STATUS=disabled-by-config`.
+`CM_ENABLED="$(python3 -c 'import json,sys
+try:
+    c=json.load(open(sys.argv[1]))
+    if not isinstance(c,dict): raise ValueError
+    if "contextMode" not in c: print("true")
+    else:
+        v=c["contextMode"]
+        print("invalid" if not isinstance(v,dict) or ("enabled" in v and not isinstance(v["enabled"],bool)) else ("false" if v.get("enabled") is False else "true"))
+except Exception:
+    print("invalid")' "$CFG")"`.
+- If `CM_ENABLED` is `invalid`, SKIP the probe: bind `CM_AVAILABLE=false`, `CM_STATUS=invalid-config`.
+- If `CM_ENABLED` is `false`, SKIP the probe: bind `CM_AVAILABLE=false`, `CM_STATUS=disabled-by-config`.
 - Else if the `ctx_*` MCP tools are available to you (e.g. `ctx_doctor`, `ctx_execute`),
   bind `CM_AVAILABLE=true` and call `ctx_doctor` — it returns a plain-text report whose
   lines are `[OK]`/`[FAIL]`/`[WARN] <label>: <detail>`. Parse it:
@@ -129,16 +149,21 @@ Like the mdq probe this is report-only and **never fatal** — any failure falls
 `CM_AVAILABLE=false`/`CM_STATUS=probe-error` and the audit continues. These bind
 `CM_AVAILABLE`/`CM_STATUS` for Phases 2/3/4 and the Phase-5 context-mode status line;
 `CM_HEALTHY` is bound only in the central `ctx_*`-available branch above.
+After the context-mode branch has bound its values, synthesize
+`CM_PROBE_JSON` as `{"contextModeAvailable":<CM_AVAILABLE>,"contextModeHealthy":<CM_HEALTHY or null>,"status":"<CM_STATUS>"}` (with JSON boolean/null values, not quoted text) and record it:
+`printf '%s' "$CM_PROBE_JSON" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam contextMode --stdin >/dev/null || echo "⚠ probe-record: contextMode not recorded [non-blocking]"`.
 
 Then probe **ax** (`~/.local/bin/ax`, a CLI for structured web/API extraction — the doc-impact-
 verifier's sole use for it is corroborating a doc's claim against an external upstream URL). Unlike
 context-mode, ax is a plain CLI binary with no runtime tool-availability signal, so this probe is
 **deterministic** (mdq-pattern), not skill-level: run
-`bash "$SD/scripts/ax-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"` and parse
-`{axAvailable, axBin, axVersion, reason}` (`reason` ∈ `ok`/`not-installed`/`disabled-by-config`).
-Bind `AX_AVAILABLE` (the `axAvailable` field) and `AX_BIN` (the `axBin` field, default `ax`) for
+`AX_PROBE_JSON="$(bash "$SD/scripts/ax-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR")"` and parse
+`{axAvailable, axBin, axVersion, reason}` (`reason` ∈ `ok`/`not-installed`/`disabled-by-config`/`invalid-config`).
+Bind `AX_AVAILABLE` (the `axAvailable` field), `AX_REASON` (the `reason` field), and `AX_BIN` (the `axBin` field, default `ax`) for
 the Phase-5 ax status line. `AX_BIN` affects only the Phase-0 probe; Phase 3's
 `workflow-template.js` invokes fixed `ax`, and Workflow receives only the availability boolean.
+Immediately record it:
+`printf '%s' "$AX_PROBE_JSON" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam webExtract --stdin >/dev/null || echo "⚠ probe-record: webExtract not recorded [non-blocking]"`.
 The script always exits 0 and never touches the network
 (`ax --version` reports the local binary's own version); any failure degrades to `AX_AVAILABLE=false`
 and the audit continues unaffected — external-URL corroboration is a bonus, never a requirement.
@@ -149,7 +174,7 @@ tool-availability signal, so this probe is **deterministic** (ax-pattern), not s
 `CODEX_PROBE_JSON="$(bash "$SD/scripts/codex-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR")"`
 and parse
 `{codexReviewAvailable, codexReviewBin, codexReviewVersion, probeCommands, reason}` (`reason` ∈
-`ok`/`not-installed`/`disabled-by-config`/`probe-exec-failed`). Bind
+`ok`/`not-installed`/`disabled-by-config`/`probe-exec-failed`/`invalid-config`). Bind
 `CODEX_REVIEW_AVAILABLE="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["codexReviewAvailable"]).lower())' "$CODEX_PROBE_JSON")"`
 and `CODEX_REVIEW_BIN` (the `codexReviewBin` field, default `codex`)
 and bind the probe reason with
@@ -165,7 +190,9 @@ recommended. The script always exits 0 and never touches the network (`codex --v
 probes above, this one is not purely advisory** — when Phase 4 actually runs a codex review to
 completion, its `critical`/`high` findings DO fold into the verdict (§Phase 4 step 3, §Guardrails);
 the probe itself is still non-fatal, but downstream of it this seam behaves differently from the
-other three.
+other three. Rows 6–8 are defenses for direct probe invocation; an unreadable config stops before Phase 0.
+Immediately record the existing probe JSON:
+`printf '%s' "$CODEX_PROBE_JSON" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam codexReview --stdin >/dev/null || echo "⚠ probe-record: codexReview not recorded [non-blocking]"`.
 
 Then probe **codegraph** (the `codegraph` CLI, a symbol graph — call graph, impact/node lookup),
 doc-impact-verifier's symbol-level corroboration seam, the symbol-level counterpart of ax's
@@ -178,6 +205,8 @@ build/refresh call, not just `--version`): run
 `SYMBOL_GRAPH_BIN="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["symbolGraphBin"])' "$SYMBOL_GRAPH_PROBE_JSON")"` (default `codegraph`), and
 `SYMBOL_GRAPH_REASON="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["reason"])' "$SYMBOL_GRAPH_PROBE_JSON")"`
 for the Phase-5 symbol-graph status line.
+Immediately record it:
+`printf '%s' "$SYMBOL_GRAPH_PROBE_JSON" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam symbolGraph --stdin >/dev/null || echo "⚠ probe-record: symbolGraph not recorded [non-blocking]"`.
 `SYMBOL_GRAPH_BIN` affects only the Phase-0 probe; Phase 3's `workflow-template.js` invokes fixed
 `codegraph`, and Workflow receives only the availability boolean. The
 When the key exists, is not `enabled:false`, and the tool is installed, the probe keeps the index
@@ -205,6 +234,8 @@ report-only WARN via Phase 5 only, never a write). Aside: a detected topology ch
 this pass does not address (spec §6). Always exits 0; any failure degrades to
 `DOC_GRAPH_AVAILABLE=false` and the audit continues unaffected. Invalid JSON, no config file, and
 a non-object top level are standalone-probe defenses; the ordinary audit stops before a probe.
+Immediately record it:
+`printf '%s' "$DOC_GRAPH_PROBE_JSON" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam docGraph --stdin >/dev/null || echo "⚠ probe-record: docGraph not recorded [non-blocking]"`.
 
 Then probe **CocoIndex** (the `ccc` CLI, local-embedding semantic search), a second, independent
 candidate source for Phase 2's `mapGapCandidates`. Deterministic, same pattern: run
@@ -227,6 +258,8 @@ It compares `.gitignore` before and after indexing and reports `gitignore-modifi
 Always exits 0; any failure degrades to `SEMANTIC_SEARCH_AVAILABLE=false` and the audit continues
 unaffected. Invalid JSON, no config file, and a non-object top level are standalone-probe defenses;
 the ordinary audit stops before a probe.
+Immediately record it:
+`printf '%s' "$SEMANTIC_SEARCH_PROBE_JSON" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam semanticSearch --stdin >/dev/null || echo "⚠ probe-record: semanticSearch not recorded [non-blocking]"`.
 
 **Harness question (once, after all Phase-0 probes and before the firing table).** Read
 `harness.state` from `CFG`. If the `harness` key is absent, bind `HARNESS_STATE=unset` and, when
@@ -405,9 +438,9 @@ reuse a Phase-2 manifest variable.
 Use only sealed `manifest.phase3Backend`, rebound as `SEALED_PHASE3_BACKEND`, to select the
 verifier path. When it is `workflow`, immediately
 before fan-out refresh mdq whenever `MDQ_AVAILABLE` is true: re-run the same two-part preflight as
-Phase 0 — first `bash "$SD/scripts/mdq-index.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"`,
+Phase 0 — first `MDQ_PROBE_JSON="$(bash "$SD/scripts/mdq-index.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR")"`,
 re-parse its JSON, and re-bind `MDQ_AVAILABLE`/`MDQ_BIN`; then, if it is still available, run
-`(cd "$CLAUDE_PROJECT_DIR" && python3 "$SD/scripts/mdq-health.py" --bin "<MDQ_BIN>")` and re-bind
+`MDQ_HEALTH_PROBE_JSON="$(cd "$CLAUDE_PROJECT_DIR" && python3 "$SD/scripts/mdq-health.py" --bin "$MDQ_BIN")"` and re-bind
 `MDQ_HEALTHY`/`MDQ_CHUNKS`/`MDQ_STATUS`. If either refresh step fails, or the health probe is
 unhealthy, re-bind `MDQ_AVAILABLE=false` when indexing is unavailable and always bind
 `MDQ_HEALTHY=false`; use mdq in fan-out only when both values are true, otherwise use grep-degrade.
@@ -415,6 +448,10 @@ Bind the refresh failure detail for the Phase-5 mdq status line. Phase 0 establi
 index; this repeat is the freshness guarantee immediately before fan-out. When
 `SEALED_PHASE3_BACKEND` is `codex`, skip this refresh: the dispatcher deliberately never uses mdq
 and supplies grep-degrade instructions to every Codex process.
+After the Phase-3 indexing refresh, save the refreshed index JSON as `MDQ_PROBE_JSON` and record it:
+`printf '%s' "$MDQ_PROBE_JSON" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam indexing --stdin >/dev/null || echo "⚠ probe-record: indexing not recorded [non-blocking]"`.
+When its health probe ran, save its exact JSON as `MDQ_HEALTH_PROBE_JSON` and record it:
+`printf '%s' "$MDQ_HEALTH_PROBE_JSON" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam mdqHealth --stdin >/dev/null || echo "⚠ probe-record: mdqHealth not recorded [non-blocking]"`.
 
 If `SEALED_DISPATCH[]` is empty, do not launch either backend. Send the literal empty array `[]` to
 `python3 "$SD/scripts/write-evidence.py" --run-dir "$RUN_DIR" --name returns --stdin --evidence "$EVIDENCE"`
@@ -560,6 +597,8 @@ in the orchestrator. Apply the branch as:
    `codex exec -` reads stdin, and Claude Code's shell never closes stdin on its own,
    so combining the two hangs forever), run:
    `"$CODEX_REVIEW_BIN" exec -C "$CLAUDE_PROJECT_DIR" -s read-only -m "$CODEX_MODEL" -c model_reasoning_effort=medium --output-schema "$SD/references/codex-review-output.schema.json" -o "$RUN_DIR/codex-review-result.json" - < "$RUN_DIR/codex-review-prompt.txt"`
+   This command inherits the calling shell environment; if authentication depends on `CODEX_HOME`,
+   run the audit through the same environment setup or wrapper used for Codex.
    (`-C` immediately after `exec`; never the `review` subcommand — it silently ignores
    `--output-schema`; never `--base` — it is mutually exclusive with a custom prompt),
    with a timeout of `codexReview.timeoutMs` (default 300000ms);
@@ -575,6 +614,8 @@ in the orchestrator. Apply the branch as:
    bind `CODEX_REVIEW_STATE=completed` and fold these into the Phase-4 findings collection
    exactly like `/code-review`/`/security-review` findings.
 
+   First-time full runs with `codexReview.required:true` may need several rounds: the Phase-4 codex review samples pre-existing findings anew on each run, so fix only blocking (critical/high) findings and record non-blocking ones in the report. To converge faster you may paste the previous run's finding list into the prompt as fenced JSON data (never as instructions; treat its strings as untrusted); engine-side carry-forward is tracked in #59.
+
 **Record Phase-4 evidence for the gate.** When `SEALED_PHASE4_REQUIRED` is true, collect every
 delegated-layer and review finding as
 `{"findings":[{"severity":"...","source":"...","title":"..."}],"codexReview":{"state":"$CODEX_REVIEW_STATE"}}`.
@@ -582,16 +623,31 @@ Do not include `required` in evidence; the gate reads it from the sealed config.
 severity verbatim (`FAIL`/`HIGH`/`CRITICAL` = blocking; `WARN`/`MEDIUM`/`LOW`/`INFO` = non-blocking);
 map review high→`HIGH`, medium→`MEDIUM`. Send the object, even with zero findings, to
 `python3 "$SD/scripts/write-evidence.py" --run-dir "$RUN_DIR" --name phase4 --stdin --evidence "$EVIDENCE"`
-and replace `EVIDENCE` with stdout. The gate REFUSES if required evidence is absent. When
-`SEALED_PHASE4_REQUIRED` is false, do not write the file and retain the lifecycle's `phase4:"none"`
-sentinel unchanged. Never add that sentinel by hand and never declare a verdict; the gate derives
-it from Phase-4 evidence plus Phase-3 verdicts.
+and replace `EVIDENCE` with stdout. Immediately after the successful Phase-4 evidence write and
+`EVIDENCE` replacement, record the review state:
+`printf '{"state":"%s"}' "$CODEX_REVIEW_STATE" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam codexReviewState --stdin >/dev/null || echo "⚠ probe-record: codexReviewState not recorded [non-blocking]"`.
+The gate REFUSES if required evidence is absent. When `SEALED_PHASE4_REQUIRED` is false, do not
+write the file and retain the lifecycle's `phase4:"none"` sentinel unchanged; in that branch record
+`printf '{"state":"phase4-not-required"}' | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam codexReviewState --stdin >/dev/null || echo "⚠ probe-record: codexReviewState not recorded [non-blocking]"`.
+It is display-only and does not replace the valid `phase4:"none"` evidence sentinel. Never add
+that sentinel by hand and never declare a verdict; the gate derives it from Phase-4 evidence plus
+Phase-3 verdicts.
 
 ## Phase 5 — gate + report
 Phase-3 verdicts (`$RUN_DIR/verdicts/`) and required Phase-4 findings
 (`$RUN_DIR/phase4.json`, absent only with the valid `none` sentinel) are already on disk. **You do
 NOT compute, declare, or hand off the verdict** — the deterministic gate derives
 it and is the SOLE writer of the anchor and report.
+
+Before constructing any status line, run
+`PROBE_REBIND="$(python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --read)"`.
+If that read fails, use the script's seven unknown-shaped values for every status line and continue.
+For both fresh and resumed runs, bind the Phase-5 inputs exclusively from `PROBE_REBIND.rebind`:
+`mdq`, `context-mode`, `ax`, `codex-review`, `symbol-graph`, `doc-graph`, and `semantic-search`,
+in the existing display order. Rebind `CODEX_REVIEW_STATE` from
+`rebind.codex-review.reviewState`; retain the existing four literal state branches below. A failed
+record write merely emits its `⚠ probe-record: <seam> not recorded [non-blocking]` warning and
+continues; a failed read makes all seven status lines unknown; neither case changes the verdict.
 
 When `reportPath` is configured, generate the complete human report body **before starting the
 gate**, with the change set, impacted docs and per-doc verdicts, delegated-check results, review
@@ -666,6 +722,8 @@ placeholder is present, otherwise immediately after the rendered date. The gate 
 this suffix contract inside its lock-held report publication interval.
 
 **mdq status line** — always include exactly one; it is **non-blocking** (never changes the verdict). If Phase 0's confirmation gate fired, append the matching `MDQ_DEGRADE` suffix below to whichever base line applies (omit the suffix when `MDQ_DEGRADE` is `n/a`):
+- `rebind.mdq.state=unknown` → `⚠ mdq: state unknown after resume [non-blocking]`
+- `MDQ_REASON=invalid-config` → `⚠ mdq: doc-audit.json indexing is invalid — mdq not probed this run; fix the key. [non-blocking]`
 - `MDQ_AVAILABLE` false → `💡 mdq: not active — docs read in full. Install mdq for Phase-0 indexed, chunked reads (~90%+ token savings on large docs): clone github.com/dahatake/skills and run its ./setup/setup-markdown-query.sh`
 - `MDQ_AVAILABLE` true and `MDQ_HEALTHY` true → `✓ mdq: active (indexed <MDQ_CHUNKS> chunks; chunked reads on)`
 - `MDQ_AVAILABLE` true and `MDQ_HEALTHY` false → `⚠ mdq: installed but NOT firing (<MDQ_STATUS>) — not getting token savings; run mdq index --root . (or check indexing.roots). [non-blocking]`
@@ -673,11 +731,15 @@ this suffix contract inside its lock-held report publication interval.
 - If the Phase-3 refresh failed or was unhealthy, also append ` [Phase-3 refresh failed: <detail>; grep-degrade]` and lead the line with `⚠`.
 
 **context-mode status line** — always include exactly one, immediately after the mdq line; it is **non-blocking** (never changes the verdict):
+- `rebind.context-mode.state=unknown` → `⚠ context-mode: state unknown after resume [non-blocking]`
+- `CM_STATUS=invalid-config` → `⚠ context-mode: doc-audit.json contextMode is invalid — not probed this run; fix the key. [non-blocking]`
 - `CM_AVAILABLE` false → `💡 context-mode: not active — large outputs (diff, reviews) read in full. Install context-mode for sandboxed processing (token savings on big audits).`
 - `CM_AVAILABLE` true and `CM_HEALTHY` true → `✓ context-mode: active (sandbox processing on)`
 - `CM_AVAILABLE` true and `CM_HEALTHY` false → `⚠ context-mode: installed but degraded (<CM_STATUS>) — not getting savings. [non-blocking]`
 
 **ax status line** — always include exactly one, immediately after the context-mode line; it is **non-blocking** (never changes the verdict):
+- `rebind.ax.state=unknown` → `⚠ ax: state unknown after resume [non-blocking]`
+- `AX_REASON=invalid-config` → `⚠ ax: doc-audit.json webExtract is invalid — not probed this run; fix the key. [non-blocking]`
 - `AX_AVAILABLE` false → `💡 ax: not active — external-URL claims go unverified; install: curl -fsSL https://ax.yusuke.run/install | sh`
 - `AX_AVAILABLE` true → `✓ ax: active (external-URL corroboration available; read-only, GET-only)`
 
@@ -685,10 +747,20 @@ this suffix contract inside its lock-held report publication interval.
 **4-way display** over the five internal states and, unlike the mdq/context-mode/ax
 lines, the findings it summarizes may already have contributed to the verdict via Phase 4 step 3
 — word it so this isn't read as another purely-advisory line:
+- `rebind.codex-review.reason=invalid-config` → `⚠ codex-review: doc-audit.json codexReview is invalid — not probed this run; fix the key. [non-blocking]`
+- `rebind.codex-review.reviewState=null` → `⚠ codex-review: state unknown after resume [non-blocking]`
+- `CODEX_REVIEW_STATE=phase4-not-required` → `💡 codex-review: not run (phase 4 not required)`
 - `CODEX_REVIEW_STATE=not-active` → `💡 codex-review: not active (<CODEX_REVIEW_REASON>)`
 - `CODEX_REVIEW_STATE=skipped-full-run` → `💡 codex-review: skipped (full run without codexReview.required)`
 - `CODEX_REVIEW_STATE=completed` → `✓ codex-review: completed (findings included in verdict when present)`
 - `CODEX_REVIEW_STATE` ∈ `{execution-failed, ref-invalid}` → `⚠ codex-review: did not run (<CODEX_REVIEW_STATE>) — findings not folded [non-blocking unless codexReview.required]`
+When `CODEX_REVIEW_AVAILABLE=true`, append to every branch
+` (caller CODEX_HOME=<rebind.codex-review.callerCodexHomeDisplay> [<rebind.codex-review.callerCodexHomeSource>]; auth.json <rebind.codex-review.callerAuthFile>)`;
+all three values come from `rebind`. A null caller home is displayed as `(null)`. When
+`CODEX_REVIEW_STATE=execution-failed` and `rebind.codex-review.callerAuthFile=absent`, also append
+` — no auth.json at the caller's CODEX_HOME: the calling shell may lack a direnv hook, and a wrapper's own environment is not visible to the probe; check the environment before suspecting the config`.
+When `rebind.codex-review.state=unknown` but its `reviewState` is non-null, render the matching
+4-way line with the suffix ` (caller info unknown after resume)` rather than caller details.
 
 **code-review status line** — include exactly one immediately after the codex-review line:
 - `CODE_REVIEW_STATE=ran` → `✓ code-review: ran (findings folded into phase4)`
@@ -696,6 +768,7 @@ lines, the findings it summarizes may already have contributed to the verdict vi
 - Any other unavailable or failed command → the existing ⚠ WARN status for the unavailable review command.
 
 **symbol-graph status line** — always include exactly one, immediately after the code-review line; it is **non-blocking** (never changes the verdict), 6-state:
+- `rebind.symbol-graph.state=unknown` → `⚠ symbol-graph: state unknown after resume [non-blocking]`
 - `SYMBOL_GRAPH_REASON=not-configured` → `💡 symbol-graph: not configured — symbolGraph is absent from doc-audit.json, so the tool is not probed; run /docaudit:init to enable it.`
 - `SYMBOL_GRAPH_REASON=invalid-config` → `⚠ symbol-graph: doc-audit.json symbolGraph is invalid — tool not probed this run; fix the key. [non-blocking]`
 - `SYMBOL_GRAPH_REASON=not-installed` → `💡 symbol-graph: not active — symbol-level corroboration unavailable; install: (see codegraph install docs)`
@@ -704,6 +777,7 @@ lines, the findings it summarizes may already have contributed to the verdict vi
 - `SYMBOL_GRAPH_REASON=ok` → `✓ symbol-graph: active (codegraph impact/node corroboration available; read-only)`
 
 **doc-graph status line** — always include exactly one, immediately after the symbol-graph line; it is **non-blocking** (never changes the verdict), 6-state (7 messages):
+- `rebind.doc-graph.state=unknown` → `⚠ doc-graph: state unknown after resume [non-blocking]`
 - `DOC_GRAPH_REASON=not-configured` → `💡 doc-graph: not configured — docGraph is absent from doc-audit.json, so the tool is not probed; run /docaudit:init to enable it.`
 - `DOC_GRAPH_REASON=invalid-config` → `⚠ doc-graph: doc-audit.json docGraph is invalid — tool not probed this run; fix the key. [non-blocking]`
 - `DOC_GRAPH_REASON=not-installed` → `💡 doc-graph: not active — mapGapCandidates uses the token heuristic only; install: (see graphify install docs)`
@@ -713,6 +787,7 @@ lines, the findings it summarizes may already have contributed to the verdict vi
 - `DOC_GRAPH_REASON=ok` and `DOC_GRAPH_GITIGNORE_OK=false` → `⚠ doc-graph: active but graphify-out/ is NOT gitignored — add it to .gitignore. [non-blocking]`
 
 **semanticSearch status line** — always include exactly one, immediately after the doc-graph line; it is **non-blocking** (never changes the verdict), 8-state:
+- `rebind.semantic-search.state=unknown` → `⚠ semantic-search: state unknown after resume [non-blocking]`
 - `SEMANTIC_SEARCH_REASON=not-configured` → `💡 semanticSearch: not configured — semanticSearch is absent from doc-audit.json, so the tool is not probed; run /docaudit:init to enable it.`
 - `SEMANTIC_SEARCH_REASON=invalid-config` → `⚠ semanticSearch: doc-audit.json semanticSearch is invalid — tool not probed this run; fix the key. [non-blocking]`
 - `SEMANTIC_SEARCH_REASON=not-installed` → `💡 semanticSearch: not active — mapGapCandidates gets no semantic-search source; install: uv tool install "cocoindex-code[full]==0.2.39"`
@@ -768,6 +843,8 @@ publication, and `--break-lock` cannot take it anywhere in that gate+report inte
 stale lock is an emergency operation that intentionally breaks the report serialization guarantee;
 never use it to bypass `gate-running`. There is no TTL or best-effort shared run directory; each
 accepted run owns `RUN_BASE/<runid>/`. Every pre-gate terminal path releases only its own runid.
+`$RUN_DIR/phase0-probes.json` stores raw probe output for display only; it is separate from the
+ban on handwritten evidence, and the gate never reads it.
 
 The threat model protects two properties against one verifier writing anything in the repository
 during its run: (a) it cannot make the gate emit an evidence-unsupported CONSISTENT, and (b) it

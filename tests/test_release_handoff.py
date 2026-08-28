@@ -1,4 +1,4 @@
-"""Branch, publication, and archive-boundary tests for the v0.13.2 handoff."""
+"""Branch, publication, and archive-boundary tests for the v0.14.0 handoff."""
 
 import io
 import json
@@ -15,22 +15,20 @@ HANDOFF = os.path.join(
     ROOT,
     "tasks",
     "route",
-    "2026-08-28-issues-52-54-v0.13.2",
+    "2026-08-28-issues-56-60",
     "release-handoff.sh",
 )
 APPROVED = "a" * 40
 WRONG = "c" * 40
-TAG = "docaudit--v0.13.2"
-TITLE = "docaudit v0.13.2 — report-only probes, docGlobs default, seal stop (#52–#54)"
-ISSUES = {str(number) for number in range(52, 55)}
-PRECLOSED = {"52", "53"}
+TAG = "docaudit--v0.14.0"
+TITLE = "docaudit v0.14.0 — invalid-config for all seams, probe persistence, CODEX_HOME visibility"
+ISSUES = {"57", "58", "60"}
+PRECLOSED = {"57", "58"}
 REQUIRED_BODY = (
     APPROVED,
-    "#52",
-    "#53",
-    "#54",
-    "not-configured",
-    "settings.yml",
+    "Closes #57, #58, #60.",
+    "Partially addresses #56 (stage 1) and #59 (operational note); both remain open.",
+    "#56", "#57", "#58", "#59", "#60", "invalid-config", "phase0-probes.json", "CODEX_HOME",
 )
 
 

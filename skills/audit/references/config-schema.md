@@ -30,10 +30,10 @@ live here; the plugin ships no project knowledge.
 | `protectedGlobs` | string[] | no | additional pre-flight fix deny patterns; built-in ADR/decisions/logs/`.claude` and case-insensitive `CLAUDE.md`/`AGENTS.md` basename denial cannot be removed |
 | `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:string[], saturationWarnRatio:number=0.5, excludeDocPathTokens:bool=false}` |
 | `regressionRecheck` | object | no | `{enabled:bool=false}` — opt-in recheck of the latest prior FAIL for unchanged documents |
-| `indexing` | object | no | `{enabled:bool=true, tool:string="mdq", bin:string="mdq", roots:string[]?}` — Phase-0 mdq preflight; `roots` overrides index roots (default: whole repo `.`, since mdq's own default roots miss `README.md`/`skills`/`agents`); `enabled:false` opts out even when mdq is installed (conditional-force) |
-| `contextMode` | object | no | `{enabled:bool=true}` — Phase-0 context-mode probe (by `ctx_*` tool availability + `ctx_doctor`); when context-mode is installed, large outputs (git diff, reviews) are processed in its sandbox instead of read in full. `enabled:false` opts out even when installed (conditional-force). No `bin`/`roots`/CLI — context-mode is a location-independent global plugin |
-| `webExtract` | object | no | `{enabled:bool=true, tool:string="ax", bin:string="ax"}` — Phase-0 `ax` CLI preflight; when `ax` is installed, doc-impact-verifier may corroborate a doc's external-URL-dependent claim by fetching it (read-only, GET-only). `enabled:false` opts out even when `ax` is installed (conditional-force). `tool` is reserved; runtime reads only `enabled` and `bin`. The `bin` override affects only the Phase-0 probe; Phase 3 Workflow invokes fixed `ax`. |
-| `codexReview` | object | no | `{enabled:bool=true, required:bool=false, bin:string="codex", model?:string, timeoutMs?:number=300000}` — `required:true` makes a non-completed codex review REFUSED. An explicit model is tried once; otherwise light uses `gpt-5.6-luna`, standard uses `gpt-5.6-terra`, and only the default light attempt may retry once as standard. Phase-0 probes the CLI and completed Phase-4 `critical`/`high` findings can block the verdict. |
+| `indexing` | object | no | `{enabled:bool=true, tool:string="mdq", bin:string="mdq", roots:string[]?}` — `enabled` must be a JSON boolean; `enabled:false` takes priority and reports `disabled-by-config`. Otherwise a non-boolean `enabled`, a non-object key (including `null`), or a non-string, empty, or NUL-containing `bin` reports `invalid-config` (the tool is not run, a ⚠ status line is printed, and `indexing` fires the confirmation gate). An absent key remains enabled by default (intentional asymmetry). |
+| `contextMode` | object | no | `{enabled:bool=true}` — `enabled` must be a JSON boolean; `enabled:false` takes priority and reports `disabled-by-config`. Otherwise a non-boolean `enabled` or a non-object key (including `null`) reports `invalid-config` (the tool is not run and a ⚠ status line is printed). An absent key remains enabled by default (intentional asymmetry). |
+| `webExtract` | object | no | `{enabled:bool=true, tool:string="ax", bin:string="ax"}` — `enabled` must be a JSON boolean; `enabled:false` takes priority and reports `disabled-by-config`. Otherwise a non-boolean `enabled`, a non-object key (including `null`), or a non-string, empty, or NUL-containing `bin` reports `invalid-config` (the tool is not run and a ⚠ status line is printed). An absent key remains enabled by default (intentional asymmetry). |
+| `codexReview` | object | no | `{enabled:bool=true, required:bool=false, bin:string="codex", model?:string, timeoutMs?:number=300000}` — `enabled` must be a JSON boolean; `enabled:false` takes priority and reports `disabled-by-config`. Otherwise a non-boolean `enabled`, a non-object key (including `null`), or a non-string, empty, or NUL-containing `bin` reports `invalid-config` (the tool is not run and a ⚠ status line is printed). An absent key remains enabled by default (intentional asymmetry); `required:true` makes a non-completed review REFUSED. |
 | `symbolGraph` | object | no | `{enabled:bool=true, tool:string="codegraph", bin:string="codegraph"}` — key-gated Phase-0 `codegraph` CLI preflight: it runs only when this key exists, `enabled` is not false, and the tool is installed. It may corroborate changed-file symbols via read-only `codegraph impact`/`node`; report-only, never affects the verdict. `tool` is reserved; the probe validates `enabled` and `bin`. The `bin` override affects only the probe; Phase 3 Workflow invokes fixed `codegraph`. |
 | `docGraph` | object | no | `{enabled:bool=true, tool:string="graphify", bin:string="graphify"}` — key-gated Phase-0 `graphify` CLI preflight: it runs only when this key exists, `enabled` is not false, and the tool is installed. Phase 2 then supplements `mapGapCandidates` with graph-adjacency candidates (provenance `graphify`); report-only, never affects the verdict. `tool` is reserved; the probe validates `enabled` and `bin`. |
 | `semanticSearch` | object | no | `{enabled:bool=true, tool:string="cocoindex", bin:string="ccc", minScore?:number=0.4}` — key-gated Phase-0 `ccc` (CocoIndex) preflight: it runs only when this key exists, `enabled` is not false, the tool is installed, and `.cocoindex_code/settings.yml` marks the repo initialized. Phase 2 supplements `mapGapCandidates` with semantic-search candidates (provenance `semantic`) scoring `>= minScore`. **The audit itself never runs `ccc init`** — an uninitialized repo degrades to `reason:not-initialized`, distinct from `not-installed`; initialize via `/docaudit:init` (user-approved, discloses the `.gitignore` write). Report-only, never affects the verdict. `tool` is reserved; the probe validates `enabled`/`bin`/`minScore`; Phase 2 uses `minScore`. |
@@ -112,6 +112,9 @@ no TTL and can be removed only by the matching `--release` or an explicit
 `.claude/state/docaudit-last-run.json`. Old flat run files are ignored (cold
 start). Full mode uses `HEAD` as its effective baseline, disables cache, and
 includes every `docGlobs` document without applying `maxImpactedDocs`.
+
+`phase0-probes.json` in that run directory stores display-only raw Phase-0 probe output with
+`schemaVersion:1`. It is not evidence and the gate never reads it.
 
 The orchestrator carries one `EVIDENCE` JSON object. Missing evidence uses the
 literal `none` only where absence is valid: cold-start history, an empty cached
@@ -235,6 +238,14 @@ an executable wrapper), Phase 0 runs the local-only commands recorded in `probeC
 `<bin> --version`, then `<bin> exec --help`. This confirms CLI presence and `exec` reachability
 only; it does not prove that the real sandbox, permissions, wrapper arguments, or model call will
 succeed.
+
+The probe reports the caller's `CODEX_HOME` (or the default `$HOME/.codex`) and whether
+`auth.json` exists there. This is caller-side visibility only: a wrapper's own environment is not
+visible to the probe. When a repository relies on environment activation, launch through an
+equivalent wrapper such as `direnv exec <repo> codex`.
+
+Absolute `--config` and `--scope` paths accepted by `import-audit-scope.py` use POSIX path syntax
+only; Windows path forms are outside the supported platform scope.
 
 Phase 4 passes availability, mode, `codexReview.required`, and baseline validity through
 `codex-review-plan.py` before invoking plain `codex exec`. Incremental mode reviews the explicit

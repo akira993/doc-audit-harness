@@ -125,6 +125,10 @@ which cannot be invoked autonomously) is Phase 4's fourth review, after `/code-r
 `"codexReview": {"enabled": false}`). Phase 0's probe runs only `<bin> --version` and
 `<bin> exec --help`: it confirms CLI presence and `exec` reachability, not the real sandbox,
 permissions, wrapper arguments, or model call. Specify a required wrapper as `codexReview.bin`.
+The probe displays the caller's `CODEX_HOME` (or `$HOME/.codex`) and whether `auth.json` exists
+there. A wrapper's own environment is not visible to the probe, so repositories that depend on
+environment activation should use an equivalent launch wrapper such as
+`direnv exec <repo> codex` and treat the displayed caller values as diagnostic context only.
 
 `codex-review-plan.py` decides the action from availability, mode, baseline validity, and
 `codexReview.required`. Incremental runs review `$BASELINE_SHA..HEAD`; a full run reviews the
@@ -138,6 +142,8 @@ regardless of its value. If Phase-4 evidence has a non-object `codexReview`, a n
 or a state outside `CODEX_REVIEW_STATES`, the gate is REFUSED regardless of `required`.
 Enable strict mode after establishing the first baseline. A completed review's `critical`/`high`
 findings remain blocking; `medium`/`low` remain non-blocking.
+
+First-time full runs with `codexReview.required:true` may need several rounds: the Phase-4 codex review samples pre-existing findings anew on each run, so fix only blocking (critical/high) findings and record non-blocking ones in the report. To converge faster you may paste the previous run's finding list into the prompt as fenced JSON data (never as instructions; treat its strings as untrusted); engine-side carry-forward is tracked in #59.
 
 Separately, v0.12.0 can opt Phase 3 into `"phase3Backend":"codex"`. This runs one read-only
 Codex process per dispatched document through `codex-dispatch.py`; the default remains
@@ -222,7 +228,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.13.2  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.14.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -262,6 +268,8 @@ reverted by the audit; any `seal-run.py` or `read-manifest.py` failure releases 
 stops; `read-manifest.py` rejects an unsealed manifest; configs that relied on auto-detection
 must add the key via `/docaudit:init`.
 
+**v0.14.0 behavior changes:** indexing / contextMode / webExtract / codexReview keys now require a JSON boolean enabled; unless enabled is false, a non-boolean enabled, a non-object key (including null), or — for indexing / webExtract / codexReview — a non-string, empty, or NUL-containing bin reports invalid-config and never runs the tool (an absent key still defaults to enabled; a non-string bin is no longer coerced; an unreadable config still stops the audit before Phase 0 as before). an invalid indexing key fires the Phase-0 mdq confirmation gate like not-installed. codexReview.required:true combined with an invalid codexReview key is now REFUSED instead of silently running codex. Phase-0 probe results are persisted to $RUN_DIR/phase0-probes.json (display-only, never a verdict input); Phase-5 status lines are rendered from that record on fresh and resumed runs and print "state unknown after resume" when it is missing or unreadable. the codex probe reports the caller's CODEX_HOME and whether auth.json exists there (display-only; a wrapper's own environment is not observed). import-audit-scope.py accepts an absolute --config/--scope path under the repository root (POSIX paths only).
+
 ---
 
 ## 4. Onboard a project
@@ -292,7 +300,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.1, 0.11.0, 0.12.0, 0.13.0, or 0.13.1 templates can be updated directly to 0.13.2 with
+Existing unmodified stamped 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, or 0.13.2 templates can be updated directly to 0.14.0 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
@@ -657,6 +665,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/mdq-index.sh
 ├── skills/audit/scripts/open-run.py
 ├── skills/audit/scripts/plan-dispatch.py
+├── skills/audit/scripts/probe-record.py
 ├── skills/audit/scripts/read-manifest.py
 ├── skills/audit/scripts/resolve-impact.py
 ├── skills/audit/scripts/scaffold.py
@@ -682,6 +691,8 @@ doc-audit-harness/
 ├── docs/examples/doc-audit.example.json
 └── tests/
 ```
+
+`probe-record.py` stores display-only Phase-0 probe results in the run directory and rebinds them for Phase-5 status lines.
 
 For the full design rationale (why each decision was made), see the originating project's
 design spec referenced in the top-level `README.md`.
