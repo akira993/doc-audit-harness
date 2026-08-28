@@ -229,3 +229,6 @@
 ### Sol cr3-R1（PLAN-cr3 rev.1 → rev.2）— (A) 3 件・(B) 1 件
 - CR3-1 scope 基準を `79938a5` に／CR3-2 9 emit を実行経路で網羅（mdq indexed/index-failed、ax ok＋非 UTF-8 version、graph/codex ok）／CR3-3 `Ran N ≥ 609`・`79938a5` の名前包含・`... ok` ちょうど 1 回を §8 に／CR3-4 surrogate は `os.fsencode` で比較
 - 判定: **差し戻し → rev.2 で Opus へ**
+### Opus O-R5（PLAN-cr3 rev.2 → rev.3）— 条件付き合格。V9 (b)(c) を実機再現、9 か所除去で解消を実測、baseline Ran 603 OK
+- O1 ax の `\xff` ベクタは BSD `tr` が切り落とし判別力ゼロ → U+2028 に差し替え／O2 graph `emit()` の encode 検証行は意図的に残す旨を記録／O3 CLI 3 本は生 bytes 取得を明記／N1 網羅対象を emit サイト 9 個に
+- 判定: **rev.3 で実装承認**
