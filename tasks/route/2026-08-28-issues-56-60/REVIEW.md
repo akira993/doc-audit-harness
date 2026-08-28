@@ -105,3 +105,10 @@
 - O8 `--evidence` を取るが置換しない規約 → SKILL.md:36-42 に固定文、DoD (11) に検査
 - N4 文面残り（余分キー拒否・9 seam）→ 修正／N5 再開後に Phase 4 の運用変数が失われる → `rebind` からの復元を 1 文許可（`Closes #57` を維持）
 - 判定: **rev.8 で実装承認（Opus「この 4 点を反映すれば追加指摘なし」）**
+
+## 実装レビュー（手順 5〜6）
+### S1a R1 — 承認（commit `4ccc482`）
+- worker 報告: Ran 569 OK skip 0。boss 再実測: `s1a-full-tests-v.log` **Ran 569 tests OK, skipped 0 行**、DoD (1)〜(9) の固定テスト名 15 件を `-v` 出力で全数確認（test_config_decision_table_v014 ×3、test_output_key_sets_per_branch ×3）。
+- scope-check（SCOPE_COMMIT 8abfb91 / BOSS_COMMIT c4eefcb）: scope-clean。禁止ファイル byte 比較: forbidden-clean。`bash -n` 3 probe OK。
+- diff 精読: `import-audit-scope.py`（成分検査→apparent/real root 接頭辞→`validate_repo_path`、`main` で apparent root 保持）、3 probe（`CONFIG_SET` で指定有無分離、評価順序どおり、bin は base64 受け渡し・NUL 拒否、JSON は `json.dumps`、既存分岐のキー集合不変＋codex の 3 キー）、SKILL.md（CM 3 値式 verbatim、MDQ_REASON/AX_REASON、ゲート、Phase-5 3 行、caller 接尾辞は `rebind` 参照、診断文、Phase 4 注記、#59 注記、防御 1 句）、config-schema 4 行（`roots`/`tool` の既存記述は温存）、ADOPTION en/ja。
+- 指摘: なし（軽微メモ: bin の末尾改行は `$(…)` で落ちるが判定表外・非ブロッキング）。
