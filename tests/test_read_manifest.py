@@ -41,6 +41,14 @@ class TestReadManifest(unittest.TestCase):
              json.dumps(self.evidence if evidence is None else evidence)],
             capture_output=True, text=True)
 
+    def assert_unsealed_rejected(self, raw):
+        with open(os.path.join(self.tmp.name, "manifest.json"), "wb") as handle:
+            handle.write(raw)
+        proc = self.run_reader({"manifest": digest(raw)})
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertEqual(proc.stdout, "")
+        self.assertIn("manifest is not sealed", proc.stderr)
+
     def test_matching_digest_outputs_parsed_json(self):
         proc = self.run_reader()
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -107,6 +115,22 @@ class TestReadManifest(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertEqual(proc.stdout, "")
         self.assertIn("manifest sha", proc.stderr)
+
+    def test_sealed_false_is_rejected(self):
+        """DoD (6): a false sealed flag is rejected after digest verification."""
+        self.assert_unsealed_rejected(b'{"sealed":false}\n')
+
+    def test_missing_sealed_key_is_rejected(self):
+        """DoD (6): a manifest without the sealed key is rejected."""
+        self.assert_unsealed_rejected(b'{"runid":"r1"}\n')
+
+    def test_array_manifest_is_rejected(self):
+        """DoD (6): a non-object array manifest is rejected."""
+        self.assert_unsealed_rejected(b'[]\n')
+
+    def test_null_manifest_is_rejected(self):
+        """DoD (6): a null manifest is rejected."""
+        self.assert_unsealed_rejected(b'null\n')
 
 
 if __name__ == "__main__":

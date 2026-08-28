@@ -25,7 +25,10 @@ def read_manifest(run_dir, evidence, opener=open):
     actual = "sha256:" + hashlib.sha256(raw).hexdigest()
     if actual != expected:
         raise ValueError("manifest sha does not match EVIDENCE")
-    return json.loads(raw)
+    manifest = json.loads(raw)
+    if not (isinstance(manifest, dict) and manifest.get("sealed") is True):
+        raise ValueError("manifest is not sealed")
+    return manifest
 
 
 def main():

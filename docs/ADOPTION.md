@@ -307,7 +307,7 @@ This table is an excerpt of the main keys. See `skills/audit/references/config-s
 |-----|------|----------|---------|
 | `anchorPath` | string | yes | repo-relative path to the anchor state file (convention: `.claude/state/last-doc-audit.json`) |
 | `diffGlobs` | string[] | yes | path globs that scope the change set. `**` matches across `/`; `*` does not. |
-| `docGlobs` | string[] | no | files treated as docs for the heuristic/generic scan (default `["docs/**/*.md","*.md"]`); for pre-flight fix paths only, omission rejects every path (fail-closed). |
+| `docGlobs` | string[] | no | files treated as docs for the heuristic/generic scan (default `["docs/**/*.md","*.md"]`); pre-flight fix paths use the same default. |
 | `impactMap` | object[] | yes | `{changed: path\|glob, impacts: [docPath,…], note?: string, source?: string}` — the heart (see §6). `source:"audit-scope"` is generated. May start empty `[]`. |
 | `auditScope` | object | no | `{path,sha256,importedAt,rules}` importer metadata; do not edit it by hand. |
 | `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: [path\|path:line,…]}` — cross-doc value consistency |
@@ -330,7 +330,7 @@ This table is an excerpt of the main keys. See `skills/audit/references/config-s
 | `models` | object | no | nested `{light:{enabled,maxChanged,maxImpacted,maxDiffLines,maxDiffBytes,sensitiveTokens}}` deterministic light-run limits. |
 | `codexReview` | object | no | `{enabled,required:bool=false,bin,model?,timeoutMs?}`; `required:true` REFUSES a non-completed review. Enable it after establishing a baseline. |
 | `digestExclude` | string[] | no | Non-glob literal paths only — each accepted prefix itself or any path below it (a trailing `/` is normalized away). Values containing `*`, `?`, or `[` are rejected by `tree-digest.py`; `seal-run.py` fails (exit 2) and the run is not sealed. Accepted `digestExclude` prefixes: `.claude/state`, `.claude/worktrees`, `.mdq`, `.codegraph`, `graphify-out`, `.cocoindex_code`. |
-| `protectedGlobs` | string[] | no | extra paths denied to pre-flight fixes; built-in ADR/decisions/logs/`.claude` protection cannot be removed. |
+| `protectedGlobs` | string[] | no | extra paths denied to pre-flight fixes; built-in ADR/decisions/logs/`.claude` and case-insensitive `CLAUDE.md`/`AGENTS.md` basename protection cannot be removed. |
 
 Rules: `impacts` entries are **doc paths only** — put commentary in `note`. `changed` is a
 single path or a glob. Glob semantics are the engine's own: `**`=any incl `/`, `*`=any excl

@@ -1,0 +1,272 @@
+{
+  "anchorPath": ".claude/state/last-doc-audit.json",
+  "diffGlobs": [
+    "scripts/**",
+    "docs/**",
+    ".claude/**",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "README.md",
+    ".gitignore",
+    ".envrc",
+    ".env.example"
+  ],
+  "docGlobs": [
+    "*.md",
+    ".claude/README.md",
+    "docs/README.md",
+    "docs/design/**/*.md",
+    "docs/requirements/**/*.md",
+    "docs/runbooks/**/*.md",
+    "docs/guides/**/*.md",
+    "docs/test/*.md",
+    "docs/logs/doc_audit_*.md"
+  ],
+  "indexFiles": [
+    "README.md",
+    "docs/README.md",
+    "docs/guides/README.md"
+  ],
+  "harness": {
+    "state": "existing-untouched",
+    "decidedAt": "2026-08-27T12:53:04Z",
+    "engineVersion": "0.13.0"
+  },
+  "regressionRecheck": {
+    "enabled": true
+  },
+  "indexing": {
+    "enabled": true,
+    "tool": "mdq",
+    "bin": "mdq"
+  },
+  "contextMode": {
+    "enabled": true
+  },
+  "webExtract": {
+    "enabled": true,
+    "tool": "ax",
+    "bin": "ax"
+  },
+  "codexReview": {
+    "enabled": true,
+    "bin": "codex"
+  },
+  "symbolGraph": {
+    "enabled": true,
+    "tool": "codegraph",
+    "bin": "codegraph"
+  },
+  "semanticSearch": {
+    "enabled": true,
+    "tool": "cocoindex",
+    "bin": "ccc",
+    "minScore": 0.4
+  },
+  "reviewCommands": {
+    "code": "/code-review high",
+    "security": "/security-review"
+  },
+  "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md",
+  "maxImpactedDocs": 60,
+  "impactMap": [
+    {
+      "changed": "AGENTS.md",
+      "impacts": [
+        "README.md",
+        ".claude/README.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "CLAUDE.md",
+      "impacts": [
+        "AGENTS.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "README.md",
+      "impacts": [
+        "AGENTS.md",
+        "docs/README.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": ".gitignore",
+      "impacts": [
+        "AGENTS.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": ".envrc",
+      "impacts": [
+        "docs/runbooks/initial-setup.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": ".env.example",
+      "impacts": [
+        "docs/runbooks/initial-setup.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": ".claude/settings.json",
+      "impacts": [
+        ".claude/README.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": ".claude/README.md",
+      "impacts": [
+        "AGENTS.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": ".claude/audit-scope.json",
+      "impacts": [
+        "AGENTS.md",
+        "docs/runbooks/lifecycle.md",
+        "docs/design/DES-002-audit-tooling.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": ".claude/agents/**",
+      "impacts": [
+        "AGENTS.md",
+        ".claude/README.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": ".claude/rules/**",
+      "impacts": [
+        ".claude/README.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": ".claude/**.json",
+      "impacts": [
+        ".claude/README.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "scripts/new-project.sh",
+      "impacts": [
+        "README.md",
+        "docs/runbooks/initial-setup.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "scripts/resolve-audit-scope.py",
+      "impacts": [
+        "AGENTS.md",
+        "docs/runbooks/lifecycle.md",
+        "docs/design/DES-002-audit-tooling.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "scripts/resolve-audit-scope-test.py",
+      "impacts": [
+        "AGENTS.md",
+        "docs/runbooks/lifecycle.md",
+        "docs/design/DES-002-audit-tooling.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "scripts/check-**.py",
+      "impacts": [
+        "AGENTS.md",
+        ".claude/README.md",
+        "docs/runbooks/phase-template.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "scripts/**-test.py",
+      "impacts": [
+        "AGENTS.md",
+        ".claude/README.md",
+        "docs/runbooks/phase-template.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "docs/README.md",
+      "impacts": [
+        "AGENTS.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "docs/design/**",
+      "impacts": [
+        "docs/README.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "docs/requirements/**",
+      "impacts": [
+        "docs/README.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "docs/test/**",
+      "impacts": [
+        "docs/README.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "docs/runbooks/**",
+      "impacts": [
+        "AGENTS.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    },
+    {
+      "changed": "docs/guides/**",
+      "impacts": [
+        "docs/README.md"
+      ],
+      "source": "audit-scope",
+      "note": "generated from .claude/audit-scope.json"
+    }
+  ]
+}

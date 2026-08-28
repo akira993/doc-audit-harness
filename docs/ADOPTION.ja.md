@@ -288,7 +288,7 @@ cd ~/code/my-project
 |------|----|----|------|
 | `anchorPath` | string | はい | anchor 状態ファイルの repo 相対パス（慣習: `.claude/state/last-doc-audit.json`） |
 | `diffGlobs` | string[] | はい | 変更集合を絞る path glob。`**` は `/` を跨ぐ、`*` は跨がない。 |
-| `docGlobs` | string[] | いいえ | heuristic/generic スキャンでドキュメントとして扱うファイル（既定 `["docs/**/*.md","*.md"]`）。pre-flight fix path に限り、省略時は全パスを拒否する fail-closed 動作である。 |
+| `docGlobs` | string[] | いいえ | heuristic/generic スキャンでドキュメントとして扱うファイル（既定 `["docs/**/*.md","*.md"]`）。pre-flight fix path も同じ既定を使う。 |
 | `impactMap` | object[] | はい | `{changed: path\|glob, impacts: [docPath,…], note?: string, source?: string}` — 中核（§6）。`source:"audit-scope"` は生成物。`[]` で開始してもよい。 |
 | `auditScope` | object | いいえ | importer が書く `{path,sha256,importedAt,rules}`。手編集しない。 |
 | `ssotSources` | object[] | いいえ | `{name, value?, liveSource, docsThatCite: [path\|path:line,…]}` — ドキュメント横断の値整合 |
@@ -311,7 +311,7 @@ cd ~/code/my-project
 | `models` | object | いいえ | ネストした `{light:{enabled,maxChanged,maxImpacted,maxDiffLines,maxDiffBytes,sensitiveTokens}}`。light run の決定論的な上限。 |
 | `codexReview` | object | いいえ | `{enabled,required:bool=false,bin,model?,timeoutMs?}`。`required:true` は未完了 review を REFUSED にする。baseline 確立後に有効化する。 |
 | `digestExclude` | string[] | いいえ | glob ではない literal path のみであり、受理された各プレフィックス自体とその配下 path を許可する（末尾 `/` は正規化で除かれる）。`*`、`?`、`[` を含む値は `tree-digest.py` が拒否し、`seal-run.py` が失敗（exit 2）して run は seal されない。`digestExclude` で受理されるプレフィックス: `.claude/state`, `.claude/worktrees`, `.mdq`, `.codegraph`, `graphify-out`, `.cocoindex_code`. |
-| `protectedGlobs` | string[] | いいえ | pre-flight 修正を禁止する追加パス。組込みの ADR/decisions/logs/`.claude` 保護は解除不可。 |
+| `protectedGlobs` | string[] | いいえ | pre-flight 修正を禁止する追加パス。組込みの ADR/decisions/logs/`.claude` と、大文字小文字を区別しない `CLAUDE.md`/`AGENTS.md` basename 保護は解除不可。 |
 
 規則: `impacts` のエントリは **ドキュメントパスのみ** — 注釈は `note` に置く。`changed` は単一パス
 または glob。glob はエンジン独自の意味論: `**`=`/` を含む任意、`*`=`/` を含まない任意、`?`=`/` 以外 1 文字。

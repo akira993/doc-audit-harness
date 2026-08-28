@@ -281,9 +281,9 @@ are never dropped. Otherwise, if there are no FAIL findings, bind
 - “修正して監査” pipes only distinct `path` values present in findings to
   `python3 "$SD/scripts/fix-scope.py" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR" --paths -`.
   Save that JSON as `$RUN_DIR/preflight-allowed.json`; denied paths remain findings and are never
-  edited. The helper's built-in case-insensitive deny for ADR, decisions, logs, and `.claude/**`
-  cannot be relaxed; `protectedGlobs` only adds denials and `diffGlobs` is never consulted. Before
-  editing, run
+  edited. The helper's built-in case-insensitive deny for ADR, decisions, logs, `.claude/**`, and
+  `CLAUDE.md`/`AGENTS.md` basenames cannot be relaxed; `protectedGlobs` only adds denials and
+  `diffGlobs` is never consulted. Before editing, run
   `python3 "$SD/scripts/fix-scope.py" --repo-root "$CLAUDE_PROJECT_DIR" --snapshot --allowed "$RUN_DIR/preflight-allowed.json" > "$RUN_DIR/preflight-snapshot.json"`.
   Edit only allowed documentation paths, then run
   `python3 "$SD/scripts/fix-scope.py" --repo-root "$CLAUDE_PROJECT_DIR" --verify "$RUN_DIR/preflight-snapshot.json" --allowed "$RUN_DIR/preflight-allowed.json"`.
@@ -364,13 +364,18 @@ it is not rebound after sealing.
 Seal the run before selecting or starting either verifier backend:
 `python3 "$SD/scripts/seal-run.py" --run-dir "$RUN_DIR" --repo-root "$CLAUDE_PROJECT_DIR" --evidence "$EVIDENCE"`.
 On success replace `EVIDENCE` with its complete stdout; its `digest` and updated `manifest` are
-the trusted seal. Exit 5 means the HEAD or complete change set drifted after Phase 1: release the
-run, stop, and say “Phase 1 以降にソースが変わりました。監査を再実行してください。” Do
-not launch either verifier backend and do not calculate a replacement digest by hand.
+the trusted seal. Exit 5 means the HEAD or complete change set drifted after Phase 1: run
+`python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --release --runid "$RUNID"`,
+stop, and say “Phase 1 以降にソースが変わりました。監査を再実行してください。” Do not launch either verifier backend and do not calculate a replacement digest by hand.
+Any other non-zero exit: run
+`python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --release --runid "$RUNID"`,
+report `seal-run:` stderr, stop without calling `read-manifest.py`, and do not launch either verifier backend.
 
 Immediately verify and read that exact sealed manifest once:
 `SEALED_MANIFEST="$(python3 "$SD/scripts/read-manifest.py" --run-dir "$RUN_DIR" --evidence "$EVIDENCE")"`.
-If this command fails, stop without launching a verifier. Parse only `SEALED_MANIFEST` and bind:
+If `read-manifest.py` fails, run
+`python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --release --runid "$RUNID"`,
+then stop without launching a verifier. Parse only `SEALED_MANIFEST` and bind:
 `SEALED_PHASE3_BACKEND="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["phase3Backend"])' "$SEALED_MANIFEST")"`,
 `SEALED_PHASE3_CODEX_TIMEOUT_SECONDS="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("phase3CodexTimeoutSeconds", ""))' "$SEALED_MANIFEST")"`,
 `SEALED_RUN_CLASS="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["runClass"])' "$SEALED_MANIFEST")"`,

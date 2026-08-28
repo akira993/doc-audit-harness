@@ -7,7 +7,7 @@ live here; the plugin ships no project knowledge.
 |-----|------|----------|---------|
 | `anchorPath` | string | yes | repo-relative path to the anchor state file |
 | `diffGlobs` | string[] | yes | path globs that scope the change set (`**`=incl `/`, `*`=excl `/`) |
-| `docGlobs` | string[] | no | files treated as docs for the heuristic scan (default `["docs/**/*.md","*.md"]`); for pre-flight fix-path classification only, omission intentionally fails closed and rejects every fix path |
+| `docGlobs` | string[] | no | files treated as docs for the heuristic scan (default `["docs/**/*.md","*.md"]`); pre-flight fix-path classification uses the same default |
 | `frontMatterFields` | string[] | no | generic `format` layer requires these front-matter fields on every doc (WARN if missing); omit to skip front-matter checks |
 | `layerGlobs` | object | no | per-layer generic exclusions: `{format?:{exclude:string[]},existence?:{exclude:string[]},semantic?:{exclude:string[]}}`; exclusions also apply to explicit `--paths` input |
 | `frontMatterOverrides` | object[] | no | ordered generic `format` overrides: `{globs:string[],fields:string[]}`; the first entry whose `globs` contains a match wins, `fields:[]` skips the check, and no match falls back to `frontMatterFields` |
@@ -27,7 +27,7 @@ live here; the plugin ships no project knowledge.
 | `phase3CodexTimeoutSeconds` | number | no | per-document Codex execution timeout in seconds (default 600; integer 60..3600); excludes worker-queue wait, resets for each retry, and has effect only when `phase3Backend` is `"codex"` |
 | `models` | object | no | nested `{light:{enabled,maxChanged=10,maxImpacted=15,maxDiffLines=200,maxDiffBytes=65536,sensitiveTokens?}}` deterministic light-run limits; defaults are empirical, not measured service guarantees |
 | `digestExclude` | string[] | no | Non-glob literal paths only — each accepted prefix itself or any path below it (a trailing `/` is normalized away). Values containing `*`, `?`, or `[` are rejected by `tree-digest.py`; `seal-run.py` fails (exit 2) and the run is not sealed. Accepted `digestExclude` prefixes: `.claude/state`, `.claude/worktrees`, `.mdq`, `.codegraph`, `graphify-out`, `.cocoindex_code`. |
-| `protectedGlobs` | string[] | no | additional pre-flight fix deny patterns; built-in ADR/decisions/logs/`.claude` denial cannot be removed |
+| `protectedGlobs` | string[] | no | additional pre-flight fix deny patterns; built-in ADR/decisions/logs/`.claude` and case-insensitive `CLAUDE.md`/`AGENTS.md` basename denial cannot be removed |
 | `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:string[], saturationWarnRatio:number=0.5, excludeDocPathTokens:bool=false}` |
 | `regressionRecheck` | object | no | `{enabled:bool=false}` — opt-in recheck of the latest prior FAIL for unchanged documents |
 | `indexing` | object | no | `{enabled:bool=true, tool:string="mdq", bin:string="mdq", roots:string[]?}` — Phase-0 mdq preflight; `roots` overrides index roots (default: whole repo `.`, since mdq's own default roots miss `README.md`/`skills`/`agents`); `enabled:false` opts out even when mdq is installed (conditional-force) |
@@ -153,8 +153,8 @@ but can force the current run to end as REFUSED.
 
 Phase 0.5 runs after `open-run.py` has acquired the lock and before baseline/seal. A FAIL asks an
 interactive user to fix and audit, continue without fixing, or stop. Only the first choice may
-edit: `fix-scope.py` permits finding paths that match `docGlobs`, denies ADR/decisions/logs and
-`.claude/**` case-insensitively, adds `protectedGlobs`, and verifies that no path outside the
+edit: `fix-scope.py` permits finding paths that match `docGlobs`, denies ADR/decisions/logs,
+`.claude/**`, and `CLAUDE.md`/`AGENTS.md` basenames case-insensitively, adds `protectedGlobs`, and verifies that no path outside the
 approved set changed. Non-interactive runs never edit. Pre-flight findings are gate evidence and
 therefore block CONSISTENT when they contain FAIL.
 
