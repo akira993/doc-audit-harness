@@ -44,7 +44,14 @@ def run_script(repo, config, extra_env=None):
 
 class TestCodexProbe(unittest.TestCase):
     def setUp(self):
-        self.repo = tempfile.mkdtemp()
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = self.temp.name
+
+    def tmpdir(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        return temp.name
 
     def test_not_installed_degrades(self):
         out = run_script(self.repo, {"codexReview": {"bin": "codex-does-not-exist-zzz"}})
@@ -61,7 +68,7 @@ class TestCodexProbe(unittest.TestCase):
         self.assertEqual(out["probeCommands"], [])
 
     def test_stub_installed_reports_ok_and_version(self):
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         stub = os.path.join(bindir, "codexstub")
         make_exec(stub, version_stub("0.145.0-stub"))
         out = run_script(self.repo, {"codexReview": {"enabled": True, "bin": stub}})
@@ -73,7 +80,7 @@ class TestCodexProbe(unittest.TestCase):
                          [stub + " --version", stub + " exec --help"])
 
     def test_exec_help_failure_degrades(self):
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         stub = os.path.join(bindir, "codexstub")
         make_exec(stub, '#!/usr/bin/env bash\n'
                         'if [[ "$1" == "--version" ]]; then echo "stub"; exit 0; fi\n'
@@ -103,7 +110,7 @@ class TestCodexProbe(unittest.TestCase):
             "bin_int", "bin_empty", "bin_nul", "compound",
         }
         self.assertEqual(len(case_ids), 20)
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         marker = os.path.join(bindir, "sentinel")
         make_exec(os.path.join(bindir, "codex"),
                   '#!/bin/sh\nprintf called >> "$SENTINEL"\n'
@@ -157,14 +164,14 @@ class TestCodexProbe(unittest.TestCase):
             "env_empty", "home_unset", "env_special_chars",
         }
         self.assertEqual(len(case_ids), 7)
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         stub = os.path.join(bindir, "codexstub")
         make_exec(stub, version_stub())
         cfg = os.path.join(self.repo, "config.json")
         write(cfg, json.dumps({"codexReview": {"bin": stub}}))
         for case_id in sorted(case_ids):
             with self.subTest(case_id=case_id):
-                base = tempfile.mkdtemp()
+                base = self.tmpdir()
                 caller = base + ('/special\n"\\home' if case_id == "env_special_chars" else "/caller")
                 default = os.path.join(base, ".codex")
                 env = {"PATH": os.environ["PATH"]}
@@ -197,7 +204,7 @@ class TestCodexProbe(unittest.TestCase):
 
     def test_caller_keys_present_in_every_branch(self):
         caller_keys = {"callerCodexHome", "callerCodexHomeSource", "callerAuthFile"}
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         ok = os.path.join(bindir, "ok")
         bad = os.path.join(bindir, "bad")
         make_exec(ok, version_stub())
@@ -224,7 +231,7 @@ class TestCodexProbe(unittest.TestCase):
         self.test_caller_keys_present_in_every_branch()
 
     def test_json_escaping_of_bin_and_home(self):
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         stub = os.path.join(bindir, 'codex\n"\\stub')
         caller = os.path.join(bindir, 'home\n"\\caller')
         make_exec(stub, version_stub('v\n"\\special'))

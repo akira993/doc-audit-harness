@@ -61,6 +61,17 @@ class TestCodegraphProbe(unittest.TestCase):
         self.assertFalse(out["symbolGraphAvailable"])
         self.assertEqual(out["reason"], "disabled-by-config")
 
+    def test_control_character_bins_are_rejected_or_normalized_when_disabled(self):
+        for code in (*range(32), 127):
+            with self.subTest(code=code):
+                value = "tool" + chr(code)
+                out = run_script(self.repo, {"symbolGraph": {"bin": value}})
+                self.assertEqual(out["reason"], "invalid-config")
+                self.assertEqual(out["symbolGraphBin"], "codegraph")
+                out = run_script(self.repo, {"symbolGraph": {"enabled": False, "bin": value}})
+                self.assertEqual(out["reason"], "disabled-by-config")
+                self.assertEqual(out["symbolGraphBin"], "codegraph")
+
     def test_stub_installed_fresh_calls_init(self):
         bindir = tempfile.mkdtemp()
         log = os.path.join(bindir, "calls.log")

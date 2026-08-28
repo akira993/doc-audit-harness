@@ -72,6 +72,17 @@ class TestGraphifyProbe(unittest.TestCase):
         out = run_script(self.repo, {"docGraph": {"enabled": False}})
         self.assertFalse(out["docGraphAvailable"])
         self.assertEqual(out["reason"], "disabled-by-config")
+
+    def test_control_character_bins_are_rejected_or_normalized_when_disabled(self):
+        for code in (*range(32), 127):
+            with self.subTest(code=code):
+                value = "tool" + chr(code)
+                out = run_script(self.repo, {"docGraph": {"bin": value}})
+                self.assertEqual(out["reason"], "invalid-config")
+                self.assertEqual(out["docGraphBin"], "graphify")
+                out = run_script(self.repo, {"docGraph": {"enabled": False, "bin": value}})
+                self.assertEqual(out["reason"], "disabled-by-config")
+                self.assertEqual(out["docGraphBin"], "graphify")
         self.assertFalse(out["gitignoreOk"])
 
     def test_gitignore_ok_true_via_git_check_ignore(self):

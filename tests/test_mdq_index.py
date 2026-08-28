@@ -44,7 +44,14 @@ def run_script(repo, config, extra_env=None):
 
 class TestMdqIndex(unittest.TestCase):
     def setUp(self):
-        self.repo = tempfile.mkdtemp()
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = self.temp.name
+
+    def tmpdir(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        return temp.name
         write(os.path.join(self.repo, "docs", "a.md"), "# A\n")
 
     def test_not_installed_degrades(self):
@@ -68,7 +75,7 @@ class TestMdqIndex(unittest.TestCase):
             self.assertFalse(out["mdqAvailable"])
 
     def test_stub_indexes_corpus(self):
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         stub = os.path.join(bindir, "mdqstub")
         arglog = os.path.join(bindir, "args.txt")
         make_exec(stub, arg_logging_stub(0))
@@ -82,7 +89,7 @@ class TestMdqIndex(unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(self.repo, ".mdq")))
 
     def test_stub_failure_degrades(self):
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         stub = os.path.join(bindir, "mdqfail")
         arglog = os.path.join(bindir, "args.txt")
         make_exec(stub, arg_logging_stub(7))
@@ -92,7 +99,7 @@ class TestMdqIndex(unittest.TestCase):
         self.assertEqual(out["rc"], 7)
 
     def test_default_root_is_whole_repo(self):
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         stub = os.path.join(bindir, "mdqargs")
         arglog = os.path.join(bindir, "args.txt")
         make_exec(stub, arg_logging_stub(0))
@@ -103,7 +110,7 @@ class TestMdqIndex(unittest.TestCase):
         self.assertIn("--root .\n", args)
 
     def test_roots_override_is_honored(self):
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         stub = os.path.join(bindir, "mdqargs2")
         arglog = os.path.join(bindir, "args.txt")
         make_exec(stub, arg_logging_stub(0))
@@ -123,7 +130,7 @@ class TestMdqIndex(unittest.TestCase):
             "bin_int", "bin_empty", "bin_nul", "compound",
         }
         self.assertEqual(len(case_ids), 20)
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         marker = os.path.join(bindir, "sentinel")
         make_exec(os.path.join(bindir, "mdq"),
                   '#!/bin/sh\nprintf called >> "$SENTINEL"\nexit 0\n')
@@ -184,7 +191,7 @@ class TestMdqIndex(unittest.TestCase):
             "index-failed": {"mdqAvailable", "reason", "rc", "bin"},
         }
         self.assertEqual(len(expected), 5)
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         ok = os.path.join(bindir, "ok")
         bad = os.path.join(bindir, "bad")
         make_exec(ok, arg_logging_stub(0))

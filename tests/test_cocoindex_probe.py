@@ -61,6 +61,17 @@ class TestCocoindexProbe(unittest.TestCase):
         self.assertFalse(out["semanticSearchAvailable"])
         self.assertEqual(out["reason"], "disabled-by-config")
 
+    def test_control_character_bins_are_rejected_or_normalized_when_disabled(self):
+        for code in (*range(32), 127):
+            with self.subTest(code=code):
+                value = "tool" + chr(code)
+                out = run_script(self.repo, {"semanticSearch": {"bin": value}})
+                self.assertEqual(out["reason"], "invalid-config")
+                self.assertEqual(out["semanticSearchBin"], "ccc")
+                out = run_script(self.repo, {"semanticSearch": {"enabled": False, "bin": value}})
+                self.assertEqual(out["reason"], "disabled-by-config")
+                self.assertEqual(out["semanticSearchBin"], "ccc")
+
     def test_not_initialized_never_calls_init(self):
         # The single most safety-critical test in this whole plan: an absent
         # .cocoindex_code/ MUST short-circuit to not-initialized WITHOUT ever

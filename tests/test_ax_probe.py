@@ -43,7 +43,14 @@ def run_script(repo, config, extra_env=None):
 
 class TestAxProbe(unittest.TestCase):
     def setUp(self):
-        self.repo = tempfile.mkdtemp()
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = self.temp.name
+
+    def tmpdir(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        return temp.name
 
     def test_not_installed_degrades(self):
         out = run_script(self.repo, {"webExtract": {"bin": "ax-does-not-exist-zzz"}})
@@ -58,7 +65,7 @@ class TestAxProbe(unittest.TestCase):
         self.assertIsNone(out["axVersion"])
 
     def test_stub_installed_reports_ok_and_version(self):
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         stub = os.path.join(bindir, "axstub")
         make_exec(stub, version_stub("0.1.10-stub"))
         out = run_script(self.repo, {"webExtract": {"enabled": True, "tool": "ax", "bin": stub}})
@@ -86,7 +93,7 @@ class TestAxProbe(unittest.TestCase):
             "bin_int", "bin_empty", "bin_nul", "compound",
         }
         self.assertEqual(len(case_ids), 20)
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         marker = os.path.join(bindir, "sentinel")
         make_exec(os.path.join(bindir, "ax"),
                   '#!/bin/sh\nprintf called >> "$SENTINEL"\necho sentinel-version\n')
@@ -136,7 +143,7 @@ class TestAxProbe(unittest.TestCase):
 
     def test_output_key_sets_per_branch(self):
         expected = {"axAvailable", "axBin", "axVersion", "reason"}
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         ok = os.path.join(bindir, "ok")
         make_exec(ok, version_stub())
         outputs = [

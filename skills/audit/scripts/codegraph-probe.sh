@@ -37,9 +37,9 @@ try:
     if not isinstance(seam, dict): raise ValueError()
     enabled = seam.get("enabled", True)
     if not isinstance(enabled, bool): raise ValueError()
-    if not enabled: print("disabled-by-config", seam.get("bin", default) if isinstance(seam.get("bin", default), str) and seam.get("bin", default) else default); raise SystemExit
+    if not enabled: print("disabled-by-config", seam.get("bin", default) if isinstance(seam.get("bin", default), str) and seam.get("bin", default) and not any(ord(c) <= 31 or ord(c) == 127 for c in seam.get("bin", default)) else default); raise SystemExit
     bin_name = seam.get("bin", default)
-    if not isinstance(bin_name, str) or not bin_name: raise ValueError()
+    if not isinstance(bin_name, str) or not bin_name or any(ord(c) <= 31 or ord(c) == 127 for c in bin_name): raise ValueError()
     print("enabled", bin_name)
 except Exception:
     print("invalid-config", default)
