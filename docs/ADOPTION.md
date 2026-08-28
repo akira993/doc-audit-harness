@@ -663,6 +663,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/mdq-index.sh
 ├── skills/audit/scripts/open-run.py
 ├── skills/audit/scripts/plan-dispatch.py
+├── skills/audit/scripts/probe-record.py
 ├── skills/audit/scripts/read-manifest.py
 ├── skills/audit/scripts/resolve-impact.py
 ├── skills/audit/scripts/scaffold.py
@@ -688,6 +689,8 @@ doc-audit-harness/
 ├── docs/examples/doc-audit.example.json
 └── tests/
 ```
+
+`probe-record.py` stores display-only Phase-0 probe results in the run directory and rebinds them for Phase-5 status lines.
 
 For the full design rationale (why each decision was made), see the originating project's
 design spec referenced in the top-level `README.md`.

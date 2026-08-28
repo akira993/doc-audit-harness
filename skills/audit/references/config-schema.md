@@ -113,6 +113,9 @@ no TTL and can be removed only by the matching `--release` or an explicit
 start). Full mode uses `HEAD` as its effective baseline, disables cache, and
 includes every `docGlobs` document without applying `maxImpactedDocs`.
 
+`phase0-probes.json` in that run directory stores display-only raw Phase-0 probe output with
+`schemaVersion:1`. It is not evidence and the gate never reads it.
+
 The orchestrator carries one `EVIDENCE` JSON object. Missing evidence uses the
 literal `none` only where absence is valid: cold-start history, an empty cached
 set, or an optional preflight/Phase 4 file. The gate accepts this object only via

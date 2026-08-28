@@ -619,6 +619,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/mdq-index.sh
 ├── skills/audit/scripts/open-run.py
 ├── skills/audit/scripts/plan-dispatch.py
+├── skills/audit/scripts/probe-record.py
 ├── skills/audit/scripts/read-manifest.py
 ├── skills/audit/scripts/resolve-impact.py
 ├── skills/audit/scripts/scaffold.py
@@ -644,6 +645,8 @@ doc-audit-harness/
 ├── docs/examples/doc-audit.example.json
 └── tests/
 ```
+
+`probe-record.py` は表示専用の Phase-0 probe 結果を run directory に記録し、Phase-5 の状態行向けに再束縛する。
 
 設計判断の根拠（なぜ各決定をしたか）は、トップレベル `README.md` が参照する元プロジェクトの
 設計 spec を参照。

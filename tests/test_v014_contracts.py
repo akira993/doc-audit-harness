@@ -143,6 +143,56 @@ class TestV014Contracts(unittest.TestCase):
             self.assertIn("CODEX_HOME", text)
             self.assertIn("wrapper", text)
 
+    def test_probe_record_phase_contracts(self):
+        """DoD (11): display-only probe persistence is fully wired into the skill."""
+        skill = read("skills/audit/SKILL.md")
+        phase0 = skill.split("## Phase 0 —", 1)[1].split("## Phase 0.5", 1)[0]
+        seams = {
+            "indexing", "mdqHealth", "mdqDegrade", "contextMode", "webExtract",
+            "codexReview", "symbolGraph", "docGraph", "semanticSearch",
+        }
+        found = set(re.findall(r"--seam (\w+) --stdin", phase0))
+        self.assertEqual(found, seams)
+        for seam in seams:
+            self.assertIn(f"⚠ probe-record: {seam} not recorded [non-blocking]", phase0)
+        phase3 = skill.split("## Phase 3", 1)[1].split("## Phase 4", 1)[0]
+        self.assertGreaterEqual(phase3.count("--seam indexing --stdin"), 1)
+        self.assertGreaterEqual(phase3.count("--seam mdqHealth --stdin"), 1)
+        phase4 = skill.split("## Phase 4", 1)[1].split("## Phase 5", 1)[0]
+        self.assertIn('--name phase4 --stdin --evidence "$EVIDENCE"', phase4)
+        self.assertIn("--seam codexReviewState --stdin", phase4)
+        self.assertIn("phase4-not-required", phase4)
+        self.assertLess(phase4.index("--name phase4"), phase4.index("--seam codexReviewState"))
+        phase5 = skill.split("## Phase 5", 1)[1]
+        self.assertIn('probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --read', phase5)
+        for line in (
+                "⚠ mdq: state unknown after resume [non-blocking]",
+                "⚠ context-mode: state unknown after resume [non-blocking]",
+                "⚠ ax: state unknown after resume [non-blocking]",
+                "⚠ symbol-graph: state unknown after resume [non-blocking]",
+                "⚠ doc-graph: state unknown after resume [non-blocking]",
+                "⚠ semantic-search: state unknown after resume [non-blocking]",
+                "⚠ codex-review: state unknown after resume [non-blocking]",
+                "💡 codex-review: not run (phase 4 not required)"):
+            self.assertIn(line, phase5)
+        for literal in (
+                "CODEX_REVIEW_STATE=not-active", "CODEX_REVIEW_STATE=skipped-full-run",
+                "CODEX_REVIEW_STATE=completed", "CODEX_REVIEW_STATE` ∈ `{execution-failed, ref-invalid}"):
+            self.assertIn(literal, phase5)
+        self.assertIn("caller info unknown after resume", phase5)
+        self.assertNotIn('callerCodexHome"]', skill)
+
+    def test_probe_record_resume_evidence_and_guardrail_contracts(self):
+        """DoD (11): recovery wording keeps evidence and verdict ownership unchanged."""
+        skill = read("skills/audit/SKILL.md")
+        self.assertIn('probe-record.py also receives --evidence "$EVIDENCE" for run-dir validation only; it is not an evidence producer and its stdout MUST NOT replace EVIDENCE.', skill)
+        self.assertIn('"rebind" map is authoritative', skill)
+        self.assertIn("Phase 4 may restore any missing operational availability, reason, or binary variables from `rebind`", skill)
+        self.assertIn("a failed read makes all seven status lines unknown; neither case changes the verdict", skill)
+        self.assertIn("`$RUN_DIR/phase0-probes.json` stores raw probe output for display only", skill)
+        verdict = read("skills/audit/scripts/decide-verdict.py")
+        self.assertNotIn("phase0-probes", verdict)
+
 
 if __name__ == "__main__":
     unittest.main()
