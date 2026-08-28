@@ -22,6 +22,27 @@ def read_marker(path):
         return f.read()
 
 
+def sentinel_env(bindir, value, default_name):
+    names = []
+    for name in (default_name, value, value.strip()):
+        if not name or "\0" in name or name in names:
+            continue
+        try:
+            name.encode("utf-8")
+        except UnicodeEncodeError:
+            continue
+        names.append(name)
+    markers = []
+    env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"])
+    for index, name in enumerate(names):
+        marker = os.path.join(bindir, "marker-%d" % index)
+        make_exec(os.path.join(bindir, name),
+                  '#!/bin/sh\nprintf called >> "$MARKER_%d"\n' % index)
+        env["MARKER_%d" % index] = marker
+        markers.append(marker)
+    return env, markers
+
+
 def arg_logging_stub(rc=0):
     """A fake mdq that appends its argv to ARGLOG (env) and creates .mdq, then exits rc."""
     return ('#!/usr/bin/env bash\n'
@@ -47,12 +68,15 @@ class TestMdqIndex(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.repo = self.temp.name
+        write(os.path.join(self.repo, "docs", "a.md"), "# A\n")
 
     def tmpdir(self):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         return temp.name
-        write(os.path.join(self.repo, "docs", "a.md"), "# A\n")
+
+    def test_setup_creates_corpus(self):
+        self.assertTrue(os.path.exists(os.path.join(self.repo, "docs", "a.md")))
 
     def test_not_installed_degrades(self):
         out = run_script(self.repo, {"indexing": {"bin": "mdq-does-not-exist-zzz"}})
@@ -127,9 +151,9 @@ class TestMdqIndex(unittest.TestCase):
             "absent", "empty", "disabled", "en_str", "en_int", "en_null",
             "key_null", "key_true", "key_str", "key_list", "cfg_omitted",
             "cfg_empty", "cfg_missing", "cfg_broken", "top_list", "top_null",
-            "bin_int", "bin_empty", "bin_nul", "compound",
+            "bin_int", "bin_empty", "bin_nul", "compound", "bin_ws_lead", "bin_ws_trail", "bin_ws_both", "bin_ws_nbsp", "bin_wsonly", "bin_surrogate",
         }
-        self.assertEqual(len(case_ids), 20)
+        self.assertEqual(len(case_ids), 26)
         bindir = self.tmpdir()
         marker = os.path.join(bindir, "sentinel")
         make_exec(os.path.join(bindir, "mdq"),
@@ -148,6 +172,7 @@ class TestMdqIndex(unittest.TestCase):
             "bin_int": {"indexing": {"bin": 1}},
             "bin_empty": {"indexing": {"bin": ""}},
             "bin_nul": '{"indexing":{"bin":"bad\\u0000bin"}}',
+            "bin_ws_lead":{"indexing":{"bin":" mdq"}}, "bin_ws_trail":{"indexing":{"bin":"mdq "}}, "bin_ws_both":{"indexing":{"bin":" mdq "}}, "bin_ws_nbsp":{"indexing":{"bin":"\u00a0mdq"}}, "bin_wsonly":{"indexing":{"bin":"   "}}, "bin_surrogate":'{"indexing":{"bin":"\\ud800"}}',
             "compound": {"indexing": {"enabled": False, "bin": []}},
         }
         invalid = case_ids - {"absent", "empty", "disabled", "cfg_omitted", "compound"}
@@ -207,6 +232,52 @@ class TestMdqIndex(unittest.TestCase):
         self.assertEqual({out["reason"] for out in outputs}, set(expected))
         for out in outputs:
             self.assertEqual(set(out), expected[out["reason"]])
+
+    def test_bin_boundary_table(self):
+        controls = set(range(32)) | {127}
+        self.assertEqual(controls, set(range(32)) | {127})
+        values = (["to" + chr(c) + "ol" for c in controls] +
+                  [" mdq", "mdq ", " mdq ", "\u00a0mdq", "   ", "\ud800"])
+        for value in values:
+            for enabled in (True, False):
+                with self.subTest(value=repr(value), enabled=enabled):
+                    bindir = self.tmpdir()
+                    env, markers = sentinel_env(bindir, value, "mdq")
+                    before = [read_marker(marker) for marker in markers]
+                    out = run_script(self.repo, {"indexing": {"enabled": enabled,
+                                                               "bin": value}}, env)
+                    self.assertEqual(out["reason"], "invalid-config" if enabled else "disabled-by-config")
+                    self.assertEqual([read_marker(marker) for marker in markers], before)
+        bindir = self.tmpdir()
+        env, markers = sentinel_env(bindir, "custom-mdq", "mdq")
+        out = run_script(self.repo, {"indexing": {"enabled": False,
+                                                   "bin": "custom-mdq"}}, env)
+        self.assertEqual(out, {"mdqAvailable": False,
+                               "reason": "disabled-by-config"})
+        self.assertEqual([read_marker(marker) for marker in markers],
+                         [None] * len(markers))
+
+    def test_bin_positive_paths(self):
+        ids = {"space_path", "non_ascii_path", "quote_backslash", "dash_name"}
+        self.assertEqual(ids, {"space_path", "non_ascii_path", "quote_backslash", "dash_name"})
+        for case_id, name in (("space_path", "dir with space/mdq"),
+                              ("non_ascii_path", "émdq"),
+                              ("quote_backslash", 'q"\\mdq'),
+                              ("dash_name", "-x")):
+            bindir = self.tmpdir()
+            path = os.path.join(bindir, name)
+            make_exec(path, arg_logging_stub(0))
+            configured = "-x" if case_id == "dash_name" else path
+            arglog = os.path.join(bindir, "args.txt")
+            env = {"ARGLOG": arglog,
+                   "PATH": bindir + os.pathsep + os.environ["PATH"]}
+            if case_id == "non_ascii_path":
+                env["PYTHONIOENCODING"] = "ascii"
+            out = run_script(self.repo, {"indexing": {"bin": configured}}, env)
+            self.assertEqual(out["bin"], configured)
+            with open(arglog, encoding="utf-8") as handle:
+                calls = [line.rstrip("\n") for line in handle]
+            self.assertEqual(calls, ["index --root ."])
 
 
 if __name__ == "__main__":

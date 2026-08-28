@@ -60,7 +60,14 @@ def init_git_repo(repo):
 
 class TestGraphifyProbe(unittest.TestCase):
     def setUp(self):
-        self.repo = tempfile.mkdtemp()
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = self.temp.name
+
+    def tmpdir(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        return temp.name
 
     def test_not_installed_degrades(self):
         out = run_script(self.repo, {"docGraph": {"bin": "graphify-does-not-exist-zzz"}})
@@ -72,6 +79,7 @@ class TestGraphifyProbe(unittest.TestCase):
         out = run_script(self.repo, {"docGraph": {"enabled": False}})
         self.assertFalse(out["docGraphAvailable"])
         self.assertEqual(out["reason"], "disabled-by-config")
+        self.assertFalse(out["gitignoreOk"])
 
     def test_control_character_bins_are_rejected_or_normalized_when_disabled(self):
         for code in (*range(32), 127):
@@ -117,10 +125,29 @@ class TestGraphifyProbe(unittest.TestCase):
         self.assertFalse(out["gitignoreOk"])
 
     def _default_stub(self):
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         log = os.path.join(bindir, "calls.log")
         make_exec(os.path.join(bindir, "graphify"), '#!/usr/bin/env bash\necho "$@" >> "%s"\n' % log)
         return log, {"PATH": bindir + os.pathsep + os.environ["PATH"]}
+
+    def _sentinel_env(self, value):
+        bindir = self.tmpdir()
+        names = []
+        for name in ("graphify", value, value.strip()):
+            if not name or "\0" in name or name in names:
+                continue
+            try:
+                name.encode("utf-8")
+            except UnicodeEncodeError:
+                continue
+            names.append(name)
+        markers = []
+        for index, name in enumerate(names):
+            marker = os.path.join(bindir, "marker-%d" % index)
+            make_exec(os.path.join(bindir, name),
+                      '#!/bin/sh\nprintf called >> "%s"\n' % marker)
+            markers.append(marker)
+        return {"PATH": bindir + os.pathsep + os.environ["PATH"]}, markers
 
     def _assert_unavailable(self, out, reason, log):
         self.assertEqual(set(out), {"docGraphAvailable", "docGraphBin", "reason", "gitignoreOk"})
@@ -196,6 +223,83 @@ class TestGraphifyProbe(unittest.TestCase):
         """DoD (8): enabled:false has precedence over an invalid bin."""
         log, env = self._default_stub()
         self._assert_unavailable(run_script(self.repo, {"docGraph": {"enabled": False, "bin": []}}, env), "disabled-by-config", log)
+
+    def test_bin_boundary_table(self):
+        controls = set(range(32)) | {127}
+        self.assertEqual(controls, set(range(32)) | {127})
+        values = (["to" + chr(c) + "ol" for c in controls] +
+                  [" graphify", "graphify ", " graphify ",
+                   "\u00a0graphify", "   ", "\ud800"])
+        for value in values:
+            for enabled in (True, False):
+                with self.subTest(value=repr(value), enabled=enabled):
+                    env, markers = self._sentinel_env(value)
+                    out = run_script(self.repo, {"docGraph": {
+                        "enabled": enabled, "bin": value}}, env)
+                    self._assert_unavailable(
+                        out,
+                        "invalid-config" if enabled else "disabled-by-config",
+                        markers[0],
+                    )
+                    self.assertEqual(
+                        [os.path.exists(marker) for marker in markers],
+                        [False] * len(markers),
+                    )
+        env, markers = self._sentinel_env("custom-graphify")
+        out = run_script(self.repo, {"docGraph": {
+            "enabled": False, "bin": "custom-graphify"}}, env)
+        self.assertEqual(out, {"docGraphAvailable": False,
+                               "docGraphBin": "custom-graphify",
+                               "reason": "disabled-by-config",
+                               "gitignoreOk": False})
+        self.assertEqual([os.path.exists(marker) for marker in markers],
+                         [False] * len(markers))
+
+    def test_bin_positive_paths(self):
+        ids = {"space_path", "non_ascii_path", "quote_backslash", "dash_name"}
+        self.assertEqual(ids, {"space_path", "non_ascii_path",
+                               "quote_backslash", "dash_name"})
+        for case_id, name in (("space_path", "dir with space/graphify"),
+                              ("non_ascii_path", "égraphify"),
+                              ("quote_backslash", 'q"\\graphify'),
+                              ("dash_name", "-x")):
+            bindir = self.tmpdir()
+            path = os.path.join(bindir, name)
+            log = os.path.join(bindir, "calls.log")
+            make_exec(path, '#!/usr/bin/env bash\n'
+                      'echo "$@" >> "%s"\n'
+                      'exit 0\n' % log)
+            configured = "-x" if case_id == "dash_name" else path
+            env = {"PATH": bindir + os.pathsep + os.environ["PATH"]}
+            if case_id == "non_ascii_path":
+                env["PYTHONIOENCODING"] = "ascii"
+            out = run_script(self.repo, {"docGraph": {"bin": configured}}, env)
+            self.assertEqual(out["docGraphBin"], configured)
+            with open(log, encoding="utf-8") as handle:
+                calls = [line.rstrip("\n") for line in handle]
+            self.assertEqual(calls, ["update ."])
+
+    def test_output_key_sets_per_branch(self):
+        bindir = self.tmpdir()
+        ok = os.path.join(bindir, "ok")
+        failed = os.path.join(bindir, "failed")
+        make_exec(ok, update_stub(0))
+        make_exec(failed, update_stub(1))
+        outputs = [
+            run_script(self.repo, {}),
+            run_script(self.repo, {"docGraph": {"bin": "missing-graphify-cr2"}}),
+            run_script(self.repo, {"docGraph": {"enabled": False}}),
+            run_script(self.repo, {"docGraph": None}),
+            run_script(self.repo, {"docGraph": {"bin": ok}}),
+            run_script(self.repo, {"docGraph": {"bin": failed}}),
+        ]
+        expected_reasons = {"ok", "not-installed", "disabled-by-config",
+                            "update-failed", "not-configured", "invalid-config"}
+        self.assertEqual({out["reason"] for out in outputs}, expected_reasons)
+        for out in outputs:
+            self.assertEqual(set(out),
+                             {"docGraphAvailable", "docGraphBin", "reason",
+                              "gitignoreOk"})
 
 
 if __name__ == "__main__":

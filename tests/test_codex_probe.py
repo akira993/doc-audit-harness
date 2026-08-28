@@ -22,6 +22,27 @@ def read_marker(path):
         return f.read()
 
 
+def sentinel_env(bindir, value, default_name):
+    names = []
+    for name in (default_name, value, value.strip()):
+        if not name or "\0" in name or name in names:
+            continue
+        try:
+            name.encode("utf-8")
+        except UnicodeEncodeError:
+            continue
+        names.append(name)
+    markers = []
+    env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"])
+    for index, name in enumerate(names):
+        marker = os.path.join(bindir, "marker-%d" % index)
+        make_exec(os.path.join(bindir, name),
+                  '#!/bin/sh\nprintf called >> "$MARKER_%d"\n' % index)
+        env["MARKER_%d" % index] = marker
+        markers.append(marker)
+    return env, markers
+
+
 def version_stub(version="0.145.0-stub"):
     """A fake codex that answers both local-only probe commands."""
     return ('#!/usr/bin/env bash\n'
@@ -107,9 +128,9 @@ class TestCodexProbe(unittest.TestCase):
             "absent", "empty", "disabled", "en_str", "en_int", "en_null",
             "key_null", "key_true", "key_str", "key_list", "cfg_omitted",
             "cfg_empty", "cfg_missing", "cfg_broken", "top_list", "top_null",
-            "bin_int", "bin_empty", "bin_nul", "compound",
+            "bin_int", "bin_empty", "bin_nul", "compound", "bin_ws_lead", "bin_ws_trail", "bin_ws_both", "bin_ws_nbsp", "bin_wsonly", "bin_surrogate",
         }
-        self.assertEqual(len(case_ids), 20)
+        self.assertEqual(len(case_ids), 26)
         bindir = self.tmpdir()
         marker = os.path.join(bindir, "sentinel")
         make_exec(os.path.join(bindir, "codex"),
@@ -128,6 +149,7 @@ class TestCodexProbe(unittest.TestCase):
             "bin_int": {"codexReview": {"bin": 1}},
             "bin_empty": {"codexReview": {"bin": ""}},
             "bin_nul": '{"codexReview":{"bin":"bad\\u0000bin"}}',
+            "bin_ws_lead":{"codexReview":{"bin":" codex"}}, "bin_ws_trail":{"codexReview":{"bin":"codex "}}, "bin_ws_both":{"codexReview":{"bin":" codex "}}, "bin_ws_nbsp":{"codexReview":{"bin":"\u00a0codex"}}, "bin_wsonly":{"codexReview":{"bin":"   "}}, "bin_surrogate":'{"codexReview":{"bin":"\\ud800"}}',
             "compound": {"codexReview": {"enabled": False, "bin": []}},
         }
         invalid = case_ids - {"absent", "empty", "disabled", "cfg_omitted", "compound"}
@@ -232,7 +254,7 @@ class TestCodexProbe(unittest.TestCase):
 
     def test_json_escaping_of_bin_and_home(self):
         bindir = self.tmpdir()
-        stub = os.path.join(bindir, 'codex\n"\\stub')
+        stub = os.path.join(bindir, 'codex "\\stub')
         caller = os.path.join(bindir, 'home\n"\\caller')
         make_exec(stub, version_stub('v\n"\\special'))
         os.makedirs(caller)
@@ -242,6 +264,57 @@ class TestCodexProbe(unittest.TestCase):
         self.assertEqual(out["callerCodexHome"], caller)
         self.assertEqual(out["probeCommands"],
                          [stub + " --version", stub + " exec --help"])
+
+    def test_bin_boundary_table(self):
+        controls = set(range(32)) | {127}
+        self.assertEqual(controls, set(range(32)) | {127})
+        values = (["to" + chr(c) + "ol" for c in controls] +
+                  [" codex", "codex ", " codex ", "\u00a0codex", "   ", "\ud800"])
+        for value in values:
+            for enabled in (True, False):
+                with self.subTest(value=repr(value), enabled=enabled):
+                    bindir = self.tmpdir()
+                    env, markers = sentinel_env(bindir, value, "codex")
+                    before = [read_marker(marker) for marker in markers]
+                    out = run_script(self.repo, {"codexReview": {"enabled": enabled,
+                                                                  "bin": value}}, env)
+                    self.assertEqual(out["reason"], "invalid-config" if enabled else "disabled-by-config")
+                    self.assertEqual([read_marker(marker) for marker in markers], before)
+        bindir = self.tmpdir()
+        env, markers = sentinel_env(bindir, "custom-codex", "codex")
+        out = run_script(self.repo, {"codexReview": {"enabled": False,
+                                                      "bin": "custom-codex"}}, env)
+        self.assertEqual(out["codexReviewBin"], "codex")
+        self.assertEqual(out["reason"], "disabled-by-config")
+        self.assertEqual([read_marker(marker) for marker in markers],
+                         [None] * len(markers))
+
+    def test_bin_positive_paths(self):
+        ids = {"space_path", "non_ascii_path", "quote_backslash", "dash_name"}
+        self.assertEqual(ids, {"space_path", "non_ascii_path", "quote_backslash", "dash_name"})
+        for case_id, name in (("space_path", "dir with space/codex"),
+                              ("non_ascii_path", "écodex"),
+                              ("quote_backslash", 'q"\\codex'),
+                              ("dash_name", "-x")):
+            bindir = self.tmpdir()
+            path = os.path.join(bindir, name)
+            arglog = os.path.join(bindir, "args.txt")
+            make_exec(path, '#!/usr/bin/env bash\n'
+                      'echo "$@" >> "$ARGLOG"\n'
+                      'if [[ "$1" == "--version" ]]; then echo 0.145.0-stub; exit 0; fi\n'
+                      'if [[ "$1" == "exec" && "$2" == "--help" ]]; then exit 0; fi\n'
+                      'exit 2\n')
+            configured = "-x" if case_id == "dash_name" else path
+            env = {"ARGLOG": arglog,
+                   "PATH": bindir + os.pathsep + os.environ["PATH"]}
+            if case_id == "non_ascii_path":
+                env["PYTHONIOENCODING"] = "ascii"
+            out = run_script(self.repo, {"codexReview": {"bin": configured}}, env)
+            self.assertTrue(out["codexReviewAvailable"])
+            self.assertEqual(out["codexReviewBin"], configured)
+            with open(arglog, encoding="utf-8") as handle:
+                calls = [line.rstrip("\n") for line in handle]
+            self.assertEqual(calls, ["--version", "exec --help"])
 
 
 if __name__ == "__main__":

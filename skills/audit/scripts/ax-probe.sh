@@ -35,14 +35,17 @@ try:
             if seam.get("enabled") is False: state="disabled"
             elif "bin" in seam:
                 value=seam["bin"]
-                if not isinstance(value,str) or not value or "\0" in value: raise ValueError
+                if (not isinstance(value,str) or not value or value != value.strip()
+                    or any(ord(c) <= 31 or ord(c) == 127 for c in value)): raise ValueError
+                value.encode("utf-8")
                 binary=value
 except Exception:
     state="invalid"; binary="ax"
-print(state+"\t"+base64.b64encode(binary.encode()).decode())
+line=state+"\t"+base64.b64encode(binary.encode("utf-8")).decode("ascii")+"\n"
+sys.stdout.buffer.write(line.encode("utf-8"))
 ' "$CONFIG_SET" "$CONFIG")"
 IFS=$'\t' read -r CONFIG_STATE BIN_B64 <<< "$DECISION"
-BIN="$(python3 -c 'import base64,sys; print(base64.b64decode(sys.argv[1]).decode(),end="")' "$BIN_B64")"
+BIN="$(python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.argv[1]))' "$BIN_B64")"
 
 if [[ "$CONFIG_STATE" == "invalid" ]]; then
   printf '{"axAvailable":false,"axBin":"ax","axVersion":null,"reason":"invalid-config"}\n'
@@ -53,12 +56,12 @@ if [[ "$CONFIG_STATE" == "disabled" ]]; then
   exit 0
 fi
 
-if ! command -v "$BIN" >/dev/null 2>&1; then
-  python3 -c 'import json,sys; print(json.dumps({"axAvailable":False,"axBin":sys.argv[1],"axVersion":None,"reason":"not-installed"}))' "$BIN"
+if ! command -v -- "$BIN" >/dev/null 2>&1; then
+  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"axAvailable":False,"axBin":sys.argv[1],"axVersion":None,"reason":"not-installed"}, ensure_ascii=False)+"\n").encode("utf-8"))' "$BIN"
   exit 0
 fi
 
 # `ax --version` reports the local binary version only — no network call.
 VERSION="$("$BIN" --version 2>/dev/null | tr -d '\r' | head -n1)"
-python3 -c 'import json,sys; print(json.dumps({"axAvailable":True,"axBin":sys.argv[1],"axVersion":sys.argv[2],"reason":"ok"}))' "$BIN" "$VERSION"
+python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"axAvailable":True,"axBin":sys.argv[1],"axVersion":sys.argv[2],"reason":"ok"}, ensure_ascii=False)+"\n").encode("utf-8"))' "$BIN" "$VERSION"
 exit 0

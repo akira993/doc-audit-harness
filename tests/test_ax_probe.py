@@ -22,6 +22,27 @@ def read_marker(path):
         return f.read()
 
 
+def sentinel_env(bindir, value, default_name):
+    names = []
+    for name in (default_name, value, value.strip()):
+        if not name or "\0" in name or name in names:
+            continue
+        try:
+            name.encode("utf-8")
+        except UnicodeEncodeError:
+            continue
+        names.append(name)
+    markers = []
+    env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"])
+    for index, name in enumerate(names):
+        marker = os.path.join(bindir, "marker-%d" % index)
+        make_exec(os.path.join(bindir, name),
+                  '#!/bin/sh\nprintf called >> "$MARKER_%d"\n' % index)
+        env["MARKER_%d" % index] = marker
+        markers.append(marker)
+    return env, markers
+
+
 def version_stub(version="0.1.10-stub"):
     """A fake ax that answers --version without touching the network."""
     return ('#!/usr/bin/env bash\n'
@@ -90,9 +111,9 @@ class TestAxProbe(unittest.TestCase):
             "absent", "empty", "disabled", "en_str", "en_int", "en_null",
             "key_null", "key_true", "key_str", "key_list", "cfg_omitted",
             "cfg_empty", "cfg_missing", "cfg_broken", "top_list", "top_null",
-            "bin_int", "bin_empty", "bin_nul", "compound",
+            "bin_int", "bin_empty", "bin_nul", "compound", "bin_ws_lead", "bin_ws_trail", "bin_ws_both", "bin_ws_nbsp", "bin_wsonly", "bin_surrogate",
         }
-        self.assertEqual(len(case_ids), 20)
+        self.assertEqual(len(case_ids), 26)
         bindir = self.tmpdir()
         marker = os.path.join(bindir, "sentinel")
         make_exec(os.path.join(bindir, "ax"),
@@ -111,6 +132,7 @@ class TestAxProbe(unittest.TestCase):
             "bin_int": {"webExtract": {"bin": 1}},
             "bin_empty": {"webExtract": {"bin": ""}},
             "bin_nul": '{"webExtract":{"bin":"bad\\u0000bin"}}',
+            "bin_ws_lead":{"webExtract":{"bin":" ax"}}, "bin_ws_trail":{"webExtract":{"bin":"ax "}}, "bin_ws_both":{"webExtract":{"bin":" ax "}}, "bin_ws_nbsp":{"webExtract":{"bin":"\u00a0ax"}}, "bin_wsonly":{"webExtract":{"bin":"   "}}, "bin_surrogate":'{"webExtract":{"bin":"\\ud800"}}',
             "compound": {"webExtract": {"enabled": False, "bin": []}},
         }
         invalid = case_ids - {"absent", "empty", "disabled", "cfg_omitted", "compound"}
@@ -157,6 +179,55 @@ class TestAxProbe(unittest.TestCase):
                           "not-installed", "ok"})
         for out in outputs:
             self.assertEqual(set(out), expected)
+
+    def test_bin_boundary_table(self):
+        controls = set(range(32)) | {127}
+        self.assertEqual(controls, set(range(32)) | {127})
+        values = (["to" + chr(c) + "ol" for c in controls] +
+                  [" ax", "ax ", " ax ", "\u00a0ax", "   ", "\ud800"])
+        for value in values:
+            for enabled in (True, False):
+                with self.subTest(value=repr(value), enabled=enabled):
+                    bindir = self.tmpdir()
+                    env, markers = sentinel_env(bindir, value, "ax")
+                    before = [read_marker(marker) for marker in markers]
+                    out = run_script(self.repo, {"webExtract": {"enabled": enabled,
+                                                                 "bin": value}}, env)
+                    self.assertEqual(out["reason"], "invalid-config" if enabled else "disabled-by-config")
+                    self.assertEqual([read_marker(marker) for marker in markers], before)
+        bindir = self.tmpdir()
+        env, markers = sentinel_env(bindir, "custom-ax", "ax")
+        out = run_script(self.repo, {"webExtract": {"enabled": False,
+                                                     "bin": "custom-ax"}}, env)
+        self.assertEqual(out["axBin"], "ax")
+        self.assertEqual(out["reason"], "disabled-by-config")
+        self.assertEqual([read_marker(marker) for marker in markers],
+                         [None] * len(markers))
+
+    def test_bin_positive_paths(self):
+        ids = {"space_path", "non_ascii_path", "quote_backslash", "dash_name"}
+        self.assertEqual(ids, {"space_path", "non_ascii_path", "quote_backslash", "dash_name"})
+        for case_id, name in (("space_path", "dir with space/ax"),
+                              ("non_ascii_path", "éax"),
+                              ("quote_backslash", 'q"\\ax'),
+                              ("dash_name", "-x")):
+            bindir = self.tmpdir()
+            path = os.path.join(bindir, name)
+            arglog = os.path.join(bindir, "args.txt")
+            make_exec(path, '#!/usr/bin/env bash\n'
+                      'echo "$@" >> "$ARGLOG"\n'
+                      'echo 0.1.10-stub\n')
+            configured = "-x" if case_id == "dash_name" else path
+            env = {"ARGLOG": arglog,
+                   "PATH": bindir + os.pathsep + os.environ["PATH"]}
+            if case_id == "non_ascii_path":
+                env["PYTHONIOENCODING"] = "ascii"
+            out = run_script(self.repo, {"webExtract": {"bin": configured}}, env)
+            self.assertTrue(out["axAvailable"])
+            self.assertEqual(out["axBin"], configured)
+            with open(arglog, encoding="utf-8") as handle:
+                calls = [line.rstrip("\n") for line in handle]
+            self.assertEqual(calls, ["--version"])
 
 
 if __name__ == "__main__":

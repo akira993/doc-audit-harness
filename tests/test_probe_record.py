@@ -220,6 +220,7 @@ class TestProbeRecord(unittest.TestCase):
         self.assertEqual(invalid.returncode, 2)
         link = self.root + "-link"
         os.symlink(self.root, link)
+        self.addCleanup(os.unlink, link)
         accepted = self.command("--read", root=link)
         self.assertEqual(accepted.returncode, 0, accepted.stderr)
 

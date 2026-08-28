@@ -121,7 +121,7 @@ If `AskUserQuestion` is unavailable in this session (non-interactive), or the us
 in grep-degrade mode as before, but bind `MDQ_DEGRADE="non-interactive"` so the Phase-5 mdq
 status line surfaces the unconfirmed degrade instead of staying silent about it. When the
 gate does not fire, or is skipped because PHASE3_BACKEND_CONFIG is codex, bind `MDQ_DEGRADE="n/a"`.
-Whether the gate fired, did not fire, or was skipped because PHASE3_BACKEND_CONFIG is codex, always record the resulting MDQ_DEGRADE:
+Whether the gate fired, did not fire, or was skipped because PHASE3_BACKEND_CONFIG is codex, always record the resulting MDQ_DEGRADE (except on the gate's "Fix mdq first" branch, which releases the run and ends the audit before anything is recorded):
 `printf '{"degrade":"%s"}' "$MDQ_DEGRADE" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam mdqDegrade --stdin >/dev/null || echo "⚠ probe-record: mdqDegrade not recorded [non-blocking]"`.
 
 Then probe **context-mode** (complementary to mdq — mdq optimizes Markdown *reads*,
@@ -151,7 +151,7 @@ Like the mdq probe this is report-only and **never fatal** — any failure falls
 `CM_AVAILABLE=false`/`CM_STATUS=probe-error` and the audit continues. These bind
 `CM_AVAILABLE`/`CM_STATUS` for Phases 2/3/4 and the Phase-5 context-mode status line;
 `CM_HEALTHY` is bound only in the central `ctx_*`-available branch above.
-After the context-mode branch has bound its values, synthesize `CM_PROBE_JSON` with JSON boolean/null values, not quoted text: when `CM_AVAILABLE` is false, `contextModeHealthy` is always `null`; when `CM_AVAILABLE` is true and `CM_HEALTHY` is unbound, normalize to `contextModeHealthy:false` and `status:"probe-error"`; otherwise use the bound healthy value and status. Record it:
+After the context-mode branch has bound its values, synthesize `CM_PROBE_JSON` as exactly `{"contextModeAvailable":<CM_AVAILABLE>,"contextModeHealthy":<bool or null>,"status":"<CM_STATUS>"}` (JSON boolean/null values, not quoted text): when `CM_AVAILABLE` is false, `contextModeHealthy` is always `null`; when `CM_AVAILABLE` is true and `CM_HEALTHY` is unbound, normalize to `contextModeHealthy:false` and `status:"probe-error"`; otherwise use the bound values. Record it:
 `printf '%s' "$CM_PROBE_JSON" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam contextMode --stdin >/dev/null || echo "⚠ probe-record: contextMode not recorded [non-blocking]"`.
 
 Then probe **ax** (`~/.local/bin/ax`, a CLI for structured web/API extraction — the doc-impact-
@@ -642,6 +642,9 @@ it and is the SOLE writer of the anchor and report.
 
 Before constructing any status line, run
 `PROBE_REBIND="$(python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --read)"`.
+
+Within each status-line table the first matching bullet wins: the whole-record unknown bullet (when the table has one) comes first, the invalid-config bullet second, then the remaining states; for codex-review use invalid-config → review-state-not-recorded → probe-record-unavailable → 4-way.
+
 If that read fails, use the script's seven unknown-shaped values for every status line and continue.
 For both fresh and resumed runs, bind the Phase-5 inputs exclusively from `PROBE_REBIND.rebind`:
 `mdq`, `context-mode`, `ax`, `codex-review`, `symbol-graph`, `doc-graph`, and `semantic-search`,
@@ -723,7 +726,6 @@ placeholder is present, otherwise immediately after the rendered date. The gate 
 this suffix contract inside its lock-held report publication interval.
 
 **mdq status line** — always include exactly one; it is **non-blocking** (never changes the verdict). If Phase 0's confirmation gate fired, append the matching `MDQ_DEGRADE` suffix below to whichever base line applies (omit the suffix when `MDQ_DEGRADE` is `n/a`):
-Within each status-line table the first matching bullet wins: the whole-record unknown bullet (when the table has one) comes first, the `invalid-config` bullet second, then the remaining states. The codex-review table has no whole-record unknown bullet: its order is invalid-config → reviewState=null → the four CODEX_REVIEW_STATE branches, and rebind.codex-review.state=unknown only replaces the caller suffix with the unavailable form.
 - `rebind.mdq.state=unknown` → `⚠ mdq: state unknown (probe record unavailable) [non-blocking]`
 - `MDQ_REASON=invalid-config` → `⚠ mdq: doc-audit.json indexing is invalid — mdq not probed this run; fix the key. [non-blocking]`
 - `MDQ_AVAILABLE` false → `💡 mdq: not active — docs read in full. Install mdq for Phase-0 indexed, chunked reads (~90%+ token savings on large docs): clone github.com/dahatake/skills and run its ./setup/setup-markdown-query.sh`
@@ -749,20 +751,17 @@ Within each status-line table the first matching bullet wins: the whole-record u
 **4-way display** over the five internal states and, unlike the mdq/context-mode/ax
 lines, the findings it summarizes may already have contributed to the verdict via Phase 4 step 3
 — word it so this isn't read as another purely-advisory line:
-- `rebind.codex-review.reason=invalid-config` → `⚠ codex-review: doc-audit.json codexReview is invalid — not probed this run; fix the key. [non-blocking]`
-- `rebind.codex-review.reviewState=null` → `⚠ codex-review: state unknown (probe record unavailable) [non-blocking]`
-- `CODEX_REVIEW_STATE=phase4-not-required` → `💡 codex-review: not run (phase 4 not required)`
-- `CODEX_REVIEW_STATE=not-active` → `💡 codex-review: not active (<CODEX_REVIEW_REASON>)`
-- `CODEX_REVIEW_STATE=skipped-full-run` → `💡 codex-review: skipped (full run without codexReview.required)`
-- `CODEX_REVIEW_STATE=completed` → `✓ codex-review: completed (findings included in verdict when present)`
-- `CODEX_REVIEW_STATE` ∈ `{execution-failed, ref-invalid}` → `⚠ codex-review: did not run (<CODEX_REVIEW_STATE>) — findings not folded [non-blocking unless codexReview.required]`
-When `rebind.codex-review.available` is true, append to every branch
+- `rebind.codex-review.state=complete` and `rebind.codex-review.reason=invalid-config` (any `reviewState`) → `⚠ codex-review: doc-audit.json codexReview is invalid — not probed this run; fix the key. [non-blocking]`
+- `rebind.codex-review.state=complete` and `rebind.codex-review.reviewState=null` → `⚠ codex-review: review state not recorded [non-blocking]`, with the recorded caller suffix.
+- `rebind.codex-review.state=unknown` and `rebind.codex-review.reviewState=null` → `⚠ codex-review: state unknown (probe record unavailable) [non-blocking]`, with no suffix.
+- `rebind.codex-review.state=complete` and `rebind.codex-review.reviewState` is non-null → 4-way: `phase4-not-required` is `💡 codex-review: not run (phase 4 not required)`; `not-active` is `💡 codex-review: not active (<rebind.codex-review.reason>)`; `skipped-full-run` is `💡 codex-review: skipped (full run without codexReview.required)`; `completed` is `✓ codex-review: completed (findings included in verdict when present)`; and `execution-failed`/`ref-invalid` is `⚠ codex-review: did not run (<rebind.codex-review.reviewState>) — findings not folded [non-blocking unless codexReview.required]`. When `rebind.codex-review.available` is true, append the caller suffix.
+- `rebind.codex-review.state=unknown` and `rebind.codex-review.reviewState` is non-null → the same 4-way, except `not-active` is `💡 codex-review: not active (reason unavailable)` and append ` (caller info unavailable)` only when `reviewState` ∈ `{completed, execution-failed}`.
+The four-way state aliases are `CODEX_REVIEW_STATE=phase4-not-required`, `CODEX_REVIEW_STATE=not-active`, `CODEX_REVIEW_STATE=skipped-full-run`, `CODEX_REVIEW_STATE=completed`, and `CODEX_REVIEW_STATE` ∈ `{execution-failed, ref-invalid}`.
+The recorded caller suffix is
 ` (caller CODEX_HOME=<rebind.codex-review.callerCodexHomeDisplay> [<rebind.codex-review.callerCodexHomeSource>]; auth.json <rebind.codex-review.callerAuthFile>)`;
 all three values come from `rebind`. A null caller home is displayed as `(null)`. When
 `CODEX_REVIEW_STATE=execution-failed` and `rebind.codex-review.callerAuthFile=absent`, also append
 ` — no auth.json at the caller's CODEX_HOME: the calling shell may lack a direnv hook, and a wrapper's own environment is not visible to the probe; check the environment before suspecting the config`.
-When `rebind.codex-review.state=unknown` but its `reviewState` is non-null, render the matching
-4-way line with the suffix ` (caller info unavailable)` rather than caller details.
 
 A `⚠ probe-record: <seam> not recorded` warning earlier in the run explains a later unknown line; do not substitute conversation values.
 
