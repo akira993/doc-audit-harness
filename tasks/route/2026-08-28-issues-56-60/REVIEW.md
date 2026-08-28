@@ -126,3 +126,10 @@
 - R2: Release notes 3 行目のキーワード羅列を文章化。
 - R3: worker 報告 Ran 580 OK skip 0。boss 再実測 `s2-full-tests-v.log` **Ran 580 tests OK, skipped 0 行**、`test_v014_behavior_changes_paragraph` 実行確認、scaffold stamp 0.14.0、`bash -n` handoff OK、旧定数不在、`0.13.2` 残存は `tests/test_v0131_docs_contracts.py:91`（test_g の期待集合）のみ＝正当（PLAN §0-10 の allowlist に追記扱い）。
 - diff 精読: plugin.json、ADOPTION en/ja（表示行・refresh・§7 6 文）、engine-shas 0.14.0（3 hash は 0.13.2 と同値）、test_scaffold/test_v013（:201・:210・:215）、test_release_handoff 再標的（path・tag・title・ISSUES {57,58,60}・notes 完全一致 2 文＋必須語 8）、release-handoff.sh（v0.13.2 版と機能同一、版・Issue・notes のみ差し替え）。
+
+## 最終レビュー（手順 5: `codex exec review --base main -m gpt-5.6-sol -c model_reasoning_effort=high`、session `01a047a9-2aa6-7cf3-980a-d7deec8e441b`）
+- P2-1 `rebind.codex-review` に `bin` が無く、N5 の再開復元で `CODEX_REVIEW_BIN`（wrapper）を戻せない → S1b セッションへ差し戻し（feedback3）
+- P2-2 `SEALED_PHASE4_REQUIRED=false` の run で `codexReview` の `invalid-config` が `phase 4 not required` 表示に隠れる → Phase-5 codex 行の先頭に `⚠ codex-review: doc-audit.json codexReview is invalid …` 枝を追加、順序 assert
+- 判定: **差し戻し（S1b R4）**
+- S1b R4（最終レビュー P2 対応）— 承認（commit `7a1d532`）: `rebind.codex-review.bin`（complete＝`codexReviewBin`、unknown＝null）、Phase-5 codex 行の先頭に `invalid-config` 枝、順序 assert。boss 再実測 `final-full-tests-v.log` **Ran 580 tests OK, skipped 0 行**、diff 精読一致。
+- 最終判定: **承認**
