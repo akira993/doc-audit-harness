@@ -148,3 +148,13 @@
 ## 追補: PR #61 merge 後の `/code-review`（ユーザー実行、2026-08-28）
 - PR #61 は `ef995f0` で merge 済み（tag 未作成）。code-review 所見 10 件（CONFIRMED 6・PLAUSIBLE 4、最高 medium）。根本原因: 「Phase 5 は rebind のみ」×「記録は fail-open」で、再開していない run にも unknown 行が出る（#1 harness 辞退の run 再取得で記録消失、#2 codex backend で MDQ_DEGRADE 未束縛、#3 contextMode validator の厳格さ、#4 codexReviewState 書き込み失敗、#6 接尾辞 gating が会話変数）。他: #5 状態行の優先順位、#7 ensure_ascii、#8 graph 3 probe の NUL、#9 「Rows 6–8」の宙吊り参照、#10 判定ブロック三重化＋python 3 回起動。
 - ユーザー指示: 修正計画 → Sol → Opus → 実装 → commit → ユーザーが再 code-review。計画 `PLAN-cr1.md`（branch `fix/v0.14.0-code-review-followup`、版 0.14.0 据え置き、handoff は fix PR の merge 後）。
+### Sol CR1-R1（PLAN-cr1 rev.1 → rev.2）— (A) 10 件・(B) 2 件
+- CR1-1 A1 のフレッシュ run 判定は決定不能・安全側でない → A1 撤回（情報源は rebind のみ、判定不能は unknown）
+- CR1-2 reopen 後の再記録元が保証されない → 「新 run で Phase 0 を丸ごと再実行」に変更
+- CR1-3 `available:true, healthy:null` は表示不能 → validator は据え置き、SKILL 側で正規化（false→null 固定、未束縛→false/probe-error）
+- CR1-4 ensure_ascii=False は U+0085/2028/2029 で 1 行性を破る → C7 不採用、回帰テストのみ
+- CR1-5 graph probe の行指向伝送は改行で切断 → `bin` の制御文字を invalid-config に（NUL・改行・タブのテスト）
+- CR1-6〜8 D10 共有ヘルパーは完全同値の証明が無く共通障害を増やす → 別 refactor route へ分離
+- CR1-9/10 DoD (7)〜(9) が失敗を捨てる → rc 保存＋`|| exit 1`、scope-check.py（cr1 用 allowlist）で集合比較
+- CR1-11 graph probe 全分岐のキー集合検査 → 追加／CR1-12 mkdtemp は機械判定（grep 0）
+- 判定: **差し戻し（rev.2 で再批判）**
