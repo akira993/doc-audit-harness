@@ -183,3 +183,4 @@
 - O1 §A4 の en 引用 `prints` は実ファイル `print` → 引用句のみ置換・周辺不変を明記／O2 共通規則文の literal が DoD「ちょうど 1 回」と矛盾 → 規則文から literal を外す／O3 `mdqDegrade` の記録文も無条件化（`make_rebind` は両記録が必要）／O4 config-schema の追記先は表 3 行のみ（`Its probe reasons are` 以降は test_v0132 が固定）
 - N2/N3 graph 3 表の並べ替えは無意味・CM/AX の現状記述誤り → 並べ替え撤回、現行順序 assert／N1 harness 辞退時の Phase 0 再実行コスト → 最終報告に運用注記／N4 33 文字 ×2 の実行コスト → 全数維持（約 30 秒）
 - 判定: **rev.7 で実装承認（Opus「設計差し替え不要」）**
+- 実装セッション cr1（Terra workspace-write, medium）: session `01a04809-a942-7dd3-8f0c-e7597cd5aeba`（起動 2026-08-28T11:03:15Z）
