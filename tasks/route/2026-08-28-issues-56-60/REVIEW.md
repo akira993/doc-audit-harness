@@ -207,3 +207,6 @@
 ### Sol cr2-R3（rev.3 → rev.4）— (A) 6 件・(B) 1 件、いずれも検査精度
 - CR2-22 既存テスト名の基準を cr1 実装 `04a0624` に／CR2-23 TestCase メソッドのみ＋`-v` ログで実行 ID 各 1 回／CR2-24 正例 ID 集合・制御文字集合を in-test 完全一致／CR2-25 文書は ASCII 制御文字に限定／CR2-26 schema 6 行を契約テストで固定／CR2-27 AST は全ブロック再帰／CR2-28 sentinel は既定名 stub を PATH に
 - 判定: **差し戻し（rev.4 で R4）**
+### Sol cr2-R4（rev.4 → rev.5）— (A) 8 件、すべて検査精度
+- CR2-29 `... ok` の厳密判定＋expected failure 0／CR2-30 既存テストも実行確認／CR2-31 sentinel はカスタム bin・trim 後名も marker／CR2-32 空白位置別 ID（lead/trail/both/nbsp）＋制御文字は途中配置／CR2-33 scope-check がディレクトリ項目も lstat（boss 修正・baseline 再生成）／CR2-34 ADOPTION ⑦ は旧 reason を断定しない／CR2-35 schema テスト名を REQ に／CR2-36 graph reason 集合を固定
+- 判定: **差し戻し（rev.5 で最終 R5）**

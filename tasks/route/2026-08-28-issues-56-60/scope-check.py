@@ -26,10 +26,13 @@ roots=['.envrc','.gitignore','.claude/settings.local.json','data','.serena','doc
 def enum():
     out={}
     for r in roots:
-        paths=[r] if not os.path.isdir(r) else [os.path.join(d,f) for d,_,fs in os.walk(r) for f in fs]
+        paths=[r]
+        if os.path.isdir(r) and not os.path.islink(r):
+            for d,ds,fs in os.walk(r):
+                paths+= [os.path.join(d,x) for x in ds]+[os.path.join(d,x) for x in fs]
         for p in paths:
             if not os.path.lexists(p): continue
-            s=os.lstat(p); kind='symlink' if stat.S_ISLNK(s.st_mode) else 'file' if stat.S_ISREG(s.st_mode) else 'other'
+            s=os.lstat(p); kind='symlink' if stat.S_ISLNK(s.st_mode) else 'file' if stat.S_ISREG(s.st_mode) else 'dir' if stat.S_ISDIR(s.st_mode) else 'other'
             h=hashlib.sha256(open(p,'rb').read()).hexdigest() if kind=='file' else hashlib.sha256(os.readlink(p).encode() if kind=='symlink' else b'').hexdigest()
             out[p]=(h,oct(stat.S_IMODE(s.st_mode)),kind)
     return out
