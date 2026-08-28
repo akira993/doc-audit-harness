@@ -5,10 +5,11 @@ T='tasks/route/2026-08-28-issues-56-60/'
 def show(c,p): return subprocess.run(['git','show',f'{c}:{p}'],capture_output=True,text=True,check=True).stdout
 def z(cmd): return [p for p in subprocess.run(cmd,capture_output=True,text=True,check=True).stdout.split('\0') if p]
 allow={l.strip() for l in show(os.environ['SCOPE_COMMIT'],T+'allowlist.txt').splitlines() if l.strip() and not l.startswith('#')}|{T+'release-handoff.sh'}
-logs=[T+'*-session.log',T+'*-prompt.md',T+'*-answer.md',T+'investigate-*',T+'*.log',T+'*-report.md',T+'stage*']
-boss_docs=[T+n for n in ('PLAN.md','REVIEW.md','allowlist.txt','baseline-hashes.txt','59-design-note.md','scope-check.py')]
+logs=[T+'*-session.log',T+'*-prompt.md',T+'*-answer.md',T+'investigate-*',T+'*.log',T+'*-report.md',T+'*-report[0-9].md',T+'stage*',T+'final-review.md',T+'pr-body*.md']
+boss_docs=[T+n for n in ('PLAN.md','PLAN-cr1.md','REVIEW.md','allowlist.txt','baseline-hashes.txt','59-design-note.md','scope-check.py')]
 bad=[]
-changed=set(z(['git','diff','--name-only','-z','dfdb8a9','HEAD']))
+BASE=os.environ.get('BASE_COMMIT','dfdb8a9')
+changed=set(z(['git','diff','--name-only','-z',BASE,'HEAD']))
 st=z(['git','status','--porcelain=v1','-z','--untracked-files=all']); i=0
 while i<len(st):
     code,path=st[i][:2],st[i][3:]; changed.add(path)
