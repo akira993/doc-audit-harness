@@ -59,7 +59,7 @@ except Exception:
 ' "$CONFIG")
 
 emit() { python3 -c 'import json,sys
-line=json.dumps({"semanticSearchAvailable":sys.argv[1] == "true", "semanticSearchBin":sys.argv[2], "reason":sys.argv[3]}, separators=(",", ":"), ensure_ascii=False)+"\n"
+line=json.dumps({"semanticSearchAvailable":sys.argv[1] == "true", "semanticSearchBin":sys.argv[2], "reason":sys.argv[3]}, separators=(",", ":"))+"\n"
 line.encode("utf-8"); sys.stdout.buffer.write(line.encode("utf-8"))' "$@"; }
 
 if [[ "$STATE" != "enabled" ]]; then

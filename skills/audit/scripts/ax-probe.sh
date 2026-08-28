@@ -57,11 +57,11 @@ if [[ "$CONFIG_STATE" == "disabled" ]]; then
 fi
 
 if ! command -v -- "$BIN" >/dev/null 2>&1; then
-  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"axAvailable":False,"axBin":sys.argv[1],"axVersion":None,"reason":"not-installed"}, ensure_ascii=False)+"\n").encode("utf-8"))' "$BIN"
+  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"axAvailable":False,"axBin":sys.argv[1],"axVersion":None,"reason":"not-installed"})+"\n").encode("utf-8"))' "$BIN"
   exit 0
 fi
 
 # `ax --version` reports the local binary version only — no network call.
 VERSION="$("$BIN" --version 2>/dev/null | tr -d '\r' | head -n1)"
-python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"axAvailable":True,"axBin":sys.argv[1],"axVersion":sys.argv[2],"reason":"ok"}, ensure_ascii=False)+"\n").encode("utf-8"))' "$BIN" "$VERSION"
+python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"axAvailable":True,"axBin":sys.argv[1],"axVersion":sys.argv[2],"reason":"ok"})+"\n").encode("utf-8"))' "$BIN" "$VERSION"
 exit 0

@@ -61,7 +61,7 @@ if [[ "$CONFIG_STATE" == "disabled" ]]; then
 fi
 
 if ! command -v -- "$BIN" >/dev/null 2>&1; then
-  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"mdqAvailable":False,"reason":"not-installed","bin":sys.argv[1]}, ensure_ascii=False)+"\n").encode("utf-8"))' "$BIN"
+  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"mdqAvailable":False,"reason":"not-installed","bin":sys.argv[1]})+"\n").encode("utf-8"))' "$BIN"
   exit 0
 fi
 
@@ -94,12 +94,12 @@ fi
 ERRF="$(mktemp "${TMPDIR:-/tmp}/mdq_index_err.XXXXXX")"
 trap 'rm -f "$ERRF"' EXIT
 if ( cd "$REPO_ROOT" && PYTHONUTF8=1 PYTHONIOENCODING=utf-8 "$BIN" index "${ROOT_ARGS[@]}" ) >/dev/null 2>"$ERRF"; then
-  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"mdqAvailable":True,"reason":"indexed","bin":sys.argv[1],"dbDir":".mdq"}, ensure_ascii=False)+"\n").encode("utf-8"))' "$BIN"
+  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"mdqAvailable":True,"reason":"indexed","bin":sys.argv[1],"dbDir":".mdq"})+"\n").encode("utf-8"))' "$BIN"
   exit 0
 else
   rc=$?
   TAIL="$(tail -n 3 "$ERRF" 2>/dev/null | tr '\n' ' ' | tr -d '"\\' | tr -d '[:cntrl:]')"
   echo "mdq index failed (rc=$rc): $TAIL" >&2
-  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"mdqAvailable":False,"reason":"index-failed","rc":int(sys.argv[2]),"bin":sys.argv[1]}, ensure_ascii=False)+"\n").encode("utf-8"))' "$BIN" "$rc"
+  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"mdqAvailable":False,"reason":"index-failed","rc":int(sys.argv[2]),"bin":sys.argv[1]})+"\n").encode("utf-8"))' "$BIN" "$rc"
   exit 0
 fi

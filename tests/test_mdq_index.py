@@ -83,6 +83,29 @@ class TestMdqIndex(unittest.TestCase):
         self.assertFalse(out["mdqAvailable"])
         self.assertEqual(out["reason"], "not-installed")
 
+    def test_json_emit_is_ascii_one_line(self):
+        def invoke(bin_name, env=None):
+            cfg = os.path.join(self.repo, ".claude", "json-emit.json")
+            write(cfg, json.dumps({"indexing": {"bin": bin_name}}))
+            proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+                                  capture_output=True, env=env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(proc.stdout.isascii())
+            self.assertEqual(len(proc.stdout.decode().splitlines()), 1)
+            out = json.loads(proc.stdout)
+            self.assertEqual(out["bin"], bin_name)
+            return out
+
+        self.assertEqual(invoke("to\u2028ol-none")["reason"], "not-installed")
+        bindir = self.tmpdir()
+        name = "to\u2028ol-mdq"
+        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"],
+                   ARGLOG=os.path.join(bindir, "args"))
+        make_exec(os.path.join(bindir, name), arg_logging_stub(0))
+        self.assertEqual(invoke(name, env)["reason"], "indexed")
+        make_exec(os.path.join(bindir, name), arg_logging_stub(1))
+        self.assertEqual(invoke(name, env)["reason"], "index-failed")
+
     def test_disabled_by_config(self):
         out = run_script(self.repo, {"indexing": {"enabled": False}})
         self.assertFalse(out["mdqAvailable"])

@@ -81,6 +81,31 @@ class TestCodexProbe(unittest.TestCase):
         self.assertIsNone(out["codexReviewVersion"])
         self.assertEqual(out["probeCommands"], [])
 
+    def test_json_emit_is_ascii_one_line(self):
+        def invoke(bin_name, env):
+            cfg = os.path.join(self.repo, ".claude", "json-emit.json")
+            write(cfg, json.dumps({"codexReview": {"bin": bin_name}}))
+            proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+                                  capture_output=True, env=env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(proc.stdout.isascii())
+            self.assertEqual(len(proc.stdout.decode().splitlines()), 1)
+            out = json.loads(proc.stdout)
+            self.assertEqual(out["codexReviewBin"], bin_name)
+            return out
+
+        env = {os.fsencode(key): os.fsencode(value) for key, value in os.environ.items()}
+        env[b"CODEX_HOME"] = b"/tmp/h\xffome"
+        self.assertEqual(invoke("to\u2028ol-none", env)["reason"], "not-installed")
+        bindir = self.tmpdir()
+        name = "to\u2028ol-codex"
+        make_exec(os.path.join(bindir, name),
+                  '#!/bin/sh\ncase "$1" in --version) printf "codex 1.0\\n";; exec) exit 0;; esac\n')
+        env[b"PATH"] = os.fsencode(bindir) + os.pathsep.encode() + env[b"PATH"]
+        out = invoke(name, env)
+        self.assertEqual(out["reason"], "ok")
+        self.assertEqual(os.fsencode(out["callerCodexHome"]), b"/tmp/h\xffome")
+
     def test_disabled_by_config(self):
         out = run_script(self.repo, {"codexReview": {"enabled": False}})
         self.assertFalse(out["codexReviewAvailable"])

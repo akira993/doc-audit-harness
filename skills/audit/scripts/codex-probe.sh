@@ -63,7 +63,7 @@ emit_json() {
 version=None if sys.argv[3]=="__NULL__" else sys.argv[3]
 commands=[] if sys.argv[4]=="0" else [sys.argv[2]+" --version",sys.argv[2]+" exec --help"]
 home=None if sys.argv[9]=="1" else sys.argv[6]
-sys.stdout.buffer.write((json.dumps({"codexReviewAvailable":sys.argv[1]=="1","codexReviewBin":sys.argv[2],"codexReviewVersion":version,"probeCommands":commands,"reason":sys.argv[5],"callerCodexHome":home,"callerCodexHomeSource":sys.argv[7],"callerAuthFile":sys.argv[8]}, ensure_ascii=False)+"\n").encode("utf-8"))' \
+sys.stdout.buffer.write((json.dumps({"codexReviewAvailable":sys.argv[1]=="1","codexReviewBin":sys.argv[2],"codexReviewVersion":version,"probeCommands":commands,"reason":sys.argv[5],"callerCodexHome":home,"callerCodexHomeSource":sys.argv[7],"callerAuthFile":sys.argv[8]})+"\n").encode("utf-8"))' \
     "$1" "$2" "$3" "$4" "$5" "$CALLER_HOME" "$CALLER_SOURCE" "$CALLER_AUTH" "$CALLER_NULL"
 }
 

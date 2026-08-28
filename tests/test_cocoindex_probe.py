@@ -63,6 +63,19 @@ class TestCocoindexProbe(unittest.TestCase):
         self.assertFalse(out["semanticSearchAvailable"])
         self.assertEqual(out["reason"], "not-installed")
 
+    def test_json_emit_is_ascii_one_line(self):
+        bin_name = "to\u2028ol-none"
+        cfg = os.path.join(self.repo, ".claude", "json-emit.json")
+        write(cfg, json.dumps({"semanticSearch": {"bin": bin_name}}))
+        proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+                              capture_output=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(proc.stdout.isascii())
+        self.assertEqual(len(proc.stdout.decode().splitlines()), 1)
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["semanticSearchBin"], bin_name)
+        self.assertEqual(out["reason"], "not-installed")
+
     def test_disabled_by_config(self):
         out = run_script(self.repo, {"semanticSearch": {"enabled": False}})
         self.assertFalse(out["semanticSearchAvailable"])

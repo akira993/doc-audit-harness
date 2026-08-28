@@ -75,6 +75,19 @@ class TestGraphifyProbe(unittest.TestCase):
         self.assertEqual(out["reason"], "not-installed")
         self.assertFalse(out["gitignoreOk"])
 
+    def test_json_emit_is_ascii_one_line(self):
+        bin_name = "to\u2028ol-none"
+        cfg = os.path.join(self.repo, ".claude", "json-emit.json")
+        write(cfg, json.dumps({"docGraph": {"bin": bin_name}}))
+        proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+                              capture_output=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(proc.stdout.isascii())
+        self.assertEqual(len(proc.stdout.decode().splitlines()), 1)
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["docGraphBin"], bin_name)
+        self.assertEqual(out["reason"], "not-installed")
+
     def test_disabled_by_config(self):
         out = run_script(self.repo, {"docGraph": {"enabled": False}})
         self.assertFalse(out["docGraphAvailable"])

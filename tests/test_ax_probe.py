@@ -79,6 +79,29 @@ class TestAxProbe(unittest.TestCase):
         self.assertEqual(out["reason"], "not-installed")
         self.assertIsNone(out["axVersion"])
 
+    def test_json_emit_is_ascii_one_line(self):
+        def invoke(bin_name, env=None):
+            cfg = os.path.join(self.repo, ".claude", "json-emit.json")
+            write(cfg, json.dumps({"webExtract": {"bin": bin_name}}))
+            proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+                                  capture_output=True, env=env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(proc.stdout.isascii())
+            self.assertEqual(len(proc.stdout.decode().splitlines()), 1)
+            out = json.loads(proc.stdout)
+            self.assertEqual(out["axBin"], bin_name)
+            return out
+
+        self.assertEqual(invoke("to\u2028ol-none")["reason"], "not-installed")
+        bindir = self.tmpdir()
+        name = "to\u2028ol-ax"
+        make_exec(os.path.join(bindir, name),
+                  '#!/bin/sh\nprintf "ax 1.0-\\342\\200\\250x\\n"\n')
+        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"])
+        out = invoke(name, env)
+        self.assertEqual(out["reason"], "ok")
+        self.assertEqual(out["axVersion"], "ax 1.0-\u2028x")
+
     def test_disabled_by_config(self):
         out = run_script(self.repo, {"webExtract": {"enabled": False}})
         self.assertFalse(out["axAvailable"])
