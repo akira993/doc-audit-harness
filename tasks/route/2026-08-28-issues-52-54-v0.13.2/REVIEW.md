@@ -138,3 +138,4 @@ R5 件数表記／R6 §5 の Stage 別記。Opus 2 往復合計 21 件（O1 15�
 - 別 Issue 候補（未起票、ユーザー判断）: (1) `indexing`/`contextMode`/`webExtract`/`codexReview` のキー不在既定の統一、(2) Phase-0 probe 結果の run-dir 永続化
   （中断後の Phase-5 状態行復元 — Sol R3-1）、(3) dir-framework 側の `graphify-out/` 残骸（884K、利用者側で削除）。
 - 版判断の記録: #52/#53 本文と Sol R1-1 は minor（v0.14.0）を提案。ユーザー指示「パッチアップデート」を採り 0.13.2 で出荷（ADOPTION §7 に挙動変更 5 点を明記）。
+- 追記（2026-08-28、ユーザー指示）: 別 Issue 候補 (1) → **#56**、(2) → **#57** として起票済み（label enhancement）。(3) は利用者側の作業のため未起票。
