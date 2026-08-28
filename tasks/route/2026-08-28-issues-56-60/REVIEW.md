@@ -233,3 +233,7 @@
 - O1 ax の `\xff` ベクタは BSD `tr` が切り落とし判別力ゼロ → U+2028 に差し替え／O2 graph `emit()` の encode 検証行は意図的に残す旨を記録／O3 CLI 3 本は生 bytes 取得を明記／N1 網羅対象を emit サイト 9 個に
 - 判定: **rev.3 で実装承認**
 - 実装セッション cr3（Terra workspace-write, medium）: session `01a04920-81dd-7181-b5aa-06b696fdfb09`（起動 2026-08-28T16:07:46Z）
+
+### cr3 実装 R1 — 承認（commit `53afca1`）
+- worker 報告 Ran 609 OK。boss 再実測 `cr3-full-tests-v.log` **Ran 609 tests OK, skipped 0, expected failure 0**、`ensure_ascii=False` 0 件、`bash -n` OK、scope-clean（BASE 79938a5）、forbidden-clean（docs/SKILL/probe-record/v014/probe_record 不変）、§8 片 tests-clean（79938a5 の全テスト名残存・新 6 本の `... ok` 各 1 回）。
+- diff 精読: 9 emit サイトの `ensure_ascii=False` 除去のみ（`sys.stdout.buffer.write` と graph の encode 検証行は維持）。新テスト 6 本は `run_script` を経由せず bytes で受け、`isascii()`・`splitlines()==1`・JSON round-trip を assert。mdq は indexed/index-failed、ax は U+2028 入り version の ok、codex は bytes env `CODEX_HOME=b"/tmp/h\xffome"` で ok＋`os.fsencode` 一致を確認。
