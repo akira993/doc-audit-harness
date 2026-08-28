@@ -204,3 +204,6 @@
 - CR2-4 再 disabled 出力は seam ごとに既存 3 形（mdq bin 無し／ax・codex 既定名／graph 保持）を維持／CR2-11 再 Phase 0 節で合成指示文の完全一致・count 1
 - CR2-14 codex 正例は 2 回呼び出し／CR2-15 `-x` stub 正例／CR2-16 ファイル別必須名／CR2-17 ef995f0 の既存テスト名包含／CR2-18 CLI 23 ID の正確な集合／CR2-19 ja は区切り無し・en は先頭スペース／CR2-20 whitespace-only を ADOPTION に／CR2-21 seam 別出力キー
 - 判定: **差し戻し（rev.3 で再批判）**
+### Sol cr2-R3（rev.3 → rev.4）— (A) 6 件・(B) 1 件、いずれも検査精度
+- CR2-22 既存テスト名の基準を cr1 実装 `04a0624` に／CR2-23 TestCase メソッドのみ＋`-v` ログで実行 ID 各 1 回／CR2-24 正例 ID 集合・制御文字集合を in-test 完全一致／CR2-25 文書は ASCII 制御文字に限定／CR2-26 schema 6 行を契約テストで固定／CR2-27 AST は全ブロック再帰／CR2-28 sentinel は既定名 stub を PATH に
+- 判定: **差し戻し（rev.4 で R4）**
