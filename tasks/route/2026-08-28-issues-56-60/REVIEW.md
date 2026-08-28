@@ -85,3 +85,17 @@
 - (A) R5-3 NUL 入り `bin` → `invalid-config`、ID `bin_nul` 追加（CLI 20 ID）
 - (B) R5-4 不正 `bin` の出力値 → 既定名を完全一致で assert／R5-5 → 上記／R5-6 skip 0 → `-v` 出力の ` ... skipped` 0 行を機械判定／R5-7 → repo 全体 `git grep '0\.13\.2'` を許可 path・行パターンと固定比較／R5-8 `--config ""` → `invalid-config`、ID `cfg_empty`
 - 判定: **上限到達につき Sol への再送はしない。(A) 全件を rev.6 に反映し、手順 3.5 の Opus 全体敵対レビューへ**
+
+## セッション記録（追記）
+- SCOPE_COMMIT: `8abfb91`（allowlist・baseline-hashes・scope-check.py の権威元）。scope-check dry-run: scope-clean（未変更の木）
+
+## Opus 全体敵対レビュー（手順 3.5、change-reviewer）
+### O-R1（rev.6 → rev.7）— ブロッキング 6・非ブロッキング 3。baseline 独立実測 `Ran 551 tests OK`、skipped 0 行
+- O1 状態行は gate 起動前に生成（SKILL.md:596-599）→「codex 行の基本状態＝gate stdout」は実装不能（Sol R4-3/R5-2 の組み合わせ矛盾）→ Phase 4 evidence 書き込み直後に 10 番目の seam `codexReviewState` を記録し、`rebind.codex-review.reviewState` から `CODEX_REVIEW_STATE` を再束縛
+- O2 `test_v013_contracts.py:82-86` の `CODEX_REVIEW_STATE=` リテラル → 温存（4-way 分岐キー不変）を DoD (11) に
+- O3 S2 の refresh 更新で `test_j`（:210,215 の許可 regex）が落ちる → 更新対象に追加
+- O4 §8 の `0.13.2` 残存 grep が ja の読点列挙で偽違反 → ja パターン追加
+- O5 `grep -c ' ... ok$'` は subTest を数えない（実測 14 = メソッド数）→ 件数コマンド撤去、in-test `len(CASES)` に一本化
+- O6 「`rebind` からのみ」が Phase-3 refresh 失敗 `<detail>` を初回でも壊す → 会話変数からの補完を唯一の例外として明記
+- N1 9 seam 厳密 schema の費用対効果 → 余分キー許容に緩和（必須キー・型・分岐は維持）／N2 最小 env に PATH 必須を明記／N3 reason 列挙 3 か所を mdq 散文・ax・codex に特定（graph 3 seam は不変）
+- 判定: **差し戻し → rev.7 で反映。O1 の是正案（codexReviewState seam）は同一エージェントへ resume で追認依頼（S1b 開始前）**
