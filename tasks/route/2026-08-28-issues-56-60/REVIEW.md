@@ -219,6 +219,6 @@
 - 実装セッション cr2（Terra workspace-write, medium）: session `01a04882-dbaf-7912-98a7-28fb2ba45cb9`（起動 2026-08-28T13:15:34Z）
 
 ### cr2 実装 R1〜R2 — 承認（commit `79938a5`）
-- R1: 機械検査は全て clean（Ran 603 OK・skip 0・expected failure 0、AST/-v ログ・ADOPTION 段落・scope-clean）だったが、**boss のテスト全行精読**で DoD (2) 未達 5 点（graph の全 reason 生成が 3 分岐のみ、正例の起動回数 assert 無し、 が絶対パス、＋妥当カスタム bin の 3 形欠落、sentinel が既定名のみ）と共通規則文の短縮を検出 → 差し戻し。
+- R1: 機械検査は全て clean（Ran 603 OK・skip 0・expected failure 0、AST/-v ログ・ADOPTION 段落・scope-clean）だったが、**boss のテスト全行精読**で DoD (2) 未達 5 点（graph の全 reason 生成が 3 分岐のみ、正例の起動回数 assert 無し、`-x` が絶対パス、`enabled:false`＋妥当カスタム bin の 3 形欠落、sentinel が既定名のみ）と共通規則文の短縮を検出 → 差し戻し。
 - R2: 全件修正。boss 再実測 `cr2-final-full-tests-v.log` **Ran 603 tests OK, skipped 0, expected failure 0**、scope-clean（BASE ef995f0 / SCOPE 0cec02a）、AST 片 tests-ast-clean、ADOPTION 期待段落一致、forbidden-clean、`bash -n` 6 probe。diff 精読: SKILL（CM 3 キー・codex 5 条件句・Fix-mdq-first 例外・規則段落の独立配置）、6 probe（統一検証・disabled 3 形・`command -v --`・UTF-8 バイト伝送）、config-schema 6 行、ADOPTION §7 en/ja、テスト（fixture 修復・起動回数 assert・全 reason 生成・sentinel 網羅）。
 - 教訓の再確認: 「テスト名がある」と「テストが判別する」は別。boss の検収はテスト本体の全文精読を必須にする。
