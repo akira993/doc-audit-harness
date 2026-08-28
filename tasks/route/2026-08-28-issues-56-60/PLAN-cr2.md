@@ -28,7 +28,7 @@
 ### C. テストの修復と強化（#2・#3・#9・#15）
 7. **#2 `test_mdq_index.setUp`**: `write(docs/a.md)` を `setUp` 内に戻す（`tmpdir()` は独立 helper のまま）。回帰防止: `setUp` 後に `os.path.exists(docs/a.md)` を assert するテスト 1 本。
 8. **#3 `test_graphify_probe`**: `test_disabled_by_config` に `assertFalse(out["gitignoreOk"])` を戻し、制御文字テストは独立メソッドに（末尾の迷子 assert を除去）。
-9. **#9 制御文字テストの sentinel**: 3 graph probe の制御文字/空白/dash テストは `_assert_unavailable(..., log)` 相当で **sentinel 不起動**を assert（enabled/disabled 両方）。**内部スペース入りディレクトリの正例**（`bin` = `<tmp>/dir with space/<tool>` の stub、起動され `<seam>Bin` が完全一致）を 3 probe に追加。
+9. **#9 制御文字テストの sentinel**: 3 graph probe の制御文字/空白/dash テストは `_assert_unavailable(..., log)` 相当で **sentinel 不起動**を assert（enabled/disabled 両方）。**内部スペース入りディレクトリの正例**（`bin` = `<tmp>/dir with space/<tool>` の stub、起動され `<seam>Bin` が完全一致）を 3 probe に追加。**cr1 DoD (3) で未実装のまま見逃された「全 reason 分岐の JSON キー集合完全一致」テスト（`test_output_key_sets_per_branch` 同型）も 3 graph probe に追加**（boss 精読で判明）。
 10. **#15 wrap 依存 assert**: `test_cr1_reopen_gate_and_status_order_contracts` の固定 JSON 検査を `normalize_paragraphs()` 経由に。
 11. **#12 `scope-check.py`**（boss 工具、boss が修正）: `BASE_COMMIT` 未指定を error にする（default 撤廃）。
 
@@ -46,7 +46,7 @@ boss Fable。worker: 単一 Stage Terra `medium`。差し戻しは resume。**bo
 
 ## 6. 完了条件（DoD、すべて非 0 終了で判定）
 - (1) `test_v014_contracts.py`: A1 の 3 キー名 literal、A2 の表 5 行の固定文（`review state not recorded`、`(reason unavailable)`、接尾辞条件の文）と順序（invalid-config → review-state-not-recorded → probe-record-unavailable → 4-way）、A3 の例外句、A4 の段落位置（`PROBE_REBIND` 段落の直後・mdq 表の導入文とその箇条書きの間に無い・count==1）、B6 の §7 en 7 文・ja 7 文。
-- (2) 6 probe の判定表テスト: CLI 3 probe は 23 ID（`bin_ws`/`bin_wsonly`/`bin_dash` 追加、`len(CASES)==23`）、graph 3 probe は 33 制御文字 ×2 ＋ `bin_ws`/`bin_wsonly`/`bin_dash`/`bin_surrogate`（`"\ud800"` は JSON テキスト `"\\ud800"` で投入）×2 ＋ 内部スペース正例 ＋ 全分岐キー集合、**すべて sentinel 不起動を assert**。
+- (2) 6 probe の判定表テスト（graph 3 probe は全 reason 分岐のキー集合テストを含む）: CLI 3 probe は 23 ID（`bin_ws`/`bin_wsonly`/`bin_dash` 追加、`len(CASES)==23`）、graph 3 probe は 33 制御文字 ×2 ＋ `bin_ws`/`bin_wsonly`/`bin_dash`/`bin_surrogate`（`"\ud800"` は JSON テキスト `"\\ud800"` で投入）×2 ＋ 内部スペース正例 ＋ 全分岐キー集合、**すべて sentinel 不起動を assert**。
 - (3) `test_mdq_index.py`: `setUp` が `docs/a.md` を作る assert、`tmpdir()` 内に到達不能文が無い（`python3 -m pyflakes` 相当は不要 — boss が精読）。`test_graphify_probe.py::test_disabled_by_config` に `gitignoreOk` assert。
 - (4) フルスイート rc=0・skip 0（`Ran N`）。`bash -n` 6 probe。
 - (5) 禁止ファイル `git diff --quiet ef995f0 -- probe-record.py decide-verdict.py start-run.py write-evidence.py open-run.py mdq-health.py skills/init/SKILL.md agents tests/data .claude-plugin engine-shas.json tests/test_v013_contracts.py tests/test_v0132_contracts.py tests/test_v0131_docs_contracts.py`。
