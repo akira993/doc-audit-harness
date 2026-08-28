@@ -3,6 +3,7 @@
 import ast
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -182,6 +183,126 @@ class TestV0132S1aContracts(unittest.TestCase):
         self.assertIn("without calling `read-manifest.py`", other_branch)
         self.assertIn("do not launch either verifier backend", other_branch)
         self.assertIn("`seal-run:` stderr", other_branch)
+
+
+class TestV0132S1bContracts(unittest.TestCase):
+    def _phase0_block(self, start, end):
+        skill = read_repo_file("skills/audit/SKILL.md")
+        return skill.split(start, 1)[1].split(end, 1)[0]
+
+    def test_probe_reason_enumerations_match_fixed_sets(self):
+        """DoD (9): probe reason enumerations are complete and exact in both documents."""
+        skill_blocks = {
+            "symbolGraph": self._phase0_block("Then probe **codegraph**", "Then probe **graphify**"),
+            "docGraph": self._phase0_block("Then probe **graphify**", "Then probe **CocoIndex**"),
+            "semanticSearch": self._phase0_block("Then probe **CocoIndex**", "**Harness question"),
+        }
+        schema = read_repo_file("skills/audit/references/config-schema.md")
+        schema_blocks = {
+            "symbolGraph": schema.split("## codegraph", 1)[1].split("## graphify", 1)[0],
+            "docGraph": schema.split("## graphify", 1)[1].split("## CocoIndex", 1)[0],
+            "semanticSearch": schema.split("## CocoIndex", 1)[1].split("## Generic", 1)[0],
+        }
+        expected = {
+            "symbolGraph": {"ok", "not-installed", "disabled-by-config", "index-failed", "not-configured", "invalid-config"},
+            "docGraph": {"ok", "not-installed", "disabled-by-config", "update-failed", "not-configured", "invalid-config"},
+            "semanticSearch": {"ok", "not-installed", "disabled-by-config", "not-initialized", "index-failed", "not-configured", "invalid-config", "gitignore-modified"},
+        }
+        for seam, reasons in expected.items():
+            with self.subTest(document="skill", seam=seam):
+                listed = re.search(r"`reason` ∈\s*\n([^\n]+(?:\n[^\n]+)?)\. Bind", skill_blocks[seam])
+                self.assertIsNotNone(listed)
+                self.assertEqual(set(re.findall(r"`([a-z-]+)`", listed.group(1))), reasons)
+            with self.subTest(document="schema", seam=seam):
+                self.assertEqual(set(re.findall(r"`([a-z-]+)`", schema_blocks[seam].split("Its probe reasons are", 1)[1])), reasons)
+
+    def test_phase5_status_lines_map_each_reason_to_one_branch(self):
+        """DoD (10): every Phase-5 reason has one exclusive user-facing branch."""
+        skill = read_repo_file("skills/audit/SKILL.md")
+        blocks = {
+            "symbol-graph": skill.split("**symbol-graph status line**", 1)[1].split("**doc-graph status line**", 1)[0],
+            "doc-graph": skill.split("**doc-graph status line**", 1)[1].split("**semanticSearch status line**", 1)[0],
+            "semanticSearch": skill.split("**semanticSearch status line**", 1)[1].split("**harness status line**", 1)[0],
+        }
+        expected_counts = {"symbol-graph": "6-state", "doc-graph": "6-state (7 messages)", "semanticSearch": "8-state"}
+        required = {
+            "symbol-graph": {"not-configured": ("💡", "not configured"), "invalid-config": ("⚠", "is invalid"), "not-installed": ("💡", "install:"), "disabled-by-config": ("💡", "disabled"), "index-failed": ("⚠", "failed"), "ok": ("✓ symbol-graph: active (", "")},
+            "doc-graph": {"not-configured": ("💡", "not configured"), "invalid-config": ("⚠", "is invalid"), "not-installed": ("💡", "install:"), "disabled-by-config": ("💡", "disabled"), "update-failed": ("⚠", "failed"), "ok": ("✓ doc-graph: active (", "")},
+            "semanticSearch": {"not-configured": ("💡", "not configured"), "invalid-config": ("⚠", "is invalid"), "not-installed": ("💡", "install:"), "disabled-by-config": ("💡", "disabled"), "not-initialized": ("💡", "isn't indexed yet"), "index-failed": ("⚠", "failed"), "gitignore-modified": ("⚠", "changed while ccc index ran"), "ok": ("✓ semanticSearch: active (", "")},
+        }
+        for seam, mapping in required.items():
+            with self.subTest(seam=seam):
+                block = blocks[seam]
+                self.assertIn(expected_counts[seam], block)
+                lines = [line for line in block.splitlines() if line.startswith("- `") and "→" in line]
+                for reason, (glyph, phrase) in mapping.items():
+                    matches = [line for line in lines if reason in line.split("→", 1)[0]]
+                    self.assertEqual(len(matches), 2 if seam == "doc-graph" and reason == "ok" else 1, reason)
+                    for line in matches:
+                        right = line.split("→", 1)[1]
+                        if seam == "doc-graph" and reason == "ok" and "active but" in right:
+                            self.assertIn("⚠ doc-graph: active but", right)
+                        else:
+                            self.assertIn(glyph, right)
+                        if phrase:
+                            self.assertIn(phrase, right)
+                self.assertNotIn("AVAILABLE` false", block)
+        self.assertNotIn("install:", next(line for line in blocks["doc-graph"].splitlines() if "not-configured" in line).split("→", 1)[1])
+        self.assertNotIn("installed", next(line for line in blocks["semanticSearch"].splitlines() if "not-configured" in line).split("→", 1)[1])
+        self.assertIn("⚠ doc-graph: active but", blocks["doc-graph"])
+
+    def test_phase0_binds_reason_from_each_probe_json(self):
+        """DoD (10b): each Phase-0 reason is read from its matching saved probe JSON."""
+        skill = read_repo_file("skills/audit/SKILL.md")
+        for variable, script in (("SYMBOL_GRAPH", "codegraph-probe.sh"), ("DOC_GRAPH", "graphify-probe.sh"), ("SEMANTIC_SEARCH", "cocoindex-probe.sh")):
+            with self.subTest(variable=variable):
+                self.assertIn(f'{variable}_PROBE_JSON="$(bash "$SD/scripts/{script}"', skill)
+                match = re.search(rf'{variable}_REASON=.*?\["reason"\].*?"\${variable}_PROBE_JSON"', skill)
+                self.assertIsNotNone(match)
+
+    def test_init_skill_marks_three_omit_rules_as_not_configured(self):
+        """DoD (11): only the three selected OMIT rules name not-configured."""
+        init = read_repo_file("skills/init/SKILL.md")
+        self.assertEqual(init.count("not-configured"), 3)
+        for paragraph in re.split(r"\n\s*\n", init):
+            if "not-configured" in paragraph:
+                self.assertRegex(paragraph, r"symbolGraph|docGraph|semanticSearch")
+
+    def test_settings_yml_marker_documented_in_five_files(self):
+        """DoD (14): all five documents tie not-initialized to settings.yml."""
+        files = ("skills/audit/SKILL.md", "skills/init/SKILL.md", "skills/audit/references/config-schema.md", "docs/ADOPTION.md", "docs/ADOPTION.ja.md")
+        for relative in files:
+            with self.subTest(relative=relative):
+                text = read_repo_file(relative)
+                self.assertIn(".cocoindex_code/settings.yml", text)
+                self.assertTrue(any(".cocoindex_code/settings.yml" in paragraph and "not-initialized" in paragraph
+                                    for paragraph in re.split(r"\n\s*\n", text)), relative)
+                self.assertIsNone(re.search(r"\.cocoindex_code/`?\s+(?:already exists|不在|present)(?![^\n]*settings\.yml)", text), relative)
+
+    def test_three_seams_no_longer_documented_as_auto_used(self):
+        """§0-4 B1: the three worktree-writing seams are documented as key-gated."""
+        terms = ("symbolGraph", "docGraph", "semanticSearch", "codegraph", "graphify", "CocoIndex", "ccc")
+        forbidden = ("conditional-force", "auto-used when installed", "導入済みなら自動使用")
+        for relative in ("skills/audit/references/config-schema.md", "docs/ADOPTION.md", "docs/ADOPTION.ja.md", "skills/init/SKILL.md"):
+            text = read_repo_file(relative)
+            paragraphs = []
+            for paragraph in re.split(r"\n\s*\n", text):
+                if paragraph.lstrip().startswith("|"):
+                    paragraphs.extend(paragraph.splitlines())
+                elif "\n- " in paragraph:
+                    paragraphs.extend(paragraph.split("\n- "))
+                else:
+                    paragraphs.append(paragraph)
+            for paragraph in paragraphs:
+                normalized = " ".join(paragraph.split())
+                if any(term in normalized for term in terms):
+                    self.assertFalse(any(term in normalized for term in forbidden), (relative, normalized))
+
+    def test_semantic_search_schema_describes_probe_validation_and_phase2_min_score(self):
+        """DoD (12): schema assigns minScore validation to the probe and use to Phase 2."""
+        schema = read_repo_file("skills/audit/references/config-schema.md")
+        row = next(line for line in schema.splitlines() if line.startswith("| `semanticSearch` |"))
+        self.assertIn("the probe validates `enabled`/`bin`/`minScore`; Phase 2 uses `minScore`", row)
 
 
 if __name__ == "__main__":

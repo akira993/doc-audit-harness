@@ -25,33 +25,35 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# symbolGraph.enabled (default true) + symbolGraph.bin (default "codegraph");
-# tolerate a missing/invalid config by falling back to defaults.
-ENABLED="1"; BIN="codegraph"
-if [[ -n "$CONFIG" ]]; then
-  IFS=$'\t' read -r ENABLED BIN < <(python3 -c '
-import json,sys
-e=True; b="codegraph"
+read -r STATE BIN < <(python3 -c '
+import json, sys
+default = "codegraph"
 try:
-    s=(json.load(open(sys.argv[1])).get("symbolGraph") or {})
-    e=bool(s.get("enabled",True)); b=str(s.get("bin","codegraph") or "codegraph")
+    if not sys.argv[1]: raise ValueError()
+    with open(sys.argv[1], encoding="utf-8") as f: config = json.load(f)
+    if not isinstance(config, dict): raise ValueError()
+    if "symbolGraph" not in config: print("not-configured", default); raise SystemExit
+    seam = config["symbolGraph"]
+    if not isinstance(seam, dict): raise ValueError()
+    enabled = seam.get("enabled", True)
+    if not isinstance(enabled, bool): raise ValueError()
+    if not enabled: print("disabled-by-config", seam.get("bin", default) if isinstance(seam.get("bin", default), str) and seam.get("bin", default) else default); raise SystemExit
+    bin_name = seam.get("bin", default)
+    if not isinstance(bin_name, str) or not bin_name: raise ValueError()
+    print("enabled", bin_name)
 except Exception:
-    pass
-print(("1" if e else "0")+"\t"+b)
+    print("invalid-config", default)
 ' "$CONFIG")
-fi
-[[ -n "$BIN" ]] || BIN="codegraph"
-[[ -n "$ENABLED" ]] || ENABLED="1"
-# JSON-safe copy of BIN for echoing into the JSON (BIN comes from user config).
-BIN_J="$(printf '%s' "$BIN" | tr -d '"\\' | tr -d '[:cntrl:]')"
 
-if [[ "$ENABLED" != "1" ]]; then
-  printf '{"symbolGraphAvailable":false,"symbolGraphBin":"%s","reason":"disabled-by-config"}\n' "$BIN_J"
+emit() { python3 -c 'import json,sys; print(json.dumps({"symbolGraphAvailable":sys.argv[1] == "true", "symbolGraphBin":sys.argv[2], "reason":sys.argv[3]}, separators=(",", ":")))' "$@"; }
+
+if [[ "$STATE" != "enabled" ]]; then
+  emit false "$BIN" "$STATE"
   exit 0
 fi
 
 if ! command -v "$BIN" >/dev/null 2>&1; then
-  printf '{"symbolGraphAvailable":false,"symbolGraphBin":"%s","reason":"not-installed"}\n' "$BIN_J"
+  emit false "$BIN" not-installed
   exit 0
 fi
 
@@ -65,12 +67,12 @@ else
 fi
 
 if ( cd "$REPO_ROOT" && "$BIN" "${CMD[@]}" ) >/dev/null 2>"$ERRF"; then
-  printf '{"symbolGraphAvailable":true,"symbolGraphBin":"%s","reason":"ok"}\n' "$BIN_J"
+  emit true "$BIN" ok
   exit 0
 else
   rc=$?
   TAIL="$(tail -n 3 "$ERRF" 2>/dev/null | tr '\n' ' ' | tr -d '"\\' | tr -d '[:cntrl:]')"
   echo "codegraph ${CMD[*]} failed (rc=$rc): $TAIL" >&2
-  printf '{"symbolGraphAvailable":false,"symbolGraphBin":"%s","reason":"index-failed","rc":%d}\n' "$BIN_J" "$rc"
+  emit false "$BIN" index-failed
   exit 0
 fi

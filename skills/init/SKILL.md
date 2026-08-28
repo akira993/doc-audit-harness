@@ -33,8 +33,9 @@ candidates; inventory never wires one automatically.
 (Optional enrichment: if `markdown-query`/CocoIndex/Serena are available you may use
 them to refine the impactMap couplings — they are NOT required; inventory.py alone
 suffices. CocoIndex needs `sentence_transformers`; skip it if unavailable.)
-Also run `command -v mdq`: if present, this repo can use conditional-force indexing —
-propose an `indexing` block in Step 2. Likewise, check whether the `ctx_*` MCP tools
+Also run `command -v mdq`: if present, this repo can use indexing (on by default when
+`mdq` is installed; `enabled:false` opts out) — propose an `indexing` block in Step 2.
+Likewise, check whether the `ctx_*` MCP tools
 (context-mode) are available to you in this session — judge purely by tool availability,
 NOT by globbing `~/.claude` plugin paths (never bake machine-specific globals into the
 config). If available, propose a `contextMode` block in Step 2. Also run `command -v ax`:
@@ -49,7 +50,7 @@ candidates — propose a `docGraph` block in Step 2; also check
 `(cd "$CLAUDE_PROJECT_DIR" && git check-ignore -q graphify-out)` to see whether
 `graphify-out/` is already gitignored. Also run `command -v ccc`: if present, Phase 2 can
 additionally supplement `mapGapCandidates` with semantic-search candidates — check
-whether `.cocoindex_code/` already exists in the repo (two different proposals in Step 2
+whether `.cocoindex_code/settings.yml` already exists in the repo (two different proposals in Step 2
 depending on the answer).
 
 ### Step 1.5 — harness choice (MANDATORY once)
@@ -144,23 +145,25 @@ Build a `doc-audit.json` draft from the inventory:
   doc-impact-verifier can corroborate a changed file's own-symbol claims via read-only
   `codegraph impact`/`node`; tell the user `enabled:false` opts out. This seam is purely
   advisory (never affects the verdict), like `webExtract`. If `codegraph` was NOT detected,
-  OMIT the key.
+  OMIT the key; absent key ⇒ the audit reports `not-configured` and never runs the tool.
 - `docGraph`: if `graphify` was detected in Step 1, propose
   `"docGraph": { "enabled": true, "tool": "graphify", "bin": "graphify" }` so Phase 2 can
   supplement `mapGapCandidates` with graph-adjacency candidates; tell the user
   `enabled:false` opts out. If `graphify-out/` was NOT already gitignored (Step 1's
   `git check-ignore` check), also propose (with user approval) appending `graphify-out/` to
   `.gitignore` — additive, within the existing init discipline. If `graphify` was NOT
-  detected, OMIT the key.
-- `semanticSearch`: if `ccc` was detected in Step 1 AND `.cocoindex_code/` already exists,
+  detected, OMIT the key; absent key ⇒ the audit reports `not-configured` and never runs the tool.
+- `semanticSearch`: if `ccc` was detected in Step 1 AND `.cocoindex_code/settings.yml` already exists,
   propose `"semanticSearch": { "enabled": true, "tool": "cocoindex", "bin": "ccc", "minScore":
   0.4 }` directly (Phase 2 can supplement `mapGapCandidates` with semantic-search
-  candidates). If `ccc` was detected but `.cocoindex_code/` does NOT exist, propose running
+  candidates). If `ccc` was detected but `.cocoindex_code/settings.yml` does NOT exist, the audit reports
+  `not-initialized`; propose running
   `ccc init && ccc index` with **explicit user approval whose copy discloses that `ccc init`
   will append `/.cocoindex_code/` to `.gitignore`** — the audit itself never runs `ccc init`
   on its own; only after approval and successful execution does this flow propose the
   `semanticSearch` block. If `ccc` was NOT detected at all, OMIT the key. This seam is purely
-  advisory (never affects the verdict), like `webExtract`/`docGraph`.
+  advisory (never affects the verdict), like `webExtract`/`docGraph`; absent key ⇒ the audit reports
+  `not-configured` and never runs the tool.
 - `reviewCommands`: `{code:"/code-review high", security:"/security-review"}`.
   `reportPath`: `docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md` (or repo-root if no docs/logs).
   `maxImpactedDocs`: 60.

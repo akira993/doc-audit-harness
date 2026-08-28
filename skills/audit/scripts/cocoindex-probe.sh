@@ -12,12 +12,14 @@
 # THE SINGLE MOST IMPORTANT RULE IN THIS SCRIPT (spec §2 unconditional invariant 5):
 # this probe NEVER calls `ccc init`. `ccc init` auto-appends `/.cocoindex_code/` to
 # the target repo's `.gitignore` (confirmed real side effect) — a write the
-# report-only audit phase must never trigger mid-run. An absent `.cocoindex_code/`
-# directory is therefore its own terminal `not-initialized` state, distinct from
+# report-only audit phase must never trigger mid-run. A missing
+# `.cocoindex_code/settings.yml` marker is therefore its own terminal `not-initialized` state, distinct from
 # `not-installed`; initialization only ever happens inside `/docaudit:init`, behind
 # explicit user approval that discloses the `.gitignore` write.
 #
 # NOTE: no `set -e` — failures are handled explicitly; we ALWAYS emit JSON + exit 0.
+# NOTE: `ccc index` can auto-initialize at the nearest parent git root; when
+# `--repo-root` is a subdirectory, a parent `.gitignore` change is outside this probe's anchor.
 set -uo pipefail
 
 CONFIG=""; REPO_ROOT="$(pwd)"
@@ -29,40 +31,45 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# semanticSearch.enabled (default true) + semanticSearch.bin (default "ccc");
-# tolerate a missing/invalid config by falling back to defaults.
-ENABLED="1"; BIN="ccc"
-if [[ -n "$CONFIG" ]]; then
-  IFS=$'\t' read -r ENABLED BIN < <(python3 -c '
-import json,sys
-e=True; b="ccc"
+read -r STATE BIN < <(python3 -c '
+import json, math, sys
+default = "ccc"
 try:
-    s=(json.load(open(sys.argv[1])).get("semanticSearch") or {})
-    e=bool(s.get("enabled",True)); b=str(s.get("bin","ccc") or "ccc")
+    if not sys.argv[1]: raise ValueError()
+    with open(sys.argv[1], encoding="utf-8") as f: config = json.load(f)
+    if not isinstance(config, dict): raise ValueError()
+    if "semanticSearch" not in config: print("not-configured", default); raise SystemExit
+    seam = config["semanticSearch"]
+    if not isinstance(seam, dict): raise ValueError()
+    enabled = seam.get("enabled", True)
+    if not isinstance(enabled, bool): raise ValueError()
+    if not enabled: print("disabled-by-config", seam.get("bin", default) if isinstance(seam.get("bin", default), str) and seam.get("bin", default) else default); raise SystemExit
+    bin_name = seam.get("bin", default)
+    if not isinstance(bin_name, str) or not bin_name: raise ValueError()
+    if "minScore" in seam:
+        value = seam["minScore"]
+        if not (isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)): raise ValueError()
+    print("enabled", bin_name)
 except Exception:
-    pass
-print(("1" if e else "0")+"\t"+b)
+    print("invalid-config", default)
 ' "$CONFIG")
-fi
-[[ -n "$BIN" ]] || BIN="ccc"
-[[ -n "$ENABLED" ]] || ENABLED="1"
-# JSON-safe copy of BIN for echoing into the JSON (BIN comes from user config).
-BIN_J="$(printf '%s' "$BIN" | tr -d '"\\' | tr -d '[:cntrl:]')"
 
-if [[ "$ENABLED" != "1" ]]; then
-  printf '{"semanticSearchAvailable":false,"semanticSearchBin":"%s","reason":"disabled-by-config"}\n' "$BIN_J"
+emit() { python3 -c 'import json,sys; print(json.dumps({"semanticSearchAvailable":sys.argv[1] == "true", "semanticSearchBin":sys.argv[2], "reason":sys.argv[3]}, separators=(",", ":")))' "$@"; }
+
+if [[ "$STATE" != "enabled" ]]; then
+  emit false "$BIN" "$STATE"
   exit 0
 fi
 
 if ! command -v "$BIN" >/dev/null 2>&1; then
-  printf '{"semanticSearchAvailable":false,"semanticSearchBin":"%s","reason":"not-installed"}\n' "$BIN_J"
+  emit false "$BIN" not-installed
   exit 0
 fi
 
-if [[ ! -d "$REPO_ROOT/.cocoindex_code" ]]; then
+if [[ ! -f "$REPO_ROOT/.cocoindex_code/settings.yml" ]]; then
   # Terminal state — do NOT call `ccc init` here (see file header). Expected,
   # silent degrade until the user runs /docaudit:init.
-  printf '{"semanticSearchAvailable":false,"semanticSearchBin":"%s","reason":"not-initialized"}\n' "$BIN_J"
+  emit false "$BIN" not-initialized
   exit 0
 fi
 
@@ -73,13 +80,40 @@ trap 'rm -f "$ERRF"' EXIT
 # index .` errors "Got unexpected extra argument(s) (.)" — unlike codegraph/
 # graphify, which both accept a trailing `.`). It always operates on the cwd, so
 # the `cd "$REPO_ROOT"` below is load-bearing on its own.
+GITIGNORE="$REPO_ROOT/.gitignore"
+if [[ -e "$GITIGNORE" ]]; then
+  GITIGNORE_BEFORE="$(shasum -a 256 "$GITIGNORE" | awk '{print $1}')"
+  GITIGNORE_EXISTED=1
+else
+  GITIGNORE_BEFORE=""
+  GITIGNORE_EXISTED=0
+fi
+
 if ( cd "$REPO_ROOT" && "$BIN" index ) >/dev/null 2>"$ERRF"; then
-  printf '{"semanticSearchAvailable":true,"semanticSearchBin":"%s","reason":"ok"}\n' "$BIN_J"
-  exit 0
+  rc=0
 else
   rc=$?
+fi
+
+if [[ -e "$GITIGNORE" ]]; then
+  GITIGNORE_AFTER="$(shasum -a 256 "$GITIGNORE" | awk '{print $1}')"
+  GITIGNORE_EXISTS_AFTER=1
+else
+  GITIGNORE_AFTER=""
+  GITIGNORE_EXISTS_AFTER=0
+fi
+if [[ "$GITIGNORE_EXISTED" != "$GITIGNORE_EXISTS_AFTER" || "$GITIGNORE_BEFORE" != "$GITIGNORE_AFTER" ]]; then
+  echo "ccc index modified .gitignore; leaving it unchanged for manual review" >&2
+  emit false "$BIN" gitignore-modified
+  exit 0
+fi
+
+if [[ "$rc" -eq 0 ]]; then
+  emit true "$BIN" ok
+  exit 0
+else
   TAIL="$(tail -n 3 "$ERRF" 2>/dev/null | tr '\n' ' ' | tr -d '"\\' | tr -d '[:cntrl:]')"
   echo "ccc index failed (rc=$rc): $TAIL" >&2
-  printf '{"semanticSearchAvailable":false,"semanticSearchBin":"%s","reason":"index-failed","rc":%d}\n' "$BIN_J" "$rc"
+  emit false "$BIN" index-failed
   exit 0
 fi

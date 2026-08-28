@@ -42,6 +42,16 @@ def run_script(repo, config, extra_env=None):
     return json.loads(p.stdout)
 
 
+def run_raw(repo, args, extra_env=None):
+    env = dict(os.environ)
+    if extra_env:
+        env.update(extra_env)
+    p = subprocess.run(["bash", SCRIPT, *args], capture_output=True, text=True, env=env)
+    assert p.returncode == 0, p.stderr
+    assert len(p.stdout.splitlines()) == 1, p.stdout
+    return json.loads(p.stdout)
+
+
 def init_git_repo(repo):
     subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
@@ -93,8 +103,88 @@ class TestGraphifyProbe(unittest.TestCase):
         out = run_script(self.repo, {"docGraph": {"enabled": True, "bin": binpath}})
         self.assertFalse(out["docGraphAvailable"])
         self.assertEqual(out["reason"], "update-failed")
-        self.assertEqual(out["rc"], 1)
         self.assertFalse(out["gitignoreOk"])
+
+    def _default_stub(self):
+        bindir = tempfile.mkdtemp()
+        log = os.path.join(bindir, "calls.log")
+        make_exec(os.path.join(bindir, "graphify"), '#!/usr/bin/env bash\necho "$@" >> "%s"\n' % log)
+        return log, {"PATH": bindir + os.pathsep + os.environ["PATH"]}
+
+    def _assert_unavailable(self, out, reason, log):
+        self.assertEqual(set(out), {"docGraphAvailable", "docGraphBin", "reason", "gitignoreOk"})
+        self.assertFalse(out["docGraphAvailable"])
+        self.assertEqual(out["docGraphBin"], "graphify")
+        self.assertEqual(out["reason"], reason)
+        self.assertFalse(out["gitignoreOk"])
+        self.assertFalse(os.path.exists(log), "graphify must not be invoked")
+        self.assertFalse(os.path.exists(os.path.join(self.repo, "graphify-out")))
+        self.assertFalse(os.path.exists(os.path.join(self.repo, ".gitignore")))
+
+    def test_absent_key_is_not_configured(self):
+        """DoD (8): an absent key never probes the default binary."""
+        log, env = self._default_stub()
+        self._assert_unavailable(run_script(self.repo, {}, env), "not-configured", log)
+
+    def test_empty_object_key_is_enabled(self):
+        """DoD (8): an existing empty object enables the default binary."""
+        log, env = self._default_stub()
+        out = run_script(self.repo, {"docGraph": {}}, env)
+        self.assertTrue(out["docGraphAvailable"])
+        self.assertEqual(out["reason"], "ok")
+        self.assertTrue(os.path.exists(log))
+
+    def test_non_boolean_enabled_is_invalid_config(self):
+        """DoD (8): enabled accepts JSON booleans only."""
+        for value in ("false", 1):
+            with self.subTest(value=value):
+                log, env = self._default_stub()
+                configured_log = os.path.join(tempfile.mkdtemp(), "configured.log")
+                binpath = os.path.join(tempfile.mkdtemp(), "graphifystub")
+                make_exec(binpath, '#!/usr/bin/env bash\necho "$@" >> "%s"\n' % configured_log)
+                self._assert_unavailable(run_script(self.repo, {"docGraph": {"enabled": value, "bin": binpath}}, env), "invalid-config", log)
+                self.assertFalse(os.path.exists(configured_log), "configured graphify must not be invoked")
+
+    def test_non_object_key_is_invalid_config(self):
+        """DoD (8): each seam key must hold an object."""
+        for value in (True, "x", [], None):
+            with self.subTest(value=value):
+                log, env = self._default_stub()
+                self._assert_unavailable(run_script(self.repo, {"docGraph": value}, env), "invalid-config", log)
+
+    def test_invalid_json_config_is_invalid_config(self):
+        """DoD (8): malformed JSON is rejected by the standalone probe."""
+        log, env = self._default_stub()
+        cfg = os.path.join(self.repo, ".claude", "doc-audit.json")
+        write(cfg, "{")
+        self._assert_unavailable(run_raw(self.repo, ["--config", cfg, "--repo-root", self.repo], env), "invalid-config", log)
+
+    def test_missing_config_file_is_invalid_config(self):
+        """DoD (8): a missing config file is invalid-config."""
+        log, env = self._default_stub()
+        self._assert_unavailable(run_raw(self.repo, ["--config", os.path.join(self.repo, "missing.json"), "--repo-root", self.repo], env), "invalid-config", log)
+
+    def test_non_object_top_level_is_invalid_config(self):
+        """DoD (8): the config top level must be an object."""
+        log, env = self._default_stub()
+        self._assert_unavailable(run_script(self.repo, [], env), "invalid-config", log)
+
+    def test_non_string_bin_is_invalid_config(self):
+        """DoD (8): bin must be a non-empty string."""
+        for value in ([], 1, None, ""):
+            with self.subTest(value=value):
+                log, env = self._default_stub()
+                self._assert_unavailable(run_script(self.repo, {"docGraph": {"bin": value}}, env), "invalid-config", log)
+
+    def test_omitted_config_flag_is_invalid_config(self):
+        """DoD (8): omitting --config cannot enable the seam."""
+        log, env = self._default_stub()
+        self._assert_unavailable(run_raw(self.repo, ["--repo-root", self.repo], env), "invalid-config", log)
+
+    def test_disabled_with_invalid_bin_is_disabled_by_config(self):
+        """DoD (8): enabled:false has precedence over an invalid bin."""
+        log, env = self._default_stub()
+        self._assert_unavailable(run_script(self.repo, {"docGraph": {"enabled": False, "bin": []}}, env), "disabled-by-config", log)
 
 
 if __name__ == "__main__":
