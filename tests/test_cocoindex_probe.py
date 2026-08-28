@@ -259,6 +259,39 @@ class TestCocoindexProbe(unittest.TestCase):
         with open(os.path.join(self.repo, ".gitignore"), "rb") as handle:
             self.assertEqual(handle.read(), b"added\n")
 
+    def test_gitignore_fingerprint_does_not_depend_on_shasum(self):
+        """Final review P2: hashlib still detects changes when shasum is unavailable."""
+        self._marker()
+        write(os.path.join(self.repo, ".gitignore"), "before\n")
+        binpath = self._index_mutator("added\\n")
+        bindir = tempfile.mkdtemp()
+        make_exec(os.path.join(bindir, "shasum"), "#!/usr/bin/env bash\nexit 127\n")
+        out = run_script(
+            self.repo,
+            {"semanticSearch": {"bin": binpath}},
+            {"PATH": bindir + os.pathsep + os.environ["PATH"]},
+        )
+        self.assertFalse(out["semanticSearchAvailable"])
+        self.assertEqual(out["reason"], "gitignore-modified")
+        with open(os.path.join(self.repo, ".gitignore"), "rb") as handle:
+            self.assertEqual(handle.read(), b"before\nadded\n")
+
+    def test_gitignore_fingerprint_failure_skips_index(self):
+        """Final review P2: fingerprint failure degrades before invoking ccc index."""
+        self._marker()
+        os.makedirs(os.path.join(self.repo, ".gitignore"))
+        bindir = tempfile.mkdtemp()
+        log = os.path.join(bindir, "calls.log")
+        binpath = os.path.join(bindir, "cccstub")
+        make_exec(binpath, stub(log))
+        cfg = os.path.join(self.repo, ".claude", "doc-audit.json")
+        write(cfg, json.dumps({"semanticSearch": {"bin": binpath}}))
+        out, proc = run_raw(self.repo, ["--config", cfg, "--repo-root", self.repo])
+        self.assertFalse(out["semanticSearchAvailable"])
+        self.assertEqual(out["reason"], "index-failed")
+        self.assertFalse(os.path.exists(log), "ccc must not run when fingerprinting fails")
+        self.assertEqual(len(proc.stderr.splitlines()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

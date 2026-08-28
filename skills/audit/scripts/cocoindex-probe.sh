@@ -81,8 +81,15 @@ trap 'rm -f "$ERRF"' EXIT
 # graphify, which both accept a trailing `.`). It always operates on the cwd, so
 # the `cd "$REPO_ROOT"` below is load-bearing on its own.
 GITIGNORE="$REPO_ROOT/.gitignore"
+fingerprint_gitignore() {
+  python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"
+}
 if [[ -e "$GITIGNORE" ]]; then
-  GITIGNORE_BEFORE="$(shasum -a 256 "$GITIGNORE" | awk '{print $1}')"
+  if ! GITIGNORE_BEFORE="$(fingerprint_gitignore "$GITIGNORE" 2>/dev/null)" || [[ -z "$GITIGNORE_BEFORE" ]]; then
+    echo "unable to fingerprint .gitignore before ccc index; index not run" >&2
+    emit false "$BIN" index-failed
+    exit 0
+  fi
   GITIGNORE_EXISTED=1
 else
   GITIGNORE_BEFORE=""
@@ -96,7 +103,11 @@ else
 fi
 
 if [[ -e "$GITIGNORE" ]]; then
-  GITIGNORE_AFTER="$(shasum -a 256 "$GITIGNORE" | awk '{print $1}')"
+  if ! GITIGNORE_AFTER="$(fingerprint_gitignore "$GITIGNORE" 2>/dev/null)" || [[ -z "$GITIGNORE_AFTER" ]]; then
+    echo "unable to fingerprint .gitignore after ccc index" >&2
+    emit false "$BIN" index-failed
+    exit 0
+  fi
   GITIGNORE_EXISTS_AFTER=1
 else
   GITIGNORE_AFTER=""
