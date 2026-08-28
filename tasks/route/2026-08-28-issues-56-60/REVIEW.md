@@ -193,3 +193,10 @@
 - 実物確認: #1 `contextModeAvailable` キー名が SKILL から消失、#2 `test_mdq_index.setUp` の corpus 作成が `tmpdir()` の return 後に取り残され到達不能、#3 graphify の `gitignoreOk` assert が新テストへ迷子 — いずれも cr1 の worker 実装ミスで、**boss がテスト差分を精読しなかった見落とし**（教訓: 検収は runtime diff だけでなくテスト diff も全行）。
 - 他: #4 空白 bin、#5/#7 codex 行の (state, reviewState) 組み合わせ矛盾、#6 §7 に graph probe の変更未記載、#8 `Fix mdq first` 分岐、#9 sentinel 不使用・空白パス正例欠落（DoD 未達を boss が見逃し）、#10 `-` 先頭 bin、#11 lone surrogate、#12 scope-check の既定 base、#13 述語重複、#14 段落位置、#15 wrap 依存 assert。
 - 計画 `PLAN-cr2.md`（同 branch に追加 commit、版据え置き）。scope-check は `BASE_COMMIT` 必須化（boss 修正）。
+### Sol cr2-R1（PLAN-cr2 rev.1 → rev.2）— (A) 12 件・(B) 1 件
+- CR2-1 `ref-invalid` は実行前 skip → 接尾辞対象を {completed, execution-failed} に／CR2-2 表 5 行の条件句を literal で固定
+- CR2-3 mdq disabled は `bin` 無し（例外明記）／CR2-4 graph disabled の既定名置換は不正時のみ（妥当カスタム bin は維持）
+- CR2-5 CLI 3 probe にも同じ境界値表（33 文字 ×2・surrogate・正例）／CR2-6 非 ASCII パスは stdout.buffer へ UTF-8 直書き＋`PYTHONIOENCODING=ascii` 正例／CR2-7 UTF-8 不能を schema/ADOPTION に
+- CR2-8 既存の改行 bin 正例（test_codex_probe:233）は正例を置換し改行は負例へ移行／CR2-9 先頭 `-` 禁止は撤回、`command -v --` に
+- CR2-10 ADOPTION §7 は期待段落の完全一致＋段落外差分 0／CR2-11 CM literal の 3 キー完全一致／CR2-12 AST で return 後の文 0・必須メソッド名集合／CR2-13 symlink cleanup
+- 判定: **差し戻し（rev.2 で再批判）**

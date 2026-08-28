@@ -1,4 +1,4 @@
-# PLAN-cr2 — PR #62 の `/code-review xhigh` 指摘 15 件の修正（rev.1, 2026-08-28）
+# PLAN-cr2 — PR #62 の `/code-review xhigh` 指摘 15 件の修正（rev.2, 2026-08-28 — Sol cr2-R1 反映）
 
 ## 0. 決定事項
 ユーザー手順（継続）: 修正計画 → Sol → Opus → 実装 → commit → ユーザーが再 code-review。対象 branch は PR #62 の `fix/v0.14.0-code-review-followup`（同 PR に追加 commit）。版 0.14.0 据え置き、tag は最終 merge 後。
@@ -13,22 +13,25 @@
    | complete | null | `⚠ codex-review: review state not recorded [non-blocking]`（新設 — probe 記録はあるが Phase-4 state 記録が無い） | caller 接尾辞（記録値）を付ける |
    | unknown | null | `⚠ codex-review: state unknown (probe record unavailable) [non-blocking]` | なし |
    | complete | 非 null | 既存 4-way（`not-active` は `(<rebind.codex-review.reason>)`） | `available` true のとき caller 接尾辞 |
-   | unknown | 非 null | 既存 4-way。`not-active` は `(reason unavailable)` と表示 | reviewState ∈ {completed, execution-failed, ref-invalid} のときのみ ` (caller info unavailable)`（codex が実行を試みた枝のみ。`not-active`/`skipped-full-run`/`phase4-not-required` には付けない） |
-   共通規則文は「codex-review: invalid-config → review-state-not-recorded → probe-record-unavailable → 4-way」に更新。ADOPTION は変更不要（§7 ④ は unknown 文言の一般形のまま）。
+   | unknown | 非 null | 既存 4-way。`not-active` は `(reason unavailable)` と表示 | reviewState ∈ {completed, execution-failed} のときのみ ` (caller info unavailable)`（codex が実行を試みた枝のみ。`ref-invalid` は実行前 skip — Sol CR2-1。`not-active`/`skipped-full-run`/`phase4-not-required`/`ref-invalid` には付けない） |
+   共通規則文は「codex-review: invalid-config → review-state-not-recorded → probe-record-unavailable → 4-way」に更新。ADOPTION は変更不要（§7 ④ は unknown 文言の一般形のまま）。**SKILL には表 5 行の左辺条件（`state`／`reviewState`／`reason` の組）をそのまま箇条書きの条件句として書き、契約テストは 5 条件句の literal と順序を完全一致で固定**（Sol CR2-2 — モデル実行はテストできないため、条件句の文言を固定する）。
 3. **#8 `Fix mdq first` 分岐**: :124 の無条件記録文に例外 1 句「（except on the gate's "Fix mdq first" branch, which releases the run and ends the audit before anything is recorded）」。
 4. **#14 優先順位段落の位置**: mdq 表の導入文とその箇条書きの間から外し、`PROBE_REBIND` 段落（:651 付近）の直後に**独立段落**として置く（空行で区切る）。出現回数 1 は維持。
 
 ### B. probe の `bin` 検査（#4・#10・#11・#13 — 6 probe 共通契約）
-5. **`bin` の有効条件を 6 probe で統一**: 文字列・非空・**前後に空白なし（`bin == bin.strip()`）・空白のみでない**・ASCII 制御文字（U+0000–U+001F, U+007F）を含まない・**先頭が `-` でない**（#10: `command -v -v` が成功扱いになる）・UTF-8 にエンコード可能（#11: lone surrogate）。違反は `invalid-config`（`enabled:false` 先勝ち → disabled 分岐では出力 bin を既定名に）。内部スペースは許容。
-   - graph 3 probe: python 判定で `bin_name` を 1 回束縛し `valid = …` を 1 つ計算して enabled/disabled 両分岐で使う（#13）。**出力行は文字列を組み立てて `.encode("utf-8")` を try 内で検証してから 1 回だけ print**（部分出力後の except を防ぐ）。
-   - CLI 3 probe（`mdq-index.sh`／`ax-probe.sh`／`codex-probe.sh`）: 判定 python に同じ条件を追加（base64 伝送は不変）。判定表 ID に `bin_ws`（`" codegraph "`）・`bin_wsonly`（`"   "`）・`bin_dash`（`"-v"`）を追加（23 ID）。
-   - `config-schema.md`: 6 seam の行の `bin` 条件を統一文「a non-string, empty, whitespace-only or whitespace-padded, control-character, or leading-`-` `bin` reports `invalid-config`; with `enabled:false` the output falls back to the default name」（表の行のみ。`Its probe reasons are` 以降には触れない）。
-6. **ADOPTION §7（#6）**: ① の `bin` 句を「a non-string, empty, whitespace-padded, control-character, or leading-dash bin」に、**⑦ を追加**（en `the symbolGraph / docGraph / semanticSearch probes now apply the same bin validation (invalid-config instead of not-installed; with enabled:false the displayed bin falls back to the default)`、ja 対応文）。`test_v014_behavior_changes_paragraph` を en 7・ja 7 に。cr1 の「単一置換 bytes 比較」は撤廃し、`git diff ef995f0 -- docs/ADOPTION*.md` の変更行がすべて §7 v0.14.0 段落内（`**v0.14.0 behavior changes:**`／`**v0.14.0 の挙動変更:**` を含む行）であることを検査。
+5. **`bin` の有効条件を 6 probe で統一**: 文字列・非空・**前後に空白なし（`bin == bin.strip()`）・空白のみでない**・ASCII 制御文字（U+0000–U+001F, U+007F）を含まない・**UTF-8 にエンコード可能**（#11: lone surrogate — `json.loads('"\\ud800"')` は受理するため実設定から到達可）。違反は `invalid-config`。`enabled:false` 先勝ち: **disabled 分岐で bin が不正なときだけ**出力 bin を既定名にし、妥当なカスタム bin はそのまま出す（Sol CR2-4 — 現行挙動維持。DoD に `enabled:false`＋妥当カスタム bin → そのまま、を追加）。**mdq の disabled 出力は従来どおり `bin` キー無し**（Sol CR2-3 — `test_mdq_index.py:179` が固定）。内部スペースは許容。
+   **#10（先頭 `-`）は bin の禁止ではなく `command -v -- "$BIN"` で解決**（Sol CR2-9 実測: `command -v -- -v` → rc 1。6 probe の `command -v` に `--` を付ける。`-dir/tool` のような値は引き続き有効）。
+   **非 ASCII の実行パス（Sol CR2-6）**: 伝送出力は `sys.stdout.buffer.write((line+"\n").encode("utf-8"))` で UTF-8 バイトを直接書き（`print` を使わない — `PYTHONIOENCODING=ascii` 下で `é`／日本語パスが落ちる）、CLI 3 probe の base64 復号側も `sys.stdout.buffer` へ書く。6 probe すべてに `PYTHONIOENCODING=ascii` 環境での非 ASCII パス正例（stub が起動し `<seam>Bin` 完全一致）を追加。
+   - graph 3 probe: python 判定で `bin_name` を 1 回束縛し `valid = …` を 1 つ計算して enabled/disabled 両分岐で使う（#13）。**出力行は文字列を組み立てて `.encode("utf-8")` を try 内で検証してから `sys.stdout.buffer` へ 1 回だけ書く**（部分出力後の except を防ぐ）。
+   - CLI 3 probe（`mdq-index.sh`／`ax-probe.sh`／`codex-probe.sh`）: 判定 python に同じ条件を追加（base64 伝送は不変）。**graph と同じ境界値表を適用**（Sol CR2-5）: 判定表 ID に `bin_ws`（`" codegraph "`）・`bin_wsonly`（`"   "`）・`bin_surrogate`（`"\ud800"`）を追加（23 ID）＋ 33 制御文字 × enabled/disabled の全走査（invalid/disabled は sentinel 不起動）＋ 内部スペース正例・非 ASCII 正例（stub 起動 1 回・値完全一致）。**既存 `test_codex_probe.py:233` の改行入り bin 正例は、引用符・バックスラッシュ・内部スペースのみの正例に置き換え、改行は sentinel 付き負例へ移す**（Sol CR2-8 — 削除・弱体化ではなく移行）。
+   - `config-schema.md`: 6 seam の行の `bin` 条件を統一文「a non-string, empty, whitespace-only or whitespace-padded, control-character, or non-UTF-8-encodable `bin` reports `invalid-config`; with `enabled:false` such a `bin` is replaced by the default name in the output (`indexing` omits `bin` when disabled)」（表の行のみ。`Its probe reasons are` 以降には触れない。Sol CR2-3／CR2-7）。
+6. **ADOPTION §7（#6）**: ① の句 `a non-string, empty, or NUL-containing bin` を `a non-string, empty, whitespace-padded, control-character, or non-UTF-8-encodable bin` に（ja: `文字列でない、空、NUL を含む` → `文字列でない、空、前後に空白がある、制御文字を含む、または UTF-8 に符号化できない`）、**⑦ を段落末尾に追加**（en `the symbolGraph / docGraph / semanticSearch probes now apply the same bin validation (invalid-config instead of not-installed; with enabled:false an invalid bin is displayed as the default name)`、ja `symbolGraph / docGraph / semanticSearch の probe も同じ bin 検証を適用します（not-installed ではなく invalid-config を報告し、enabled:false のときは不正な bin を既定名で表示します）`）。`test_v014_behavior_changes_paragraph` を en 7・ja 7 に。
+   **段落全体の完全一致検査（Sol CR2-10）**: §8 の python 片で、`git show ef995f0:docs/ADOPTION*.md` の §7 v0.14.0 段落（`**v0.14.0 behavior changes:**`／`**v0.14.0 の挙動変更:**` で始まる 1 段落）に対し「cr1 の unknown 句置換＋上記 ① 句置換＋末尾に ⑦ 文を 1 スペース区切りで追加」を施した期待段落と、実ファイルの同段落が完全一致し、かつ段落外の差分が 0 行であることを検査。
 
 ### C. テストの修復と強化（#2・#3・#9・#15）
 7. **#2 `test_mdq_index.setUp`**: `write(docs/a.md)` を `setUp` 内に戻す（`tmpdir()` は独立 helper のまま）。回帰防止: `setUp` 後に `os.path.exists(docs/a.md)` を assert するテスト 1 本。
 8. **#3 `test_graphify_probe`**: `test_disabled_by_config` に `assertFalse(out["gitignoreOk"])` を戻し、制御文字テストは独立メソッドに（末尾の迷子 assert を除去）。
-9. **#9 制御文字テストの sentinel**: 3 graph probe の制御文字/空白/dash テストは `_assert_unavailable(..., log)` 相当で **sentinel 不起動**を assert（enabled/disabled 両方）。**内部スペース入りディレクトリの正例**（`bin` = `<tmp>/dir with space/<tool>` の stub、起動され `<seam>Bin` が完全一致）を 3 probe に追加。**cr1 DoD (3) で未実装のまま見逃された「全 reason 分岐の JSON キー集合完全一致」テスト（`test_output_key_sets_per_branch` 同型）も 3 graph probe に追加**（boss 精読で判明）。
+9. **#9 制御文字テストの sentinel**（graph 3 probe。CLI 3 probe は B5 の境界値表に含む）: 3 graph probe の制御文字/空白/dash テストは `_assert_unavailable(..., log)` 相当で **sentinel 不起動**を assert（enabled/disabled 両方）。**内部スペース入りディレクトリの正例**（`bin` = `<tmp>/dir with space/<tool>` の stub、起動され `<seam>Bin` が完全一致）を 3 probe に追加。**cr1 DoD (3) で未実装のまま見逃された「全 reason 分岐の JSON キー集合完全一致」テスト（`test_output_key_sets_per_branch` 同型）も 3 graph probe に追加**（boss 精読で判明）。
 10. **#15 wrap 依存 assert**: `test_cr1_reopen_gate_and_status_order_contracts` の固定 JSON 検査を `normalize_paragraphs()` 経由に。
 11. **#12 `scope-check.py`**（boss 工具、boss が修正）: `BASE_COMMIT` 未指定を error にする（default 撤廃）。
 
@@ -46,13 +49,14 @@ boss Fable。worker: 単一 Stage Terra `medium`。差し戻しは resume。**bo
 
 ## 6. 完了条件（DoD、すべて非 0 終了で判定）
 - (1) `test_v014_contracts.py`: A1 の 3 キー名 literal、A2 の表 5 行の固定文（`review state not recorded`、`(reason unavailable)`、接尾辞条件の文）と順序（invalid-config → review-state-not-recorded → probe-record-unavailable → 4-way）、A3 の例外句、A4 の段落位置（`PROBE_REBIND` 段落の直後・mdq 表の導入文とその箇条書きの間に無い・count==1）、B6 の §7 en 7 文・ja 7 文。
-- (2) 6 probe の判定表テスト（graph 3 probe は全 reason 分岐のキー集合テストを含む）: CLI 3 probe は 23 ID（`bin_ws`/`bin_wsonly`/`bin_dash` 追加、`len(CASES)==23`）、graph 3 probe は 33 制御文字 ×2 ＋ `bin_ws`/`bin_wsonly`/`bin_dash`/`bin_surrogate`（`"\ud800"` は JSON テキスト `"\\ud800"` で投入）×2 ＋ 内部スペース正例 ＋ 全分岐キー集合、**すべて sentinel 不起動を assert**。
+- (2) 6 probe の境界値テスト（同一の表、graph は全 reason 分岐のキー集合テストも）: 判定表 ID は CLI 23（`bin_ws`/`bin_wsonly`/`bin_surrogate` 追加、`len(CASES)==23`）；6 probe とも 33 制御文字 × enabled/disabled ＋ `bin_ws`/`bin_wsonly`/`bin_surrogate`（JSON テキスト `"\\ud800"` で投入）× enabled/disabled は **sentinel 不起動**（invalid-config／disabled-by-config＋既定 bin、mdq disabled は `bin` 無し）；`enabled:false`＋妥当カスタム bin → そのまま出力；正例 3 種（内部スペース入りパス／非 ASCII パス（`PYTHONIOENCODING=ascii` 環境）／引用符・バックスラッシュ入り）は **stub が 1 回起動し `<seam>Bin` 完全一致**。`test_codex_probe.py:233` の改行正例は移行済み（改行は負例）。
 - (3) `test_mdq_index.py`: `setUp` が `docs/a.md` を作る assert、`tmpdir()` 内に到達不能文が無い（`python3 -m pyflakes` 相当は不要 — boss が精読）。`test_graphify_probe.py::test_disabled_by_config` に `gitignoreOk` assert。
 - (4) フルスイート rc=0・skip 0（`Ran N`）。`bash -n` 6 probe。
 - (5) 禁止ファイル `git diff --quiet ef995f0 -- probe-record.py decide-verdict.py start-run.py write-evidence.py open-run.py mdq-health.py skills/init/SKILL.md agents tests/data .claude-plugin engine-shas.json tests/test_v013_contracts.py tests/test_v0132_contracts.py tests/test_v0131_docs_contracts.py`。
 - (6) `BASE_COMMIT=ef995f0 SCOPE_COMMIT=<boss commit> BOSS_COMMIT=<同> python3 scope-check.py`（allowlist は cr2 用）。
 - (7) ADOPTION 差分行がすべて §7 v0.14.0 段落行（§8 の python 片）。
-- (8) **boss**: 変更テストファイル全行の diff 精読（fixture・assert の迷子・到達不能文が無いこと）。
+- (8) **機械検査（Sol CR2-12）**: §8 の AST 片で、変更テストファイルに「無条件 `return` の後の文」が 0 件、必須メソッド名集合（`test_setup_creates_corpus`（mdq）、`test_disabled_by_config`（3 graph、`gitignoreOk` assert は graphify）、`test_output_key_sets_per_branch`（6 probe）、`test_bin_boundary_table`（6 probe）、`test_bin_positive_paths`（6 probe）、`test_cr2_codex_state_table_and_cm_shape`（v014））が存在。加えて **boss** が変更テストの diff を全行精読。`test_probe_record.py:221` の兄弟 symlink は `addCleanup(os.unlink, link)`（CR2-13）。
+- (9) A1 の合成 JSON: §8 で SKILL から `{"contextModeAvailable":` で始まる literal を抽出し、キー集合が {contextModeAvailable, contextModeHealthy, status} と完全一致・余分キー無し（Sol CR2-11）。
 
 ## 7. 変更範囲
 **許可**: `skills/audit/SKILL.md`、`skills/audit/scripts/{mdq-index.sh,ax-probe.sh,codex-probe.sh,codegraph-probe.sh,graphify-probe.sh,cocoindex-probe.sh}`、`skills/audit/references/config-schema.md`、`docs/ADOPTION.md`、`docs/ADOPTION.ja.md`（§7 v0.14.0 段落のみ）、
@@ -64,17 +68,43 @@ boss Fable。worker: 単一 Stage Terra `medium`。差し戻しは resume。**bo
 python3 -m unittest discover -s tests -t . -v > /tmp/cr2-full.log 2>&1; rc=$?; tail -3 /tmp/cr2-full.log; test $rc -eq 0 || exit 1; test "$(grep -c ' \.\.\. skipped' /tmp/cr2-full.log)" -eq 0 || exit 1
 python3 -m unittest -v tests.test_mdq_index tests.test_ax_probe tests.test_codex_probe tests.test_codegraph_probe tests.test_graphify_probe tests.test_cocoindex_probe tests.test_v014_contracts tests.test_v0132_contracts tests.test_v013_contracts tests.test_probe_record || exit 1
 bash -n skills/audit/scripts/mdq-index.sh skills/audit/scripts/ax-probe.sh skills/audit/scripts/codex-probe.sh skills/audit/scripts/codegraph-probe.sh skills/audit/scripts/graphify-probe.sh skills/audit/scripts/cocoindex-probe.sh || exit 1
-test "$(grep -c 'contextModeAvailable' skills/audit/SKILL.md)" -ge 1 || exit 1
+python3 - <<'PY' || exit 1
+import re,sys,ast,subprocess
+skill=open('skills/audit/SKILL.md',encoding='utf-8').read()
+m=re.search(r'\{"contextModeAvailable":[^}]*\}',skill); assert m, 'CM literal missing'
+keys=re.findall(r'"([A-Za-z]+)":',m.group(0)); assert keys==['contextModeAvailable','contextModeHealthy','status'], keys
+files=[l for l in subprocess.run(['git','diff','--name-only','ef995f0','HEAD','--','tests/'],capture_output=True,text=True).stdout.split()]+[l for l in subprocess.run(['git','status','--porcelain','--','tests/'],capture_output=True,text=True).stdout.split()[1::2]]
+bad=[]
+for f in sorted(set(files)):
+    tree=ast.parse(open(f,encoding='utf-8').read())
+    for node in ast.walk(tree):
+        if isinstance(node,(ast.FunctionDef,ast.AsyncFunctionDef)):
+            body=node.body
+            for i,st in enumerate(body[:-1]):
+                if isinstance(st,ast.Return): bad.append(f'{f}:{st.lineno} statement after return in {node.name}')
+names={n.name for f in files for n in ast.walk(ast.parse(open(f,encoding='utf-8').read())) if isinstance(n,ast.FunctionDef)}
+for req in ('test_setup_creates_corpus','test_output_key_sets_per_branch','test_bin_boundary_table','test_bin_positive_paths','test_cr2_codex_state_table_and_cm_shape'):
+    if req not in names: bad.append('missing test '+req)
+print('\n'.join(bad) or 'tests-ast-clean'); sys.exit(1 if bad else 0)
+PY
 git diff --quiet ef995f0 -- skills/audit/scripts/probe-record.py skills/audit/scripts/decide-verdict.py skills/audit/scripts/start-run.py skills/audit/scripts/write-evidence.py skills/audit/scripts/open-run.py skills/audit/scripts/mdq-health.py skills/init/SKILL.md agents tests/data .claude-plugin skills/audit/references/engine-shas.json tests/test_v013_contracts.py tests/test_v0132_contracts.py tests/test_v0131_docs_contracts.py && echo forbidden-clean || exit 1
 BASE_COMMIT=ef995f0 SCOPE_COMMIT=<boss commit> BOSS_COMMIT=<boss commit> python3 tasks/route/2026-08-28-issues-56-60/scope-check.py || exit 1
 python3 - <<'PY' || exit 1
-import subprocess,sys
+import subprocess,sys,re
+R={'docs/ADOPTION.md':('**v0.14.0 behavior changes:**',[('state unknown after resume','state unknown (probe record unavailable)'),('a non-string, empty, or NUL-containing bin','a non-string, empty, whitespace-padded, control-character, or non-UTF-8-encodable bin')],' the symbolGraph / docGraph / semanticSearch probes now apply the same bin validation (invalid-config instead of not-installed; with enabled:false an invalid bin is displayed as the default name).'),
+   'docs/ADOPTION.ja.md':('**v0.14.0 の挙動変更:**',[('state unknown after resume','state unknown (probe record unavailable)'),('文字列でない、空、NUL を含む','文字列でない、空、前後に空白がある、制御文字を含む、または UTF-8 に符号化できない')],'symbolGraph / docGraph / semanticSearch の probe も同じ bin 検証を適用します（not-installed ではなく invalid-config を報告し、enabled:false のときは不正な bin を既定名で表示します）。')}
+def para(text,marker):
+    ps=re.split(r'\n\s*\n',text); c=[p for p in ps if p.startswith(marker)]; assert len(c)==1,(marker,len(c)); return c[0]
 bad=[]
-for f,marker in (('docs/ADOPTION.md','**v0.14.0 behavior changes:**'),('docs/ADOPTION.ja.md','**v0.14.0 の挙動変更:**')):
-    d=subprocess.run(['git','diff','ef995f0','--',f],capture_output=True,text=True,check=True).stdout
-    lines=[l for l in d.splitlines() if l[:1] in '+-' and not l.startswith(('+++','---'))]
-    for l in lines:
-        if marker not in l: bad.append(f+': '+l[:80])
-print('\n'.join(bad) or 'adoption-scope-clean'); sys.exit(1 if bad else 0)
+for f,(marker,subs,tail) in R.items():
+    base=subprocess.run(['git','show','ef995f0:'+f],capture_output=True,text=True,check=True).stdout
+    cur=open(f,encoding='utf-8').read()
+    exp=para(base,marker)
+    for a,b in subs:
+        assert exp.count(a)==1,(f,a); exp=exp.replace(a,b)
+    exp=exp.rstrip()+tail
+    if para(cur,marker).rstrip()!=exp: bad.append(f+': §7 paragraph differs from expectation')
+    if base.replace(para(base,marker),'')!=cur.replace(para(cur,marker),''): bad.append(f+': changes outside the §7 paragraph')
+print('\n'.join(bad) or 'adoption-paragraph-clean'); sys.exit(1 if bad else 0)
 PY
 ```
