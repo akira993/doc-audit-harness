@@ -158,3 +158,9 @@
 - CR1-9/10 DoD (7)〜(9) が失敗を捨てる → rc 保存＋`|| exit 1`、scope-check.py（cr1 用 allowlist）で集合比較
 - CR1-11 graph probe 全分岐のキー集合検査 → 追加／CR1-12 mkdtemp は機械判定（grep 0）
 - 判定: **差し戻し（rev.2 で再批判）**
+### Sol CR1-R2（rev.2 → rev.3）— (A) 5 件・(B) 4 件
+- CR2-1 Phase 0 再実行の制御（確認ゲート再評価・Phase 0.5 ちょうど 1 回）→ 固定文を明確化、位置・回数 assert
+- CR2-2 `state unknown after resume` は fresh run の書き込み失敗で事実誤認 → 7 行を `state unknown (probe record unavailable)` に、ADOPTION §7 ④ en/ja・契約テストを同時更新（docs を許可範囲に追加）
+- CR2-3 graph probe の `enabled:false` 先勝ち → 維持し disabled 分岐の bin を既定名へ正規化／CR2-4 全 7 表で unknown → invalid-config → その他の順序／CR2-5 `BASE_COMMIT=ef995f0`
+- CR2-6〜9 テスト判別力（位置・rebind 完全一致・制御文字 33 文字＋空白パス正例・識別子 `mkdtemp`）→ 反映
+- 判定: **差し戻し（rev.3 で再批判）**
