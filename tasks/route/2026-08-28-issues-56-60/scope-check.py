@@ -5,10 +5,11 @@ T='tasks/route/2026-08-28-issues-56-60/'
 def show(c,p): return subprocess.run(['git','show',f'{c}:{p}'],capture_output=True,text=True,check=True).stdout
 def z(cmd): return [p for p in subprocess.run(cmd,capture_output=True,text=True,check=True).stdout.split('\0') if p]
 allow={l.strip() for l in show(os.environ['SCOPE_COMMIT'],T+'allowlist.txt').splitlines() if l.strip() and not l.startswith('#')}|{T+'release-handoff.sh'}
-logs=[T+'*-session.log',T+'*-prompt.md',T+'*-answer.md',T+'investigate-*',T+'*.log',T+'*-report.md',T+'stage*']
-boss_docs=[T+n for n in ('PLAN.md','REVIEW.md','allowlist.txt','baseline-hashes.txt','59-design-note.md','scope-check.py')]
+logs=[T+'*-session.log',T+'*-prompt.md',T+'*-answer.md',T+'investigate-*',T+'*.log',T+'*-report.md',T+'*-report[0-9].md',T+'stage*',T+'final-review.md',T+'pr-body*.md']
+boss_docs=[T+n for n in ('PLAN.md','PLAN-cr1.md','PLAN-cr2.md','PLAN-cr3.md','REVIEW.md','allowlist.txt','baseline-hashes.txt','59-design-note.md','scope-check.py')]
 bad=[]
-changed=set(z(['git','diff','--name-only','-z','dfdb8a9','HEAD']))
+BASE=os.environ['BASE_COMMIT']  # 必須: このブランチの merge-base（例 ef995f0）
+changed=set(z(['git','diff','--name-only','-z',BASE,'HEAD']))
 st=z(['git','status','--porcelain=v1','-z','--untracked-files=all']); i=0
 while i<len(st):
     code,path=st[i][:2],st[i][3:]; changed.add(path)
@@ -25,11 +26,15 @@ roots=['.envrc','.gitignore','.claude/settings.local.json','data','.serena','doc
 def enum():
     out={}
     for r in roots:
-        paths=[r] if not os.path.isdir(r) else [os.path.join(d,f) for d,_,fs in os.walk(r) for f in fs]
+        paths=[r]
+        if os.path.isdir(r) and not os.path.islink(r):
+            for d,ds,fs in os.walk(r):
+                paths+= [os.path.join(d,x) for x in ds]+[os.path.join(d,x) for x in fs]
         for p in paths:
             if not os.path.lexists(p): continue
-            s=os.lstat(p); kind='symlink' if stat.S_ISLNK(s.st_mode) else 'file' if stat.S_ISREG(s.st_mode) else 'other'
+            s=os.lstat(p); kind='symlink' if stat.S_ISLNK(s.st_mode) else 'file' if stat.S_ISREG(s.st_mode) else 'dir' if stat.S_ISDIR(s.st_mode) else 'other'
             h=hashlib.sha256(open(p,'rb').read()).hexdigest() if kind=='file' else hashlib.sha256(os.readlink(p).encode() if kind=='symlink' else b'').hexdigest()
+            if kind=='file' and s.st_nlink!=1: kind='hardlinked-file'
             out[p]=(h,oct(stat.S_IMODE(s.st_mode)),kind)
     return out
 base={}

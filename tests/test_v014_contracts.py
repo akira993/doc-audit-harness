@@ -22,20 +22,20 @@ def normalize_paragraphs(text):
 class TestV014Contracts(unittest.TestCase):
     def test_v014_behavior_changes_paragraph(self):
         en = [
-            "indexing / contextMode / webExtract / codexReview keys now require a JSON boolean enabled; unless enabled is false, a non-boolean enabled, a non-object key (including null), or — for indexing / webExtract / codexReview — a non-string, empty, or NUL-containing bin reports invalid-config and never runs the tool (an absent key still defaults to enabled; a non-string bin is no longer coerced; an unreadable config still stops the audit before Phase 0 as before)",
+            "indexing / contextMode / webExtract / codexReview keys now require a JSON boolean enabled; unless enabled is false, a non-boolean enabled, a non-object key (including null), or — for indexing / webExtract / codexReview — a non-string, empty, whitespace-only, whitespace-padded, ASCII-control-character (U+0000–U+001F or U+007F), or non-UTF-8-encodable bin reports invalid-config and never runs the tool (an absent key still defaults to enabled; a non-string bin is no longer coerced; an unreadable config still stops the audit before Phase 0 as before)",
             "an invalid indexing key fires the Phase-0 mdq confirmation gate like not-installed",
             "codexReview.required:true combined with an invalid codexReview key is now REFUSED instead of silently running codex",
-            "Phase-0 probe results are persisted to $RUN_DIR/phase0-probes.json (display-only, never a verdict input); Phase-5 status lines are rendered from that record on fresh and resumed runs and print \"state unknown after resume\" when it is missing or unreadable",
+            "Phase-0 probe results are persisted to $RUN_DIR/phase0-probes.json (display-only, never a verdict input); Phase-5 status lines are rendered from that record on fresh and resumed runs and print \"state unknown (probe record unavailable)\" when it is missing or unreadable",
             "the codex probe reports the caller's CODEX_HOME and whether auth.json exists there (display-only; a wrapper's own environment is not observed)",
-            "import-audit-scope.py accepts an absolute --config/--scope path under the repository root (POSIX paths only)",
+            "import-audit-scope.py accepts an absolute --config/--scope path under the repository root (POSIX paths only)", "the symbolGraph / docGraph / semanticSearch probes now apply the same bin validation: a newly rejected bin reports invalid-config before the tool lookup, and with enabled:false an invalid bin is displayed as the default name.",
         ]
         ja = [
             "`indexing`、`contextMode`、`webExtract`、`codexReview` のキーでは、`enabled` は JSON の真偽値でなければなりません。",
             "`indexing` キーが不正な場合は、未インストール時と同じく Phase 0 の mdq 確認ゲートが起動します。",
             "`codexReview.required:true` と不正な `codexReview` キーを組み合わせた場合は、codex を黙って実行せず `REFUSED` になります。",
-            "Phase 0 の probe 結果は `$RUN_DIR/phase0-probes.json` に保存されます（表示専用で、verdict の入力にはなりません）。Phase 5 の状態行は初回実行でも再開実行でもその記録から描画され、記録が無いか読めない場合は「state unknown after resume」と表示されます。",
+            "Phase 0 の probe 結果は `$RUN_DIR/phase0-probes.json` に保存されます（表示専用で、verdict の入力にはなりません）。Phase 5 の状態行は初回実行でも再開実行でもその記録から描画され、記録が無いか読めない場合は「state unknown (probe record unavailable)」と表示されます。",
             "codex probe は呼び出し元の `CODEX_HOME` と、そこに `auth.json` があるかどうかを報告します（表示専用で、wrapper 自身の環境は観測されません）。",
-            "`import-audit-scope.py` はリポジトリルート配下の絶対パスの `--config`／`--scope` を受け付けます（POSIX パスのみ）。",
+            "`import-audit-scope.py` はリポジトリルート配下の絶対パスの `--config`／`--scope` を受け付けます（POSIX パスのみ）。", "symbolGraph / docGraph / semanticSearch の probe も同じ bin 検証を適用します。新たに拒否される bin はツール探索の前に invalid-config を報告し、enabled:false のときは不正な bin を既定名で表示します。",
         ]
         for path, heading, expected in (
                 ("docs/ADOPTION.md", "**v0.14.0 behavior changes:**", en),
@@ -43,7 +43,7 @@ class TestV014Contracts(unittest.TestCase):
             paragraphs = normalize_paragraphs(read(path))
             paragraph = next((p for p in paragraphs if p.startswith(heading)), None)
             self.assertIsNotNone(paragraph, path)
-            self.assertEqual(sum(sentence.replace("`", "") in paragraph for sentence in expected), 6)
+            self.assertEqual(sum(sentence.replace("`", "") in paragraph for sentence in expected), 7)
             for sentence in expected:
                 self.assertIn(sentence.replace("`", ""), paragraph.replace("`", ""))
 
@@ -87,7 +87,7 @@ class TestV014Contracts(unittest.TestCase):
         phase0 = skill.split("## Phase 0 —", 1)[1].split("## Phase 0.5", 1)[0]
         self.assertIn("`MDQ_REASON`", phase0)
         self.assertIn("`AX_REASON`", phase0)
-        self.assertIn("Rows 6–8 are defenses for direct probe invocation; an unreadable config stops before Phase 0.", phase0)
+        self.assertIn("An unreadable, non-object, or absent config makes the probe report invalid-config only when the probe is invoked directly; in a normal audit such a config stops before Phase 0.", phase0)
 
     def test_cm_enabled_expression_decision_table(self):
         skill = read("skills/audit/SKILL.md")
@@ -193,18 +193,18 @@ class TestV014Contracts(unittest.TestCase):
         phase5 = skill.split("## Phase 5", 1)[1]
         self.assertIn('probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --read', phase5)
         for line in (
-                "⚠ mdq: state unknown after resume [non-blocking]",
-                "⚠ context-mode: state unknown after resume [non-blocking]",
-                "⚠ ax: state unknown after resume [non-blocking]",
-                "⚠ symbol-graph: state unknown after resume [non-blocking]",
-                "⚠ doc-graph: state unknown after resume [non-blocking]",
-                "⚠ semantic-search: state unknown after resume [non-blocking]",
-                "⚠ codex-review: state unknown after resume [non-blocking]",
+                "⚠ mdq: state unknown (probe record unavailable) [non-blocking]",
+                "⚠ context-mode: state unknown (probe record unavailable) [non-blocking]",
+                "⚠ ax: state unknown (probe record unavailable) [non-blocking]",
+                "⚠ symbol-graph: state unknown (probe record unavailable) [non-blocking]",
+                "⚠ doc-graph: state unknown (probe record unavailable) [non-blocking]",
+                "⚠ semantic-search: state unknown (probe record unavailable) [non-blocking]",
+                "⚠ codex-review: state unknown (probe record unavailable) [non-blocking]",
                 "💡 codex-review: not run (phase 4 not required)"):
             self.assertIn(line, phase5)
         for literal in (
-                "CODEX_REVIEW_STATE=not-active", "CODEX_REVIEW_STATE=skipped-full-run",
-                "CODEX_REVIEW_STATE=completed", "CODEX_REVIEW_STATE` ∈ `{execution-failed, ref-invalid}"):
+                "`not-active` is", "`skipped-full-run` is",
+                "`completed` is", "`execution-failed`/`ref-invalid` is"):
             self.assertIn(literal, phase5)
         codex_block = phase5.split("**codex-review status line**", 1)[1].split(
             "**code-review status line**", 1)[0]
@@ -212,11 +212,11 @@ class TestV014Contracts(unittest.TestCase):
         self.assertIn(
             "⚠ codex-review: doc-audit.json codexReview is invalid — not probed this run; fix the key. [non-blocking]",
             codex_block)
-        for later in ("CODEX_REVIEW_STATE=phase4-not-required",
+        for later in ("`phase4-not-required` is",
                       "rebind.codex-review.reviewState=null",
-                      "CODEX_REVIEW_STATE=not-active"):
+                      "`not-active` is"):
             self.assertLess(codex_block.index(invalid), codex_block.index(later))
-        self.assertIn("caller info unknown after resume", phase5)
+        self.assertIn("caller info unavailable", phase5)
         self.assertNotIn('callerCodexHome"]', skill)
 
     def test_probe_record_resume_evidence_and_guardrail_contracts(self):
@@ -229,6 +229,53 @@ class TestV014Contracts(unittest.TestCase):
         self.assertIn("`$RUN_DIR/phase0-probes.json` stores raw probe output for display only", skill)
         verdict = read("skills/audit/scripts/decide-verdict.py")
         self.assertNotIn("phase0-probes", verdict)
+
+    def test_cr1_reopen_gate_and_status_order_contracts(self):
+        skill = read("skills/audit/SKILL.md")
+        reopen = skill.split("approved config write invalidates", 1)[1].split("## Phase 0.5", 1)[0]
+        fixed = "Then re-run Phase 0 from its first step on the new run"
+        for earlier, later in (("open-run.py", "if the reopen fails"),
+                               ("if the reopen fails", "Only on success bind `RUNID`,"),
+                               ("Only on success bind `RUNID`,", fixed),
+                               (fixed, "## Phase 0.5")):
+            self.assertLess(skill.index(earlier, skill.index("approved config write invalidates")), skill.index(later, skill.index("approved config write invalidates")))
+        self.assertEqual(skill.count(fixed), 1)
+        self.assertIn("never reuse an earlier answer", reopen)
+        self.assertTrue(any('bind MDQ_HEALTH_PROBE_JSON to {"files":0,"chunks":0,"searchSmoke":false,"healthy":false,"status":"probe-error"}' in p for p in normalize_paragraphs(skill)))
+        self.assertIn('Whether the gate fired, did not fire, or was skipped because PHASE3_BACKEND_CONFIG is codex, always record the resulting MDQ_DEGRADE (except on the gate\'s "Fix mdq first" branch', skill)
+        self.assertIn('contextModeHealthy` is always `null`', skill)
+        self.assertIn('contextModeHealthy:false` and `status:"probe-error"`', skill)
+        self.assertEqual(skill.count("(caller info unavailable)"), 1)
+        self.assertNotIn("caller info unknown after resume", skill)
+        self.assertNotIn("When `CODEX_REVIEW_AVAILABLE=true`, append", skill)
+        self.assertIn("When `rebind.codex-review.available` is true, append the caller suffix", skill)
+        phase5 = skill.split("## Phase 5", 1)[1]
+        rule = "Within each status-line table the first matching bullet wins: the whole-record unknown bullet (when the table has one) comes first, the invalid-config bullet second, then the remaining states; for codex-review use invalid-config → review-state-not-recorded → probe-record-unavailable → 4-way."
+        self.assertEqual(phase5.count(rule), 1)
+        for unknown, invalid in (("rebind.mdq.state=unknown", "MDQ_REASON=invalid-config"),
+                                 ("rebind.context-mode.state=unknown", "CM_STATUS=invalid-config"),
+                                 ("rebind.ax.state=unknown", "AX_REASON=invalid-config"),
+                                 ("rebind.symbol-graph.state=unknown", "SYMBOL_GRAPH_REASON=invalid-config"),
+                                 ("rebind.doc-graph.state=unknown", "DOC_GRAPH_REASON=invalid-config"),
+                                 ("rebind.semantic-search.state=unknown", "SEMANTIC_SEARCH_REASON=invalid-config")):
+            self.assertLess(phase5.index(unknown), phase5.index(invalid))
+        codex = phase5.split("**codex-review status line**", 1)[1].split("**code-review", 1)[0]
+        self.assertLess(codex.index("invalid-config"), codex.index("reviewState=null"))
+        self.assertLess(codex.index("reviewState=null"), codex.index("`phase4-not-required` is"))
+
+    def test_cr2_codex_state_table_and_cm_shape(self):
+        skill=read("skills/audit/SKILL.md"); p0=skill[skill.index("## Phase 0 "):skill.index("## Phase 0.5")]
+        sentence='synthesize `CM_PROBE_JSON` as exactly `{"contextModeAvailable":<CM_AVAILABLE>,"contextModeHealthy":<bool or null>,"status":"<CM_STATUS>"}` (JSON boolean/null values, not quoted text): when `CM_AVAILABLE` is false, `contextModeHealthy` is always `null`; when `CM_AVAILABLE` is true and `CM_HEALTHY` is unbound, normalize to `contextModeHealthy:false` and `status:"probe-error"`; otherwise use the bound values.'
+        self.assertEqual(p0.count(sentence),1); self.assertEqual(skill.count('{"contextModeAvailable":'),1)
+        block=skill.split("**codex-review status line**",1)[1].split("**code-review",1)[0]
+        clauses=["state=complete` and `rebind.codex-review.reason=invalid-config", "state=complete` and `rebind.codex-review.reviewState=null", "state=unknown` and `rebind.codex-review.reviewState=null", "state=complete` and `rebind.codex-review.reviewState` is non-null", "state=unknown` and `rebind.codex-review.reviewState` is non-null"]
+        self.assertEqual([block.index(x) for x in clauses],sorted(block.index(x) for x in clauses))
+
+    def test_cr2_config_schema_bin_rows(self):
+        schema=read("skills/audit/references/config-schema.md")
+        for seam in ("indexing","webExtract","codexReview","symbolGraph","docGraph","semanticSearch"):
+            line=next(x for x in schema.splitlines() if x.startswith("| `"+seam+"` |"))
+            for term in ("whitespace-only or whitespace-padded", "ASCII-control-character (U+0000–U+001F or U+007F)", "non-UTF-8-encodable"): self.assertIn(term,line)
 
 
 if __name__ == "__main__":

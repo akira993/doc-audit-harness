@@ -48,6 +48,11 @@ class TestProbeRecord(unittest.TestCase):
         os.makedirs(self.run)
         self.evidence = json.dumps({"runDir": self.run})
 
+    def tmpdir(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        return temp.name
+
     def command(self, *extra, input=None, root=None, evidence=None, runid=RUNID):
         return subprocess.run(
             [sys.executable, SCRIPT, "--repo-root", root or self.root, "--runid", runid,
@@ -166,6 +171,22 @@ class TestProbeRecord(unittest.TestCase):
         self.assertEqual(display, "x" * 199 + "\\n")
         self.assertNotIn("\n", display)
 
+    def test_context_normalization_and_display_controls_are_one_line(self):
+        for available, healthy, status, expected in (
+                (False, None, "not-installed", {"state": "complete", "available": False, "healthy": None, "status": "not-installed"}),
+                (True, False, "probe-error", {"state": "complete", "available": True, "healthy": False, "status": "probe-error"})):
+            with self.subTest(available=available):
+                self.write("contextMode", {"contextModeAvailable": available, "contextModeHealthy": healthy, "status": status})
+                self.assertEqual(self.read()["rebind"]["context-mode"], expected)
+                path = os.path.join(self.run, "phase0-probes.json")
+                os.unlink(path)
+        codex = probes()["codexReview"].copy()
+        codex["callerCodexHome"] = "a\x85b\u2028c\u2029d\ne"
+        self.write("codexReview", codex)
+        display = self.read()["rebind"]["codex-review"]["callerCodexHomeDisplay"]
+        self.assertNotIn("\n", display)
+        self.assertEqual(len(display.splitlines()), 1)
+
     def test_codex_review_state_without_probe_keeps_review_state(self):
         self.write("codexReviewState", {"state": "completed"})
         codex = self.read()["rebind"]["codex-review"]
@@ -176,13 +197,13 @@ class TestProbeRecord(unittest.TestCase):
             self.assertIsNone(codex[key])
 
     def test_symlinks_identity_and_symlink_repo_root(self):
-        other = tempfile.mkdtemp()
-        root2 = tempfile.mkdtemp()
+        other = self.tmpdir()
+        root2 = self.tmpdir()
         os.symlink(other, os.path.join(root2, ".claude"))
         proc = self.command("--read", root=root2,
                             evidence=json.dumps({"runDir": os.path.join(root2, ".claude", "state", "docaudit-run", RUNID)}))
         self.assertEqual(proc.returncode, 2)
-        external = tempfile.mkdtemp()
+        external = self.tmpdir()
         other_runid = "20260828T123457Z-deadbeef"
         os.symlink(external, os.path.join(self.root, ".claude", "state", "docaudit-run", other_runid))
         proc = self.command("--read", runid=other_runid,
@@ -199,6 +220,7 @@ class TestProbeRecord(unittest.TestCase):
         self.assertEqual(invalid.returncode, 2)
         link = self.root + "-link"
         os.symlink(self.root, link)
+        self.addCleanup(os.unlink, link)
         accepted = self.command("--read", root=link)
         self.assertEqual(accepted.returncode, 0, accepted.stderr)
 

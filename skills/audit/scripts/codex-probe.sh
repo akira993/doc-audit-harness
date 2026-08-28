@@ -36,14 +36,17 @@ try:
             if seam.get("enabled") is False: state="disabled"
             elif "bin" in seam:
                 value=seam["bin"]
-                if not isinstance(value,str) or not value or "\0" in value: raise ValueError
+                if (not isinstance(value,str) or not value or value != value.strip()
+                    or any(ord(c) <= 31 or ord(c) == 127 for c in value)): raise ValueError
+                value.encode("utf-8")
                 binary=value
 except Exception:
     state="invalid"; binary="codex"
-print(state+"\t"+base64.b64encode(binary.encode()).decode())
+line=state+"\t"+base64.b64encode(binary.encode("utf-8")).decode("ascii")+"\n"
+sys.stdout.buffer.write(line.encode("utf-8"))
 ' "$CONFIG_SET" "$CONFIG")"
 IFS=$'\t' read -r CONFIG_STATE BIN_B64 <<< "$DECISION"
-BIN="$(python3 -c 'import base64,sys; print(base64.b64decode(sys.argv[1]).decode(),end="")' "$BIN_B64")"
+BIN="$(python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.argv[1]))' "$BIN_B64")"
 
 CALLER_HOME=""; CALLER_SOURCE="unknown"; CALLER_AUTH="unknown"; CALLER_NULL=1
 if [[ -n "${CODEX_HOME:-}" ]]; then
@@ -60,7 +63,7 @@ emit_json() {
 version=None if sys.argv[3]=="__NULL__" else sys.argv[3]
 commands=[] if sys.argv[4]=="0" else [sys.argv[2]+" --version",sys.argv[2]+" exec --help"]
 home=None if sys.argv[9]=="1" else sys.argv[6]
-print(json.dumps({"codexReviewAvailable":sys.argv[1]=="1","codexReviewBin":sys.argv[2],"codexReviewVersion":version,"probeCommands":commands,"reason":sys.argv[5],"callerCodexHome":home,"callerCodexHomeSource":sys.argv[7],"callerAuthFile":sys.argv[8]}))' \
+sys.stdout.buffer.write((json.dumps({"codexReviewAvailable":sys.argv[1]=="1","codexReviewBin":sys.argv[2],"codexReviewVersion":version,"probeCommands":commands,"reason":sys.argv[5],"callerCodexHome":home,"callerCodexHomeSource":sys.argv[7],"callerAuthFile":sys.argv[8]})+"\n").encode("utf-8"))' \
     "$1" "$2" "$3" "$4" "$5" "$CALLER_HOME" "$CALLER_SOURCE" "$CALLER_AUTH" "$CALLER_NULL"
 }
 
@@ -73,7 +76,7 @@ if [[ "$CONFIG_STATE" == "disabled" ]]; then
   exit 0
 fi
 
-if ! command -v "$BIN" >/dev/null 2>&1; then
+if ! command -v -- "$BIN" >/dev/null 2>&1; then
   emit_json 0 "$BIN" __NULL__ 0 not-installed
   exit 0
 fi

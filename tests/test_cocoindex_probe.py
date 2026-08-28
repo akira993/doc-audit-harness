@@ -49,17 +49,48 @@ def run_raw(repo, args, extra_env=None):
 
 class TestCocoindexProbe(unittest.TestCase):
     def setUp(self):
-        self.repo = tempfile.mkdtemp()
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = self.temp.name
+
+    def tmpdir(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        return temp.name
 
     def test_not_installed_degrades(self):
         out = run_script(self.repo, {"semanticSearch": {"bin": "ccc-does-not-exist-zzz"}})
         self.assertFalse(out["semanticSearchAvailable"])
         self.assertEqual(out["reason"], "not-installed")
 
+    def test_json_emit_is_ascii_one_line(self):
+        bin_name = "to\u2028ol-none"
+        cfg = os.path.join(self.repo, ".claude", "json-emit.json")
+        write(cfg, json.dumps({"semanticSearch": {"bin": bin_name}}))
+        proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+                              capture_output=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(proc.stdout.isascii())
+        self.assertEqual(len(proc.stdout.decode().splitlines()), 1)
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["semanticSearchBin"], bin_name)
+        self.assertEqual(out["reason"], "not-installed")
+
     def test_disabled_by_config(self):
         out = run_script(self.repo, {"semanticSearch": {"enabled": False}})
         self.assertFalse(out["semanticSearchAvailable"])
         self.assertEqual(out["reason"], "disabled-by-config")
+
+    def test_control_character_bins_are_rejected_or_normalized_when_disabled(self):
+        for code in (*range(32), 127):
+            with self.subTest(code=code):
+                value = "tool" + chr(code)
+                out = run_script(self.repo, {"semanticSearch": {"bin": value}})
+                self.assertEqual(out["reason"], "invalid-config")
+                self.assertEqual(out["semanticSearchBin"], "ccc")
+                out = run_script(self.repo, {"semanticSearch": {"enabled": False, "bin": value}})
+                self.assertEqual(out["reason"], "disabled-by-config")
+                self.assertEqual(out["semanticSearchBin"], "ccc")
 
     def test_not_initialized_never_calls_init(self):
         # The single most safety-critical test in this whole plan: an absent
@@ -106,10 +137,29 @@ class TestCocoindexProbe(unittest.TestCase):
         write(os.path.join(self.repo, ".cocoindex_code", "settings.yml"), "{}\n")
 
     def _default_stub(self):
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         log = os.path.join(bindir, "calls.log")
         make_exec(os.path.join(bindir, "ccc"), stub(log))
         return log, {"PATH": bindir + os.pathsep + os.environ["PATH"]}
+
+    def _sentinel_env(self, value):
+        bindir = self.tmpdir()
+        names = []
+        for name in ("ccc", value, value.strip()):
+            if not name or "\0" in name or name in names:
+                continue
+            try:
+                name.encode("utf-8")
+            except UnicodeEncodeError:
+                continue
+            names.append(name)
+        markers = []
+        for index, name in enumerate(names):
+            marker = os.path.join(bindir, "marker-%d" % index)
+            make_exec(os.path.join(bindir, name),
+                      '#!/bin/sh\nprintf called >> "%s"\n' % marker)
+            markers.append(marker)
+        return {"PATH": bindir + os.pathsep + os.environ["PATH"]}, markers
 
     def _assert_unavailable(self, out, reason, log):
         self.assertEqual(set(out), {"semanticSearchAvailable", "semanticSearchBin", "reason"})
@@ -291,6 +341,96 @@ class TestCocoindexProbe(unittest.TestCase):
         self.assertEqual(out["reason"], "index-failed")
         self.assertFalse(os.path.exists(log), "ccc must not run when fingerprinting fails")
         self.assertEqual(len(proc.stderr.splitlines()), 1)
+
+    def test_bin_boundary_table(self):
+        controls = set(range(32)) | {127}
+        self.assertEqual(controls, set(range(32)) | {127})
+        values = (["to" + chr(c) + "ol" for c in controls] +
+                  [" ccc", "ccc ", " ccc ", "\u00a0ccc", "   ", "\ud800"])
+        for value in values:
+            for enabled in (True, False):
+                with self.subTest(value=repr(value), enabled=enabled):
+                    self._marker()
+                    env, markers = self._sentinel_env(value)
+                    out = run_script(self.repo, {"semanticSearch": {
+                        "enabled": enabled, "bin": value}}, env)
+                    self._assert_unavailable(
+                        out,
+                        "invalid-config" if enabled else "disabled-by-config",
+                        markers[0],
+                    )
+                    self.assertEqual(
+                        [os.path.exists(marker) for marker in markers],
+                        [False] * len(markers),
+                    )
+        self._marker()
+        env, markers = self._sentinel_env("custom-ccc")
+        out = run_script(self.repo, {"semanticSearch": {
+            "enabled": False, "bin": "custom-ccc"}}, env)
+        self.assertEqual(out, {"semanticSearchAvailable": False,
+                               "semanticSearchBin": "custom-ccc",
+                               "reason": "disabled-by-config"})
+        self.assertEqual([os.path.exists(marker) for marker in markers],
+                         [False] * len(markers))
+
+    def test_bin_positive_paths(self):
+        ids = {"space_path", "non_ascii_path", "quote_backslash", "dash_name"}
+        self.assertEqual(ids, {"space_path", "non_ascii_path",
+                               "quote_backslash", "dash_name"})
+        self._marker()
+        for case_id, name in (("space_path", "dir with space/ccc"),
+                              ("non_ascii_path", "éccc"),
+                              ("quote_backslash", 'q"\\ccc'),
+                              ("dash_name", "-x")):
+            bindir = self.tmpdir()
+            path = os.path.join(bindir, name)
+            log = os.path.join(bindir, "calls.log")
+            make_exec(path, stub(log))
+            configured = "-x" if case_id == "dash_name" else path
+            env = {"PATH": bindir + os.pathsep + os.environ["PATH"]}
+            if case_id == "non_ascii_path":
+                env["PYTHONIOENCODING"] = "ascii"
+            out = run_script(self.repo, {"semanticSearch": {"bin": configured}}, env)
+            self.assertEqual(out["semanticSearchBin"], configured)
+            with open(log, encoding="utf-8") as handle:
+                calls = [line.rstrip("\n") for line in handle]
+            self.assertEqual(calls, ["index"])
+
+    def test_output_key_sets_per_branch(self):
+        bindir = self.tmpdir()
+        ok = os.path.join(bindir, "ok")
+        failed = os.path.join(bindir, "failed")
+        mutator = os.path.join(bindir, "mutator")
+        make_exec(ok, stub(os.path.join(bindir, "ok.log")))
+        make_exec(failed, stub(os.path.join(bindir, "failed.log"), exit_code=1))
+        make_exec(mutator, '#!/usr/bin/env bash\n'
+                  'printf changed >> .gitignore\n'
+                  'exit 0\n')
+
+        configured_repo = self.tmpdir()
+        write(os.path.join(configured_repo, ".cocoindex_code", "settings.yml"), "{}\n")
+        uninitialized_repo = self.tmpdir()
+        mutating_repo = self.tmpdir()
+        write(os.path.join(mutating_repo, ".cocoindex_code", "settings.yml"), "{}\n")
+        outputs = [
+            run_script(configured_repo, {}),
+            run_script(configured_repo, {"semanticSearch": {
+                "bin": "missing-ccc-cr2"}}),
+            run_script(configured_repo, {"semanticSearch": {"enabled": False}}),
+            run_script(configured_repo, {"semanticSearch": None}),
+            run_script(configured_repo, {"semanticSearch": {"bin": ok}}),
+            run_script(configured_repo, {"semanticSearch": {"bin": failed}}),
+            run_script(uninitialized_repo, {"semanticSearch": {"bin": ok}}),
+            run_script(mutating_repo, {"semanticSearch": {"bin": mutator}}),
+        ]
+        expected_reasons = {"ok", "not-installed", "disabled-by-config",
+                            "not-initialized", "index-failed", "not-configured",
+                            "invalid-config", "gitignore-modified"}
+        self.assertEqual({out["reason"] for out in outputs}, expected_reasons)
+        for out in outputs:
+            self.assertEqual(set(out),
+                             {"semanticSearchAvailable", "semanticSearchBin",
+                              "reason"})
 
 
 if __name__ == "__main__":

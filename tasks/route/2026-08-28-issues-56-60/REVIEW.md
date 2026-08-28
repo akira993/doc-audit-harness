@@ -144,3 +144,96 @@
 - 検査系成果物の実数: #58 絶対パス **20 ID**／#56 判定表 **3 probe × 20 ID** ＋ contextMode 式 **13 ID**（実行）＋ キー集合 5/4/5 分岐／#60 caller env **7 ID** ＋ 5 分岐／#57 probe-record **固定 33 ID・7 テスト**（10 seam schema・rebind 値・display 1 行性・symlink 4 種）／契約テスト test_v014 **9 本**／§7 固定文 **en 6・ja 6**／付録ファイル **43**・行 **52**／スコープ検査 3 段（allowlist 24 path・保護 root 25 entry）各 Stage で clean／禁止 engine ファイル **20 path** byte 一致。
 - 計画レビューの実数: Sol **5 往復**（R1 17・R2 17・R3 18・R4 15・R5 11 件、全件反映または #59 見送りへ転記）、Opus **2 ラウンド**（O1〜O8・N1〜N5）、最終 `codex exec review` **P2 ×2 → 修正済み**。
 - 見送り（ユーザー判断待ち）: #59 ledger（`59-design-note.md`）、#56 第 2 段。出荷後: PR merge → `release-handoff.sh <merge-sha> 61`（tag `docaudit--v0.14.0`・Release・#57/#58/#60 close・skills-dir 同期）。
+
+## 追補: PR #61 merge 後の `/code-review`（ユーザー実行、2026-08-28）
+- PR #61 は `ef995f0` で merge 済み（tag 未作成）。code-review 所見 10 件（CONFIRMED 6・PLAUSIBLE 4、最高 medium）。根本原因: 「Phase 5 は rebind のみ」×「記録は fail-open」で、再開していない run にも unknown 行が出る（#1 harness 辞退の run 再取得で記録消失、#2 codex backend で MDQ_DEGRADE 未束縛、#3 contextMode validator の厳格さ、#4 codexReviewState 書き込み失敗、#6 接尾辞 gating が会話変数）。他: #5 状態行の優先順位、#7 ensure_ascii、#8 graph 3 probe の NUL、#9 「Rows 6–8」の宙吊り参照、#10 判定ブロック三重化＋python 3 回起動。
+- ユーザー指示: 修正計画 → Sol → Opus → 実装 → commit → ユーザーが再 code-review。計画 `PLAN-cr1.md`（branch `fix/v0.14.0-code-review-followup`、版 0.14.0 据え置き、handoff は fix PR の merge 後）。
+### Sol CR1-R1（PLAN-cr1 rev.1 → rev.2）— (A) 10 件・(B) 2 件
+- CR1-1 A1 のフレッシュ run 判定は決定不能・安全側でない → A1 撤回（情報源は rebind のみ、判定不能は unknown）
+- CR1-2 reopen 後の再記録元が保証されない → 「新 run で Phase 0 を丸ごと再実行」に変更
+- CR1-3 `available:true, healthy:null` は表示不能 → validator は据え置き、SKILL 側で正規化（false→null 固定、未束縛→false/probe-error）
+- CR1-4 ensure_ascii=False は U+0085/2028/2029 で 1 行性を破る → C7 不採用、回帰テストのみ
+- CR1-5 graph probe の行指向伝送は改行で切断 → `bin` の制御文字を invalid-config に（NUL・改行・タブのテスト）
+- CR1-6〜8 D10 共有ヘルパーは完全同値の証明が無く共通障害を増やす → 別 refactor route へ分離
+- CR1-9/10 DoD (7)〜(9) が失敗を捨てる → rc 保存＋`|| exit 1`、scope-check.py（cr1 用 allowlist）で集合比較
+- CR1-11 graph probe 全分岐のキー集合検査 → 追加／CR1-12 mkdtemp は機械判定（grep 0）
+- 判定: **差し戻し（rev.2 で再批判）**
+### Sol CR1-R2（rev.2 → rev.3）— (A) 5 件・(B) 4 件
+- CR2-1 Phase 0 再実行の制御（確認ゲート再評価・Phase 0.5 ちょうど 1 回）→ 固定文を明確化、位置・回数 assert
+- CR2-2 `state unknown after resume` は fresh run の書き込み失敗で事実誤認 → 7 行を `state unknown (probe record unavailable)` に、ADOPTION §7 ④ en/ja・契約テストを同時更新（docs を許可範囲に追加）
+- CR2-3 graph probe の `enabled:false` 先勝ち → 維持し disabled 分岐の bin を既定名へ正規化／CR2-4 全 7 表で unknown → invalid-config → その他の順序／CR2-5 `BASE_COMMIT=ef995f0`
+- CR2-6〜9 テスト判別力（位置・rebind 完全一致・制御文字 33 文字＋空白パス正例・識別子 `mkdtemp`）→ 反映
+- 判定: **差し戻し（rev.3 で再批判）**
+### Sol CR1-R3（rev.3 → rev.4）— (A) 3 件・(B) 4 件
+- CR3-1 mdq 既回答の再利用は復元元が無く未承認劣化を承認扱いにし得る → reopen 後は現在の probe 結果に対し通常規則で再評価（再利用しない）
+- CR3-2 codex 表で unknown 先頭は S1b R4 の invalid-config 先勝ちを壊す → codex は state=unknown → invalid-config → reviewState=null → 4-way
+- CR3-3 schema に enabled:false 例外と既定 bin 正規化を明記／CR3-4 接尾辞の新旧 grep／CR3-5 disabled 分岐も 33 文字／CR3-6 → CR3-1 で通常規則に戻したため遷移表は不要（規則文に `never reuse` を固定）／CR3-7 ADOPTION 段落限定を diff 行で検査
+- 判定: **差し戻し（rev.4 で収束確認 R4）**
+### Sol CR1-R4（rev.4 → rev.5）— (A) 4 件・(B) 1 件
+- CR4-1 再実行文が reopen 失敗確認より前 → 失敗停止文の後・新 3 変数束縛の後に配置（順序 assert 更新）
+- CR4-2 ゲートの 3 分岐（質問／non-interactive／n/a）を固定文に明記
+- CR4-3 codex 表に whole-record unknown を新設すると既知 reviewState の部分回復が到達不能 → codex は invalid-config → reviewState=null → 4-way を維持、state=unknown は接尾辞のみ
+- CR4-4 ADOPTION 検査は差分 0 件でも通る → ef995f0 基準の単一置換期待バイト列と完全一致／CR4-5 DoD (3) に disabled 側 33 件を明記
+- 判定: **差し戻し（rev.5 で最終ラウンド R5）**
+### Sol CR1-R5（rev.5 → rev.6、上限到達）— (A) 2 件・(B) 2 件、いずれも文言・検査精度
+- CR5-1 `Fix mdq first` 選択時も Phase 0.5 へ進むと読める → 条件付き文に／CR5-2 DoD (1) の 7 表一括順序が codex の例外を反転 → 6 表＋codex を分離
+- CR5-3 ADOPTION 検査を bytes 比較に／CR5-4 reopen の 5 要素相対順を 1 本の順序テストで固定
+- 判定: **上限到達。(A) 全件を rev.6 に反映し、Opus 全体敵対レビューへ**
+### Opus O-R3（PLAN-cr1 rev.6 → rev.7）— ブロッキング 4・非ブロッキング 4。baseline 独立実測 Ran 580 OK, skipped 0
+- O1 §A4 の en 引用 `prints` は実ファイル `print` → 引用句のみ置換・周辺不変を明記／O2 共通規則文の literal が DoD「ちょうど 1 回」と矛盾 → 規則文から literal を外す／O3 `mdqDegrade` の記録文も無条件化（`make_rebind` は両記録が必要）／O4 config-schema の追記先は表 3 行のみ（`Its probe reasons are` 以降は test_v0132 が固定）
+- N2/N3 graph 3 表の並べ替えは無意味・CM/AX の現状記述誤り → 並べ替え撤回、現行順序 assert／N1 harness 辞退時の Phase 0 再実行コスト → 最終報告に運用注記／N4 33 文字 ×2 の実行コスト → 全数維持（約 30 秒）
+- 判定: **rev.7 で実装承認（Opus「設計差し替え不要」）**
+- 実装セッション cr1（Terra workspace-write, medium）: session `01a04809-a942-7dd3-8f0c-e7597cd5aeba`（起動 2026-08-28T11:03:15Z）
+
+### cr1 実装 R1〜R2 — 承認（commit `04a0624`）
+- R1: worker 報告 Ran 585 failures=1（自己修正後の再実行未了）。boss 再実測で `test_v0132_contracts::test_semantic_search_schema_describes_probe_validation_and_phase2_min_score` 失敗 → config-schema の固定句分断 → 差し戻し。
+- R2: 固定句復元。boss 最終再実測 `cr1-final-full-tests-v.log` **Ran 585 tests OK, skipped 0**、scope-check（BASE ef995f0）scope-clean、forbidden-clean、bash -n 6 probe、mkdtemp 0、旧文言 0、ADOPTION 単一置換 bytes 一致、`(caller info unavailable)` 1 回。diff 精読: SKILL（reopen 順序・無条件記録・CM 正規化・unknown 文言・gating・共通規則・C9）、3 graph probe（制御文字判定、disabled 分岐の既定名正規化）、config-schema 表 3 行。
+
+## 追補 2: PR #62 の `/code-review xhigh`（ユーザー実行）— 15 件
+- 実物確認: #1 `contextModeAvailable` キー名が SKILL から消失、#2 `test_mdq_index.setUp` の corpus 作成が `tmpdir()` の return 後に取り残され到達不能、#3 graphify の `gitignoreOk` assert が新テストへ迷子 — いずれも cr1 の worker 実装ミスで、**boss がテスト差分を精読しなかった見落とし**（教訓: 検収は runtime diff だけでなくテスト diff も全行）。
+- 他: #4 空白 bin、#5/#7 codex 行の (state, reviewState) 組み合わせ矛盾、#6 §7 に graph probe の変更未記載、#8 `Fix mdq first` 分岐、#9 sentinel 不使用・空白パス正例欠落（DoD 未達を boss が見逃し）、#10 `-` 先頭 bin、#11 lone surrogate、#12 scope-check の既定 base、#13 述語重複、#14 段落位置、#15 wrap 依存 assert。
+- 計画 `PLAN-cr2.md`（同 branch に追加 commit、版据え置き）。scope-check は `BASE_COMMIT` 必須化（boss 修正）。
+### Sol cr2-R1（PLAN-cr2 rev.1 → rev.2）— (A) 12 件・(B) 1 件
+- CR2-1 `ref-invalid` は実行前 skip → 接尾辞対象を {completed, execution-failed} に／CR2-2 表 5 行の条件句を literal で固定
+- CR2-3 mdq disabled は `bin` 無し（例外明記）／CR2-4 graph disabled の既定名置換は不正時のみ（妥当カスタム bin は維持）
+- CR2-5 CLI 3 probe にも同じ境界値表（33 文字 ×2・surrogate・正例）／CR2-6 非 ASCII パスは stdout.buffer へ UTF-8 直書き＋`PYTHONIOENCODING=ascii` 正例／CR2-7 UTF-8 不能を schema/ADOPTION に
+- CR2-8 既存の改行 bin 正例（test_codex_probe:233）は正例を置換し改行は負例へ移行／CR2-9 先頭 `-` 禁止は撤回、`command -v --` に
+- CR2-10 ADOPTION §7 は期待段落の完全一致＋段落外差分 0／CR2-11 CM literal の 3 キー完全一致／CR2-12 AST で return 後の文 0・必須メソッド名集合／CR2-13 symlink cleanup
+- 判定: **差し戻し（rev.2 で再批判）**
+### Sol cr2-R2（rev.2 → rev.3）— (A) 9 件・(B) 1 件
+- CR2-4 再 disabled 出力は seam ごとに既存 3 形（mdq bin 無し／ax・codex 既定名／graph 保持）を維持／CR2-11 再 Phase 0 節で合成指示文の完全一致・count 1
+- CR2-14 codex 正例は 2 回呼び出し／CR2-15 `-x` stub 正例／CR2-16 ファイル別必須名／CR2-17 ef995f0 の既存テスト名包含／CR2-18 CLI 23 ID の正確な集合／CR2-19 ja は区切り無し・en は先頭スペース／CR2-20 whitespace-only を ADOPTION に／CR2-21 seam 別出力キー
+- 判定: **差し戻し（rev.3 で再批判）**
+### Sol cr2-R3（rev.3 → rev.4）— (A) 6 件・(B) 1 件、いずれも検査精度
+- CR2-22 既存テスト名の基準を cr1 実装 `04a0624` に／CR2-23 TestCase メソッドのみ＋`-v` ログで実行 ID 各 1 回／CR2-24 正例 ID 集合・制御文字集合を in-test 完全一致／CR2-25 文書は ASCII 制御文字に限定／CR2-26 schema 6 行を契約テストで固定／CR2-27 AST は全ブロック再帰／CR2-28 sentinel は既定名 stub を PATH に
+- 判定: **差し戻し（rev.4 で R4）**
+### Sol cr2-R4（rev.4 → rev.5）— (A) 8 件、すべて検査精度
+- CR2-29 `... ok` の厳密判定＋expected failure 0／CR2-30 既存テストも実行確認／CR2-31 sentinel はカスタム bin・trim 後名も marker／CR2-32 空白位置別 ID（lead/trail/both/nbsp）＋制御文字は途中配置／CR2-33 scope-check がディレクトリ項目も lstat（boss 修正・baseline 再生成）／CR2-34 ADOPTION ⑦ は旧 reason を断定しない／CR2-35 schema テスト名を REQ に／CR2-36 graph reason 集合を固定
+- 判定: **差し戻し（rev.5 で最終 R5）**
+### Sol cr2-R5（rev.5 → rev.6、上限到達）— (A) 4 件（文面・検査精度）
+- CR2-37 dash は正例のみ（C9 の負例から削除）／CR2-38 DoD の旧 ID を新 6 ID に統一／CR2-39 expected failure は結果行のみ検出／CR2-40 保護ファイルは `st_nlink==1`（boss 修正）
+- 判定: **上限到達。(A) 全件を rev.6 に反映し、Opus 全体敵対レビューへ**
+### Opus O-R4（PLAN-cr2 rev.6 → rev.7）— 条件付き合格。§8 の 3 検査片を現 HEAD で実走し偽陽性 0（検出は所見 #2 の実物 1 件のみ）、baseline Ran 585 OK
+- O1 既存メソッド名は改名・削除しない（`test_bin_boundary_table` は新規）／O2 cr1 §D10 のエイリアス統合を撤回（DoD (8)(c) 優先）／O3 26 ID は判定表、`test_bin_boundary_table` は制御文字（graph は空白・surrogate も）に分担／N1 33 文字全走査は 6 本で実施（+20〜40 秒許容）／N2 DoD 番号整理
+- 判定: **rev.7 で実装承認**
+- 実装セッション cr2（Terra workspace-write, medium）: session `01a04882-dbaf-7912-98a7-28fb2ba45cb9`（起動 2026-08-28T13:15:34Z）
+
+### cr2 実装 R1〜R2 — 承認（commit `79938a5`）
+- R1: 機械検査は全て clean（Ran 603 OK・skip 0・expected failure 0、AST/-v ログ・ADOPTION 段落・scope-clean）だったが、**boss のテスト全行精読**で DoD (2) 未達 5 点（graph の全 reason 生成が 3 分岐のみ、正例の起動回数 assert 無し、`-x` が絶対パス、`enabled:false`＋妥当カスタム bin の 3 形欠落、sentinel が既定名のみ）と共通規則文の短縮を検出 → 差し戻し。
+- R2: 全件修正。boss 再実測 `cr2-final-full-tests-v.log` **Ran 603 tests OK, skipped 0, expected failure 0**、scope-clean（BASE ef995f0 / SCOPE 0cec02a）、AST 片 tests-ast-clean、ADOPTION 期待段落一致、forbidden-clean、`bash -n` 6 probe。diff 精読: SKILL（CM 3 キー・codex 5 条件句・Fix-mdq-first 例外・規則段落の独立配置）、6 probe（統一検証・disabled 3 形・`command -v --`・UTF-8 バイト伝送）、config-schema 6 行、ADOPTION §7 en/ja、テスト（fixture 修復・起動回数 assert・全 reason 生成・sentinel 網羅）。
+- 教訓の再確認: 「テスト名がある」と「テストが判別する」は別。boss の検収はテスト本体の全文精読を必須にする。
+
+## 追補 3: 3 回目 `/code-review xhigh`（2026-08-29、セッション上限 429 で途中終了）
+- 完了した検証サブエージェント 1 本の CONFIRMED 所見 V9: cr2 で入った JSON emit の `ensure_ascii=False`（9 か所）は要求外で、U+0085/U+2028/U+2029 bin で 1 行契約が破れ、非 UTF-8 `CODEX_HOME` で codex probe が空出力・exit 0 になる回帰。boss の cr2 検収で「無害」と誤判定した箇所。
+- 計画 `PLAN-cr3.md`（1 件、9 か所を既定 `ensure_ascii=True` に戻す＋回帰テスト 6 本）。
+### Sol cr3-R1（PLAN-cr3 rev.1 → rev.2）— (A) 3 件・(B) 1 件
+- CR3-1 scope 基準を `79938a5` に／CR3-2 9 emit を実行経路で網羅（mdq indexed/index-failed、ax ok＋非 UTF-8 version、graph/codex ok）／CR3-3 `Ran N ≥ 609`・`79938a5` の名前包含・`... ok` ちょうど 1 回を §8 に／CR3-4 surrogate は `os.fsencode` で比較
+- 判定: **差し戻し → rev.2 で Opus へ**
+### Opus O-R5（PLAN-cr3 rev.2 → rev.3）— 条件付き合格。V9 (b)(c) を実機再現、9 か所除去で解消を実測、baseline Ran 603 OK
+- O1 ax の `\xff` ベクタは BSD `tr` が切り落とし判別力ゼロ → U+2028 に差し替え／O2 graph `emit()` の encode 検証行は意図的に残す旨を記録／O3 CLI 3 本は生 bytes 取得を明記／N1 網羅対象を emit サイト 9 個に
+- 判定: **rev.3 で実装承認**
+- 実装セッション cr3（Terra workspace-write, medium）: session `01a04920-81dd-7181-b5aa-06b696fdfb09`（起動 2026-08-28T16:07:46Z）
+
+### cr3 実装 R1 — 承認（commit `53afca1`）
+- worker 報告 Ran 609 OK。boss 再実測 `cr3-full-tests-v.log` **Ran 609 tests OK, skipped 0, expected failure 0**、`ensure_ascii=False` 0 件、`bash -n` OK、scope-clean（BASE 79938a5）、forbidden-clean（docs/SKILL/probe-record/v014/probe_record 不変）、§8 片 tests-clean（79938a5 の全テスト名残存・新 6 本の `... ok` 各 1 回）。
+- diff 精読: 9 emit サイトの `ensure_ascii=False` 除去のみ（`sys.stdout.buffer.write` と graph の encode 検証行は維持）。新テスト 6 本は `run_script` を経由せず bytes で受け、`isascii()`・`splitlines()==1`・JSON round-trip を assert。mdq は indexed/index-failed、ax は U+2028 入り version の ok、codex は bytes env `CODEX_HOME=b"/tmp/h\xffome"` で ok＋`os.fsencode` 一致を確認。

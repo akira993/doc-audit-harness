@@ -49,17 +49,48 @@ def run_raw(repo, args, extra_env=None):
 
 class TestCodegraphProbe(unittest.TestCase):
     def setUp(self):
-        self.repo = tempfile.mkdtemp()
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = self.temp.name
+
+    def tmpdir(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        return temp.name
 
     def test_not_installed_degrades(self):
         out = run_script(self.repo, {"symbolGraph": {"bin": "codegraph-does-not-exist-zzz"}})
         self.assertFalse(out["symbolGraphAvailable"])
         self.assertEqual(out["reason"], "not-installed")
 
+    def test_json_emit_is_ascii_one_line(self):
+        bin_name = "to\u2028ol-none"
+        cfg = os.path.join(self.repo, ".claude", "json-emit.json")
+        write(cfg, json.dumps({"symbolGraph": {"bin": bin_name}}))
+        proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+                              capture_output=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertTrue(proc.stdout.isascii())
+        self.assertEqual(len(proc.stdout.decode().splitlines()), 1)
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["symbolGraphBin"], bin_name)
+        self.assertEqual(out["reason"], "not-installed")
+
     def test_disabled_by_config(self):
         out = run_script(self.repo, {"symbolGraph": {"enabled": False}})
         self.assertFalse(out["symbolGraphAvailable"])
         self.assertEqual(out["reason"], "disabled-by-config")
+
+    def test_control_character_bins_are_rejected_or_normalized_when_disabled(self):
+        for code in (*range(32), 127):
+            with self.subTest(code=code):
+                value = "tool" + chr(code)
+                out = run_script(self.repo, {"symbolGraph": {"bin": value}})
+                self.assertEqual(out["reason"], "invalid-config")
+                self.assertEqual(out["symbolGraphBin"], "codegraph")
+                out = run_script(self.repo, {"symbolGraph": {"enabled": False, "bin": value}})
+                self.assertEqual(out["reason"], "disabled-by-config")
+                self.assertEqual(out["symbolGraphBin"], "codegraph")
 
     def test_stub_installed_fresh_calls_init(self):
         bindir = tempfile.mkdtemp()
@@ -100,10 +131,29 @@ class TestCodegraphProbe(unittest.TestCase):
         self.assertEqual(out["reason"], "index-failed")
 
     def _default_stub(self):
-        bindir = tempfile.mkdtemp()
+        bindir = self.tmpdir()
         log = os.path.join(bindir, "calls.log")
         make_exec(os.path.join(bindir, "codegraph"), '#!/usr/bin/env bash\necho "$@" >> "%s"\n' % log)
         return log, {"PATH": bindir + os.pathsep + os.environ["PATH"]}
+
+    def _sentinel_env(self, value):
+        bindir = self.tmpdir()
+        names = []
+        for name in ("codegraph", value, value.strip()):
+            if not name or "\0" in name or name in names:
+                continue
+            try:
+                name.encode("utf-8")
+            except UnicodeEncodeError:
+                continue
+            names.append(name)
+        markers = []
+        for index, name in enumerate(names):
+            marker = os.path.join(bindir, "marker-%d" % index)
+            make_exec(os.path.join(bindir, name),
+                      '#!/bin/sh\nprintf called >> "%s"\n' % marker)
+            markers.append(marker)
+        return {"PATH": bindir + os.pathsep + os.environ["PATH"]}, markers
 
     def _assert_unavailable(self, out, reason, log):
         self.assertEqual(set(out), {"symbolGraphAvailable", "symbolGraphBin", "reason"})
@@ -178,6 +228,79 @@ class TestCodegraphProbe(unittest.TestCase):
         """DoD (8): enabled:false has precedence over an invalid bin."""
         log, env = self._default_stub()
         self._assert_unavailable(run_script(self.repo, {"symbolGraph": {"enabled": False, "bin": []}}, env), "disabled-by-config", log)
+
+    def test_bin_boundary_table(self):
+        controls = set(range(32)) | {127}
+        self.assertEqual(controls, set(range(32)) | {127})
+        values = (["to" + chr(c) + "ol" for c in controls] +
+                  [" codegraph", "codegraph ", " codegraph ",
+                   "\u00a0codegraph", "   ", "\ud800"])
+        for value in values:
+            for enabled in (True, False):
+                with self.subTest(value=repr(value), enabled=enabled):
+                    env, markers = self._sentinel_env(value)
+                    out = run_script(self.repo, {"symbolGraph": {
+                        "enabled": enabled, "bin": value}}, env)
+                    self._assert_unavailable(
+                        out,
+                        "invalid-config" if enabled else "disabled-by-config",
+                        markers[0],
+                    )
+                    self.assertEqual(
+                        [os.path.exists(marker) for marker in markers],
+                        [False] * len(markers),
+                    )
+        env, markers = self._sentinel_env("custom-codegraph")
+        out = run_script(self.repo, {"symbolGraph": {
+            "enabled": False, "bin": "custom-codegraph"}}, env)
+        self.assertEqual(out, {"symbolGraphAvailable": False,
+                               "symbolGraphBin": "custom-codegraph",
+                               "reason": "disabled-by-config"})
+        self.assertEqual([os.path.exists(marker) for marker in markers],
+                         [False] * len(markers))
+
+    def test_bin_positive_paths(self):
+        ids = {"space_path", "non_ascii_path", "quote_backslash", "dash_name"}
+        self.assertEqual(ids, {"space_path", "non_ascii_path",
+                               "quote_backslash", "dash_name"})
+        for case_id, name in (("space_path", "dir with space/codegraph"),
+                              ("non_ascii_path", "écodegraph"),
+                              ("quote_backslash", 'q"\\codegraph'),
+                              ("dash_name", "-x")):
+            bindir = self.tmpdir()
+            path = os.path.join(bindir, name)
+            log = os.path.join(bindir, "calls.log")
+            make_exec(path, stub(log))
+            configured = "-x" if case_id == "dash_name" else path
+            env = {"PATH": bindir + os.pathsep + os.environ["PATH"]}
+            if case_id == "non_ascii_path":
+                env["PYTHONIOENCODING"] = "ascii"
+            out = run_script(self.repo, {"symbolGraph": {"bin": configured}}, env)
+            self.assertEqual(out["symbolGraphBin"], configured)
+            with open(log, encoding="utf-8") as handle:
+                calls = [line.rstrip("\n") for line in handle]
+            self.assertEqual(calls, ["init ."])
+
+    def test_output_key_sets_per_branch(self):
+        bindir = self.tmpdir()
+        ok = os.path.join(bindir, "ok")
+        failed = os.path.join(bindir, "failed")
+        make_exec(ok, stub(os.path.join(bindir, "ok.log")))
+        make_exec(failed, stub(os.path.join(bindir, "failed.log"), exit_code=1))
+        outputs = [
+            run_script(self.repo, {}),
+            run_script(self.repo, {"symbolGraph": {"bin": "missing-codegraph-cr2"}}),
+            run_script(self.repo, {"symbolGraph": {"enabled": False}}),
+            run_script(self.repo, {"symbolGraph": None}),
+            run_script(self.repo, {"symbolGraph": {"bin": ok}}),
+            run_script(self.repo, {"symbolGraph": {"bin": failed}}),
+        ]
+        expected_reasons = {"ok", "not-installed", "disabled-by-config",
+                            "index-failed", "not-configured", "invalid-config"}
+        self.assertEqual({out["reason"] for out in outputs}, expected_reasons)
+        for out in outputs:
+            self.assertEqual(set(out),
+                             {"symbolGraphAvailable", "symbolGraphBin", "reason"})
 
 
 if __name__ == "__main__":

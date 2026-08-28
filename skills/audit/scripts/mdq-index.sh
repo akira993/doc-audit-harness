@@ -39,14 +39,17 @@ try:
             if seam.get("enabled") is False: state="disabled"
             elif "bin" in seam:
                 value=seam["bin"]
-                if not isinstance(value,str) or not value or "\0" in value: raise ValueError
+                if (not isinstance(value,str) or not value or value != value.strip()
+                    or any(ord(c) <= 31 or ord(c) == 127 for c in value)): raise ValueError
+                value.encode("utf-8")
                 binary=value
 except Exception:
     state="invalid"; binary="mdq"
-print(state+"\t"+base64.b64encode(binary.encode()).decode())
+line=state+"\t"+base64.b64encode(binary.encode("utf-8")).decode("ascii")+"\n"
+sys.stdout.buffer.write(line.encode("utf-8"))
 ' "$CONFIG_SET" "$CONFIG")"
 IFS=$'\t' read -r CONFIG_STATE BIN_B64 <<< "$DECISION"
-BIN="$(python3 -c 'import base64,sys; print(base64.b64decode(sys.argv[1]).decode(),end="")' "$BIN_B64")"
+BIN="$(python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.argv[1]))' "$BIN_B64")"
 
 if [[ "$CONFIG_STATE" == "invalid" ]]; then
   printf '{"mdqAvailable":false,"reason":"invalid-config","bin":"mdq"}\n'
@@ -57,8 +60,8 @@ if [[ "$CONFIG_STATE" == "disabled" ]]; then
   exit 0
 fi
 
-if ! command -v "$BIN" >/dev/null 2>&1; then
-  python3 -c 'import json,sys; print(json.dumps({"mdqAvailable":False,"reason":"not-installed","bin":sys.argv[1]}))' "$BIN"
+if ! command -v -- "$BIN" >/dev/null 2>&1; then
+  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"mdqAvailable":False,"reason":"not-installed","bin":sys.argv[1]})+"\n").encode("utf-8"))' "$BIN"
   exit 0
 fi
 
@@ -91,12 +94,12 @@ fi
 ERRF="$(mktemp "${TMPDIR:-/tmp}/mdq_index_err.XXXXXX")"
 trap 'rm -f "$ERRF"' EXIT
 if ( cd "$REPO_ROOT" && PYTHONUTF8=1 PYTHONIOENCODING=utf-8 "$BIN" index "${ROOT_ARGS[@]}" ) >/dev/null 2>"$ERRF"; then
-  python3 -c 'import json,sys; print(json.dumps({"mdqAvailable":True,"reason":"indexed","bin":sys.argv[1],"dbDir":".mdq"}))' "$BIN"
+  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"mdqAvailable":True,"reason":"indexed","bin":sys.argv[1],"dbDir":".mdq"})+"\n").encode("utf-8"))' "$BIN"
   exit 0
 else
   rc=$?
   TAIL="$(tail -n 3 "$ERRF" 2>/dev/null | tr '\n' ' ' | tr -d '"\\' | tr -d '[:cntrl:]')"
   echo "mdq index failed (rc=$rc): $TAIL" >&2
-  python3 -c 'import json,sys; print(json.dumps({"mdqAvailable":False,"reason":"index-failed","rc":int(sys.argv[2]),"bin":sys.argv[1]}))' "$BIN" "$rc"
+  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"mdqAvailable":False,"reason":"index-failed","rc":int(sys.argv[2]),"bin":sys.argv[1]})+"\n").encode("utf-8"))' "$BIN" "$rc"
   exit 0
 fi

@@ -1,25 +1,13 @@
-# allowlist.txt — PLAN rev.5 §7 許可一覧（tracked 差分のみ。1 行 1 path、# はコメント）。権威元は SCOPE_COMMIT のこのファイル。ignored/untracked は baseline-hashes.txt で検査。
-skills/audit/SKILL.md
-skills/audit/scripts/import-audit-scope.py
+# allowlist.txt — PLAN-cr3 §7 許可一覧。権威元は SCOPE_COMMIT のこのファイル。
 skills/audit/scripts/mdq-index.sh
 skills/audit/scripts/ax-probe.sh
 skills/audit/scripts/codex-probe.sh
-skills/audit/scripts/probe-record.py
-skills/audit/references/config-schema.md
-skills/audit/references/engine-shas.json
-docs/ADOPTION.md
-docs/ADOPTION.ja.md
-.claude-plugin/plugin.json
-tests/test_import_audit_scope.py
+skills/audit/scripts/codegraph-probe.sh
+skills/audit/scripts/graphify-probe.sh
+skills/audit/scripts/cocoindex-probe.sh
 tests/test_mdq_index.py
 tests/test_ax_probe.py
 tests/test_codex_probe.py
-tests/test_codex_review_plan.py
-tests/test_decide_verdict.py
-tests/test_v0132_contracts.py
-tests/test_v013_contracts.py
-tests/test_scaffold.py
-tests/test_release_handoff.py
-tests/test_v014_contracts.py
-tests/test_probe_record.py
-tests/test_v0131_docs_contracts.py
+tests/test_codegraph_probe.py
+tests/test_graphify_probe.py
+tests/test_cocoindex_probe.py

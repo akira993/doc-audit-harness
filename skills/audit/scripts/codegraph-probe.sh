@@ -37,22 +37,28 @@ try:
     if not isinstance(seam, dict): raise ValueError()
     enabled = seam.get("enabled", True)
     if not isinstance(enabled, bool): raise ValueError()
-    if not enabled: print("disabled-by-config", seam.get("bin", default) if isinstance(seam.get("bin", default), str) and seam.get("bin", default) else default); raise SystemExit
     bin_name = seam.get("bin", default)
-    if not isinstance(bin_name, str) or not bin_name: raise ValueError()
-    print("enabled", bin_name)
+    valid = isinstance(bin_name, str) and bool(bin_name) and bin_name == bin_name.strip() and not any(ord(c) <= 31 or ord(c) == 127 for c in bin_name)
+    if valid:
+        try: bin_name.encode("utf-8")
+        except UnicodeEncodeError: valid = False
+    if not enabled: sys.stdout.buffer.write(("disabled-by-config " + (bin_name if valid else default) + "\n").encode("utf-8")); raise SystemExit
+    if not valid: raise ValueError()
+    sys.stdout.buffer.write(("enabled " + bin_name + "\n").encode("utf-8"))
 except Exception:
-    print("invalid-config", default)
+    sys.stdout.buffer.write(("invalid-config " + default + "\n").encode("utf-8"))
 ' "$CONFIG")
 
-emit() { python3 -c 'import json,sys; print(json.dumps({"symbolGraphAvailable":sys.argv[1] == "true", "symbolGraphBin":sys.argv[2], "reason":sys.argv[3]}, separators=(",", ":")))' "$@"; }
+emit() { python3 -c 'import json,sys
+line=json.dumps({"symbolGraphAvailable":sys.argv[1] == "true", "symbolGraphBin":sys.argv[2], "reason":sys.argv[3]}, separators=(",", ":"))+"\n"
+line.encode("utf-8"); sys.stdout.buffer.write(line.encode("utf-8"))' "$@"; }
 
 if [[ "$STATE" != "enabled" ]]; then
   emit false "$BIN" "$STATE"
   exit 0
 fi
 
-if ! command -v "$BIN" >/dev/null 2>&1; then
+if ! command -v -- "$BIN" >/dev/null 2>&1; then
   emit false "$BIN" not-installed
   exit 0
 fi
