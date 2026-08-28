@@ -14,48 +14,57 @@
 # Targets bash 3.2 (macOS): no mapfile; guard "${arr[@]}" under set -u with a count.
 set -uo pipefail
 
-CONFIG=""; REPO_ROOT="$(pwd)"
+CONFIG=""; CONFIG_SET=0; REPO_ROOT="$(pwd)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --config) CONFIG="$2"; shift 2;;
+    --config) CONFIG_SET=1; CONFIG="$2"; shift 2;;
     --repo-root) REPO_ROOT="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
 
-# indexing.enabled (default true) + indexing.bin (default "mdq"); tolerate a
-# missing/invalid config by falling back to defaults.
-ENABLED="1"; BIN="mdq"
-if [[ -n "$CONFIG" ]]; then
-  IFS=$'\t' read -r ENABLED BIN < <(python3 -c '
-import json,sys
-e=True; b="mdq"
+# Validate config before probing. Keep option presence separate from its value.
+DECISION="$(python3 -c '
+import base64,json,sys
+state="enabled"; binary="mdq"
 try:
-    i=(json.load(open(sys.argv[1])).get("indexing") or {})
-    e=bool(i.get("enabled",True)); b=str(i.get("bin","mdq") or "mdq")
+    if sys.argv[1] == "1":
+        if not sys.argv[2]: raise ValueError
+        config=json.load(open(sys.argv[2]))
+        if not isinstance(config,dict): raise ValueError
+        if "indexing" in config:
+            seam=config["indexing"]
+            if not isinstance(seam,dict): raise ValueError
+            if "enabled" in seam and not isinstance(seam["enabled"],bool): raise ValueError
+            if seam.get("enabled") is False: state="disabled"
+            elif "bin" in seam:
+                value=seam["bin"]
+                if not isinstance(value,str) or not value or "\0" in value: raise ValueError
+                binary=value
 except Exception:
-    pass
-print(("1" if e else "0")+"\t"+b)
-' "$CONFIG")
-fi
-[[ -n "$BIN" ]] || BIN="mdq"
-[[ -n "$ENABLED" ]] || ENABLED="1"
-# JSON-safe copy of BIN for echoing into the JSON (BIN comes from user config).
-BIN_J="$(printf '%s' "$BIN" | tr -d '"\\' | tr -d '[:cntrl:]')"
+    state="invalid"; binary="mdq"
+print(state+"\t"+base64.b64encode(binary.encode()).decode())
+' "$CONFIG_SET" "$CONFIG")"
+IFS=$'\t' read -r CONFIG_STATE BIN_B64 <<< "$DECISION"
+BIN="$(python3 -c 'import base64,sys; print(base64.b64decode(sys.argv[1]).decode(),end="")' "$BIN_B64")"
 
-if [[ "$ENABLED" != "1" ]]; then
+if [[ "$CONFIG_STATE" == "invalid" ]]; then
+  printf '{"mdqAvailable":false,"reason":"invalid-config","bin":"mdq"}\n'
+  exit 0
+fi
+if [[ "$CONFIG_STATE" == "disabled" ]]; then
   printf '{"mdqAvailable":false,"reason":"disabled-by-config"}\n'
   exit 0
 fi
 
 if ! command -v "$BIN" >/dev/null 2>&1; then
-  printf '{"mdqAvailable":false,"reason":"not-installed","bin":"%s"}\n' "$BIN_J"
+  python3 -c 'import json,sys; print(json.dumps({"mdqAvailable":False,"reason":"not-installed","bin":sys.argv[1]}))' "$BIN"
   exit 0
 fi
 
 # indexing.roots[] override; default to the whole repo (--root .).
 ROOTS=()
-if [[ -n "$CONFIG" ]]; then
+if [[ "$CONFIG_SET" == "1" ]]; then
   while IFS= read -r r; do [[ -n "$r" ]] && ROOTS+=("$r"); done < <(python3 -c '
 import json,sys
 r=[]
@@ -82,12 +91,12 @@ fi
 ERRF="$(mktemp "${TMPDIR:-/tmp}/mdq_index_err.XXXXXX")"
 trap 'rm -f "$ERRF"' EXIT
 if ( cd "$REPO_ROOT" && PYTHONUTF8=1 PYTHONIOENCODING=utf-8 "$BIN" index "${ROOT_ARGS[@]}" ) >/dev/null 2>"$ERRF"; then
-  printf '{"mdqAvailable":true,"reason":"indexed","bin":"%s","dbDir":".mdq"}\n' "$BIN_J"
+  python3 -c 'import json,sys; print(json.dumps({"mdqAvailable":True,"reason":"indexed","bin":sys.argv[1],"dbDir":".mdq"}))' "$BIN"
   exit 0
 else
   rc=$?
   TAIL="$(tail -n 3 "$ERRF" 2>/dev/null | tr '\n' ' ' | tr -d '"\\' | tr -d '[:cntrl:]')"
   echo "mdq index failed (rc=$rc): $TAIL" >&2
-  printf '{"mdqAvailable":false,"reason":"index-failed","rc":%d,"bin":"%s"}\n' "$rc" "$BIN_J"
+  python3 -c 'import json,sys; print(json.dumps({"mdqAvailable":False,"reason":"index-failed","rc":int(sys.argv[2]),"bin":sys.argv[1]}))' "$BIN" "$rc"
   exit 0
 fi

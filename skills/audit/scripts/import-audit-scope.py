@@ -317,7 +317,27 @@ def compare(config, translated):
     return list((wanted - existing).elements()), list((existing - wanted).elements())
 
 
-def safe_path(repo, path, errors, label):
+def safe_path(repo, repo_apparent, path, errors, label):
+    if os.path.isabs(path):
+        if any(component in ("", ".", "..") for component in path.split("/")[1:]):
+            errors.append(
+                f'{label} invalid: absolute path must not contain empty, "." or ".." components'
+            )
+            return None
+        for root in (repo_apparent, repo):
+            if path == root:
+                rel = ""
+            elif path.startswith(root + "/"):
+                rel = path[len(root) + 1:]
+            else:
+                continue
+            try:
+                return validate_repo_path(repo, rel, must_exist=False)
+            except ValueError as exc:
+                errors.append(f"{label} invalid: {exc}")
+                return None
+        errors.append(f"{label} invalid: absolute path is outside repo")
+        return None
     try:
         return validate_repo_path(repo, path, must_exist=False)
     except ValueError as exc:
@@ -548,10 +568,11 @@ def main():
     parser.add_argument("--expect-base-config-sha")
     args = parser.parse_args()
     args.check = not args.write
+    repo_apparent = os.path.abspath(args.repo_root)
     repo = os.path.realpath(args.repo_root)
     errors = []
-    config_rel = safe_path(repo, args.config, errors, "config")
-    scope_rel = safe_path(repo, args.scope, errors, "scope")
+    config_rel = safe_path(repo, repo_apparent, args.config, errors, "config")
+    scope_rel = safe_path(repo, repo_apparent, args.scope, errors, "scope")
     expected_arguments_valid(args, errors)
     config_path = os.path.join(repo, config_rel) if config_rel else ""
     scope_path = os.path.join(repo, scope_rel) if scope_rel else ""

@@ -610,7 +610,7 @@ class ImportAuditScopeTests(unittest.TestCase):
         self.assertEqual(self.output(proc)["state"], "absent")
 
         for option in ("--config", "--scope"):
-            for unsafe in ("../outside.json", os.path.join(root, "absolute.json")):
+            for unsafe in ("../outside.json",):
                 with self.subTest(option=option, unsafe=unsafe):
                     proc = self.invoke(root, option, unsafe, "--json")
                     self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
@@ -627,6 +627,53 @@ class ImportAuditScopeTests(unittest.TestCase):
                 proc = self.invoke(root, option, rel, "--json")
                 self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
                 os.unlink(link)
+
+    def test_absolute_path_cases_v014(self):
+        cases = {
+            "real_real": True, "symlink_symlink": True, "symlink_real": True,
+            "real_symlink": False, "outside": False, "sub_dotdot": False,
+            "root_dotdot": False, "intermediate_symlink": False,
+            "trailing_slash": False, "double_slash": False,
+        }
+        self.assertEqual(len(cases), 10)
+        expected_ids = {f"{option}_{name}" for option in ("config", "scope") for name in cases}
+        self.assertEqual(len(expected_ids), 20)
+        seen = set()
+        for option in ("config", "scope"):
+            for name, accepted in cases.items():
+                case_id = f"{option}_{name}"
+                seen.add(case_id)
+                with self.subTest(case_id=case_id):
+                    root = self.make_repo(config={"docGlobs": ["docs/**/*.md"]})
+                    real_root = os.path.realpath(root)
+                    parent = os.path.dirname(root)
+                    apparent = os.path.join(parent, "repo-link-" + os.path.basename(root))
+                    os.symlink(root, apparent)
+                    self.addCleanup(lambda p=apparent: os.path.lexists(p) and os.unlink(p))
+                    filename = "doc-audit.json" if option == "config" else "audit-scope.json"
+                    real_path = os.path.join(real_root, ".claude", filename)
+                    apparent_path = os.path.join(apparent, ".claude", filename)
+                    outside = os.path.join(parent, "outside-" + os.path.basename(root) + filename)
+                    write(outside, "{}")
+                    self.addCleanup(lambda p=outside: os.path.exists(p) and os.unlink(p))
+                    alias = os.path.join(root, "alias")
+                    os.symlink(os.path.join(root, ".claude"), alias)
+                    if name == "real_real": repo_arg, value = root, real_path
+                    elif name == "symlink_symlink": repo_arg, value = apparent, apparent_path
+                    elif name == "symlink_real": repo_arg, value = apparent, real_path
+                    elif name in ("real_symlink", "intermediate_symlink"):
+                        repo_arg, value = root, os.path.join(alias, filename)
+                    elif name == "outside": repo_arg, value = root, outside
+                    elif name == "sub_dotdot": repo_arg, value = root, root + "/sub/../.claude/" + filename
+                    elif name == "root_dotdot": repo_arg, value = root, root + "/../" + filename
+                    elif name == "trailing_slash": repo_arg, value = root, real_path + "/"
+                    else: repo_arg, value = root, root + "//.claude/" + filename
+                    proc = self.invoke(repo_arg, "--" + option, value, "--json")
+                    self.assertEqual(proc.returncode == 1, not accepted,
+                                     proc.stdout + proc.stderr)
+                    if not accepted:
+                        self.assertTrue(self.output(proc)["errors"])
+        self.assertEqual(seen, expected_ids)
 
     def test_vii_custom_scope_path_is_saved_in_metadata(self):
         root = self.make_repo(scope=ABSENT,

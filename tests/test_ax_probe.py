@@ -15,6 +15,13 @@ def make_exec(path, body):
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def read_marker(path):
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return f.read()
+
+
 def version_stub(version="0.1.10-stub"):
     """A fake ax that answers --version without touching the network."""
     return ('#!/usr/bin/env bash\n'
@@ -70,6 +77,79 @@ class TestAxProbe(unittest.TestCase):
         else:
             self.assertFalse(out["axAvailable"])
             self.assertIsNone(out["axVersion"])
+
+    def test_config_decision_table_v014(self):
+        case_ids = {
+            "absent", "empty", "disabled", "en_str", "en_int", "en_null",
+            "key_null", "key_true", "key_str", "key_list", "cfg_omitted",
+            "cfg_empty", "cfg_missing", "cfg_broken", "top_list", "top_null",
+            "bin_int", "bin_empty", "bin_nul", "compound",
+        }
+        self.assertEqual(len(case_ids), 20)
+        bindir = tempfile.mkdtemp()
+        marker = os.path.join(bindir, "sentinel")
+        make_exec(os.path.join(bindir, "ax"),
+                  '#!/bin/sh\nprintf called >> "$SENTINEL"\necho sentinel-version\n')
+        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"],
+                   SENTINEL=marker)
+        payloads = {
+            "absent": {}, "empty": {"webExtract": {}},
+            "disabled": {"webExtract": {"enabled": False}},
+            "en_str": {"webExtract": {"enabled": "false"}},
+            "en_int": {"webExtract": {"enabled": 1}},
+            "en_null": {"webExtract": {"enabled": None}},
+            "key_null": {"webExtract": None}, "key_true": {"webExtract": True},
+            "key_str": {"webExtract": "x"}, "key_list": {"webExtract": []},
+            "top_list": [], "top_null": None,
+            "bin_int": {"webExtract": {"bin": 1}},
+            "bin_empty": {"webExtract": {"bin": ""}},
+            "bin_nul": '{"webExtract":{"bin":"bad\\u0000bin"}}',
+            "compound": {"webExtract": {"enabled": False, "bin": []}},
+        }
+        invalid = case_ids - {"absent", "empty", "disabled", "cfg_omitted", "compound"}
+        for case_id in sorted(case_ids):
+            with self.subTest(case_id=case_id):
+                cfg = os.path.join(self.repo, case_id + ".json")
+                args = ["bash", SCRIPT]
+                if case_id != "cfg_omitted":
+                    if case_id == "cfg_empty": cfg = ""
+                    elif case_id == "cfg_missing": pass
+                    elif case_id == "cfg_broken": write(cfg, "{")
+                    else:
+                        value = payloads[case_id]
+                        write(cfg, value if isinstance(value, str) else json.dumps(value))
+                    args += ["--config", cfg]
+                args += ["--repo-root", self.repo]
+                before = read_marker(marker)
+                proc = subprocess.run(args, capture_output=True, text=True, env=env)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(len(proc.stdout.splitlines()), 1)
+                out = json.loads(proc.stdout)
+                if case_id in invalid:
+                    self.assertEqual(out, {"axAvailable": False, "axBin": "ax",
+                                           "axVersion": None, "reason": "invalid-config"})
+                    self.assertEqual(read_marker(marker), before)
+                elif case_id in {"disabled", "compound"}:
+                    self.assertEqual(out["reason"], "disabled-by-config")
+                else:
+                    self.assertEqual(out["reason"], "ok")
+
+    def test_output_key_sets_per_branch(self):
+        expected = {"axAvailable", "axBin", "axVersion", "reason"}
+        bindir = tempfile.mkdtemp()
+        ok = os.path.join(bindir, "ok")
+        make_exec(ok, version_stub())
+        outputs = [
+            run_script(self.repo, {"webExtract": {"enabled": False}}),
+            run_script(self.repo, {"webExtract": None}),
+            run_script(self.repo, {"webExtract": {"bin": "missing-ax-v014"}}),
+            run_script(self.repo, {"webExtract": {"bin": ok}}),
+        ]
+        self.assertEqual({out["reason"] for out in outputs},
+                         {"disabled-by-config", "invalid-config",
+                          "not-installed", "ok"})
+        for out in outputs:
+            self.assertEqual(set(out), expected)
 
 
 if __name__ == "__main__":

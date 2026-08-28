@@ -15,6 +15,13 @@ def make_exec(path, body):
     os.chmod(path, os.stat(path).st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def read_marker(path):
+    if not os.path.exists(path):
+        return None
+    with open(path, "rb") as f:
+        return f.read()
+
+
 def arg_logging_stub(rc=0):
     """A fake mdq that appends its argv to ARGLOG (env) and creates .mdq, then exits rc."""
     return ('#!/usr/bin/env bash\n'
@@ -107,6 +114,92 @@ class TestMdqIndex(unittest.TestCase):
         self.assertIn("--root docs", args)
         self.assertIn("--root skills", args)
         self.assertNotIn("--root .", args)
+
+    def test_config_decision_table_v014(self):
+        case_ids = {
+            "absent", "empty", "disabled", "en_str", "en_int", "en_null",
+            "key_null", "key_true", "key_str", "key_list", "cfg_omitted",
+            "cfg_empty", "cfg_missing", "cfg_broken", "top_list", "top_null",
+            "bin_int", "bin_empty", "bin_nul", "compound",
+        }
+        self.assertEqual(len(case_ids), 20)
+        bindir = tempfile.mkdtemp()
+        marker = os.path.join(bindir, "sentinel")
+        make_exec(os.path.join(bindir, "mdq"),
+                  '#!/bin/sh\nprintf called >> "$SENTINEL"\nexit 0\n')
+        env = dict(os.environ, PATH=bindir + os.pathsep + os.environ["PATH"],
+                   SENTINEL=marker)
+        payloads = {
+            "absent": {}, "empty": {"indexing": {}},
+            "disabled": {"indexing": {"enabled": False}},
+            "en_str": {"indexing": {"enabled": "false"}},
+            "en_int": {"indexing": {"enabled": 1}},
+            "en_null": {"indexing": {"enabled": None}},
+            "key_null": {"indexing": None}, "key_true": {"indexing": True},
+            "key_str": {"indexing": "x"}, "key_list": {"indexing": []},
+            "top_list": [], "top_null": None,
+            "bin_int": {"indexing": {"bin": 1}},
+            "bin_empty": {"indexing": {"bin": ""}},
+            "bin_nul": '{"indexing":{"bin":"bad\\u0000bin"}}',
+            "compound": {"indexing": {"enabled": False, "bin": []}},
+        }
+        invalid = case_ids - {"absent", "empty", "disabled", "cfg_omitted", "compound"}
+        for case_id in sorted(case_ids):
+            with self.subTest(case_id=case_id):
+                cfg = os.path.join(self.repo, ".claude", case_id + ".json")
+                args = ["bash", SCRIPT]
+                if case_id != "cfg_omitted":
+                    if case_id == "cfg_empty":
+                        cfg = ""
+                    elif case_id == "cfg_missing":
+                        pass
+                    elif case_id == "cfg_broken":
+                        write(cfg, "{")
+                    else:
+                        value = payloads[case_id]
+                        write(cfg, value if isinstance(value, str) else json.dumps(value))
+                    args += ["--config", cfg]
+                args += ["--repo-root", self.repo]
+                before = read_marker(marker)
+                proc = subprocess.run(args, capture_output=True, text=True, env=env)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(len(proc.stdout.splitlines()), 1)
+                out = json.loads(proc.stdout)
+                if case_id in invalid:
+                    self.assertEqual(out, {"mdqAvailable": False,
+                                           "reason": "invalid-config", "bin": "mdq"})
+                    self.assertEqual(read_marker(marker), before)
+                elif case_id in {"disabled", "compound"}:
+                    self.assertEqual(out, {"mdqAvailable": False,
+                                           "reason": "disabled-by-config"})
+                else:
+                    self.assertIn(out["reason"], {"indexed", "index-failed"})
+
+    def test_output_key_sets_per_branch(self):
+        expected = {
+            "disabled-by-config": {"mdqAvailable", "reason"},
+            "invalid-config": {"mdqAvailable", "reason", "bin"},
+            "not-installed": {"mdqAvailable", "reason", "bin"},
+            "indexed": {"mdqAvailable", "reason", "bin", "dbDir"},
+            "index-failed": {"mdqAvailable", "reason", "rc", "bin"},
+        }
+        self.assertEqual(len(expected), 5)
+        bindir = tempfile.mkdtemp()
+        ok = os.path.join(bindir, "ok")
+        bad = os.path.join(bindir, "bad")
+        make_exec(ok, arg_logging_stub(0))
+        make_exec(bad, arg_logging_stub(7))
+        env = {"ARGLOG": os.path.join(bindir, "args")}
+        outputs = [
+            run_script(self.repo, {"indexing": {"enabled": False}}),
+            run_script(self.repo, {"indexing": None}),
+            run_script(self.repo, {"indexing": {"bin": "missing-mdq-v014"}}),
+            run_script(self.repo, {"indexing": {"bin": ok}}, env),
+            run_script(self.repo, {"indexing": {"bin": bad}}, env),
+        ]
+        self.assertEqual({out["reason"] for out in outputs}, set(expected))
+        for out in outputs:
+            self.assertEqual(set(out), expected[out["reason"]])
 
 
 if __name__ == "__main__":

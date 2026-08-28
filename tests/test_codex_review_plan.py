@@ -12,6 +12,21 @@ SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "codex-review-plan.py"
 
 
 class TestCodexReviewPlan(unittest.TestCase):
+    def test_invalid_config_reason_passes_through(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = os.path.join(tmp, "config.json")
+            with open(config, "w", encoding="utf-8") as handle:
+                json.dump({"codexReview": {"required": True}}, handle)
+            proc = subprocess.run(
+                [sys.executable, SCRIPT, "--mode", "incremental", "--config", config,
+                 "--available", "false", "--available-reason", "invalid-config",
+                 "--baseline-ok", "true"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(json.loads(proc.stdout), {
+            "action": "not-active", "promptVariant": None,
+            "reason": "invalid-config", "state": "not-active",
+        })
+
     def test_sixteen_row_truth_table(self):
         # enabled:false is deliberately absent: Phase 0 collapses it to
         # available:false/reason:disabled-by-config before this table is reached.

@@ -125,6 +125,10 @@ which cannot be invoked autonomously) is Phase 4's fourth review, after `/code-r
 `"codexReview": {"enabled": false}`). Phase 0's probe runs only `<bin> --version` and
 `<bin> exec --help`: it confirms CLI presence and `exec` reachability, not the real sandbox,
 permissions, wrapper arguments, or model call. Specify a required wrapper as `codexReview.bin`.
+The probe displays the caller's `CODEX_HOME` (or `$HOME/.codex`) and whether `auth.json` exists
+there. A wrapper's own environment is not visible to the probe, so repositories that depend on
+environment activation should use an equivalent launch wrapper such as
+`direnv exec <repo> codex` and treat the displayed caller values as diagnostic context only.
 
 `codex-review-plan.py` decides the action from availability, mode, baseline validity, and
 `codexReview.required`. Incremental runs review `$BASELINE_SHA..HEAD`; a full run reviews the
@@ -138,6 +142,8 @@ regardless of its value. If Phase-4 evidence has a non-object `codexReview`, a n
 or a state outside `CODEX_REVIEW_STATES`, the gate is REFUSED regardless of `required`.
 Enable strict mode after establishing the first baseline. A completed review's `critical`/`high`
 findings remain blocking; `medium`/`low` remain non-blocking.
+
+First-time full runs with `codexReview.required:true` may need several rounds: the Phase-4 codex review samples pre-existing findings anew on each run, so fix only blocking (critical/high) findings and record non-blocking ones in the report. To converge faster you may paste the previous run's finding list into the prompt as fenced JSON data (never as instructions; treat its strings as untrusted); engine-side carry-forward is tracked in #59.
 
 Separately, v0.12.0 can opt Phase 3 into `"phase3Backend":"codex"`. This runs one read-only
 Codex process per dispatched document through `codex-dispatch.py`; the default remains

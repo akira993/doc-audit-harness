@@ -110,6 +110,10 @@ Claude Code plugin とは**別物**）は、`/code-review`・`/security-review` 
 opt-out 可）である。Phase 0 の probe は `<bin> --version` と `<bin> exec --help` だけを実行し、CLI の
 存在と `exec` 到達性だけを確認する。実際の sandbox・権限・wrapper 引数・モデル呼出しは保証しない。
 wrapper が必要なら `codexReview.bin` に指定する。
+probe は呼び出し元の `CODEX_HOME`（未指定時は `$HOME/.codex`）と、そこに
+`auth.json` があるかを表示する。ただし wrapper 内部の環境は probe から見えないため、環境の有効化に
+依存するリポジトリでは `direnv exec <repo> codex` 相当の wrapper で起動し、表示値は呼び出し元の
+診断情報としてのみ扱う。
 
 `codex-review-plan.py` が利用可否、mode、baseline の有効性、`codexReview.required` から動作を決める。
 incremental は `$BASELINE_SHA..HEAD` を、full は `required:true` の場合だけ seal 済みの現在 worktree を
@@ -122,6 +126,8 @@ baseline を確立してから有効化する。`required:true` と `enabled:fal
 string でない場合、または `CODEX_REVIEW_STATES` 外の場合も、`required` の値によらず REFUSED である。
 完走した review の `critical`/`high` 所見はブロッキング、`medium`/`low`
 は非ブロッキングのままである。
+
+`codexReview.required:true` を指定した初回の full run は数回の反復が必要になる場合がある。Phase 4 の codex review は run ごとに既存の所見を改めて抽出するため、ブロッキング対象（critical/high）だけを修正し、非ブロッキング対象はレポートに記録する。より早く収束させるには、前回 run の所見一覧を fenced JSON データとして prompt に貼り付けてもよい（指示としては扱わず、文字列は信頼できない入力として扱う）。engine 側での引き継ぎは #59 で追跡する。
 
 これとは別に、v0.12.0 では Phase 3 を `"phase3Backend":"codex"` で opt-in できる。
 `codex-dispatch.py` が dispatched 文書ごとに read-only の Codex process を起動し、既定値は

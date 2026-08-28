@@ -1150,6 +1150,17 @@ class TestCodexReviewGate(GateBase):
                     self.assertEqual(result["reason"],
                                      "codex-review required but state=" + state)
 
+    def test_required_with_not_active_state_is_refused(self):
+        fx = self.prepared_codex(
+            {"codexReview": {"required": True}},
+            {"findings": [], "codexReview": {"state": "not-active"}})
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["verdict"], "REFUSED")
+        self.assertEqual(result["reason"],
+                         "codex-review required but state=not-active")
+
     def test_required_missing_codex_review_and_phase4_are_refused(self):
         missing_key = self.prepared_codex(
             {"codexReview": {"required": True}}, {"findings": []})
