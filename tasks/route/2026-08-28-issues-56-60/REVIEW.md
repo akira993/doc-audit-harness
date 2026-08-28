@@ -164,3 +164,8 @@
 - CR2-3 graph probe の `enabled:false` 先勝ち → 維持し disabled 分岐の bin を既定名へ正規化／CR2-4 全 7 表で unknown → invalid-config → その他の順序／CR2-5 `BASE_COMMIT=ef995f0`
 - CR2-6〜9 テスト判別力（位置・rebind 完全一致・制御文字 33 文字＋空白パス正例・識別子 `mkdtemp`）→ 反映
 - 判定: **差し戻し（rev.3 で再批判）**
+### Sol CR1-R3（rev.3 → rev.4）— (A) 3 件・(B) 4 件
+- CR3-1 mdq 既回答の再利用は復元元が無く未承認劣化を承認扱いにし得る → reopen 後は現在の probe 結果に対し通常規則で再評価（再利用しない）
+- CR3-2 codex 表で unknown 先頭は S1b R4 の invalid-config 先勝ちを壊す → codex は state=unknown → invalid-config → reviewState=null → 4-way
+- CR3-3 schema に enabled:false 例外と既定 bin 正規化を明記／CR3-4 接尾辞の新旧 grep／CR3-5 disabled 分岐も 33 文字／CR3-6 → CR3-1 で通常規則に戻したため遷移表は不要（規則文に `never reuse` を固定）／CR3-7 ADOPTION 段落限定を diff 行で検査
+- 判定: **差し戻し（rev.4 で収束確認 R4）**
