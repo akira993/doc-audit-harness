@@ -179,3 +179,7 @@
 - CR5-1 `Fix mdq first` 選択時も Phase 0.5 へ進むと読める → 条件付き文に／CR5-2 DoD (1) の 7 表一括順序が codex の例外を反転 → 6 表＋codex を分離
 - CR5-3 ADOPTION 検査を bytes 比較に／CR5-4 reopen の 5 要素相対順を 1 本の順序テストで固定
 - 判定: **上限到達。(A) 全件を rev.6 に反映し、Opus 全体敵対レビューへ**
+### Opus O-R3（PLAN-cr1 rev.6 → rev.7）— ブロッキング 4・非ブロッキング 4。baseline 独立実測 Ran 580 OK, skipped 0
+- O1 §A4 の en 引用 `prints` は実ファイル `print` → 引用句のみ置換・周辺不変を明記／O2 共通規則文の literal が DoD「ちょうど 1 回」と矛盾 → 規則文から literal を外す／O3 `mdqDegrade` の記録文も無条件化（`make_rebind` は両記録が必要）／O4 config-schema の追記先は表 3 行のみ（`Its probe reasons are` 以降は test_v0132 が固定）
+- N2/N3 graph 3 表の並べ替えは無意味・CM/AX の現状記述誤り → 並べ替え撤回、現行順序 assert／N1 harness 辞退時の Phase 0 再実行コスト → 最終報告に運用注記／N4 33 文字 ×2 の実行コスト → 全数維持（約 30 秒）
+- 判定: **rev.7 で実装承認（Opus「設計差し替え不要」）**
