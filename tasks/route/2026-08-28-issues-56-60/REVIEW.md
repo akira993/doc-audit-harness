@@ -232,3 +232,4 @@
 ### Opus O-R5（PLAN-cr3 rev.2 → rev.3）— 条件付き合格。V9 (b)(c) を実機再現、9 か所除去で解消を実測、baseline Ran 603 OK
 - O1 ax の `\xff` ベクタは BSD `tr` が切り落とし判別力ゼロ → U+2028 に差し替え／O2 graph `emit()` の encode 検証行は意図的に残す旨を記録／O3 CLI 3 本は生 bytes 取得を明記／N1 網羅対象を emit サイト 9 個に
 - 判定: **rev.3 で実装承認**
+- 実装セッション cr3（Terra workspace-write, medium）: session `01a04920-81dd-7181-b5aa-06b696fdfb09`（起動 2026-08-28T16:07:46Z）
