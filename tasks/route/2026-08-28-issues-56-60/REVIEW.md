@@ -216,3 +216,4 @@
 ### Opus O-R4（PLAN-cr2 rev.6 → rev.7）— 条件付き合格。§8 の 3 検査片を現 HEAD で実走し偽陽性 0（検出は所見 #2 の実物 1 件のみ）、baseline Ran 585 OK
 - O1 既存メソッド名は改名・削除しない（`test_bin_boundary_table` は新規）／O2 cr1 §D10 のエイリアス統合を撤回（DoD (8)(c) 優先）／O3 26 ID は判定表、`test_bin_boundary_table` は制御文字（graph は空白・surrogate も）に分担／N1 33 文字全走査は 6 本で実施（+20〜40 秒許容）／N2 DoD 番号整理
 - 判定: **rev.7 で実装承認**
+- 実装セッション cr2（Terra workspace-write, medium）: session `01a04882-dbaf-7912-98a7-28fb2ba45cb9`（起動 2026-08-28T13:15:34Z）
