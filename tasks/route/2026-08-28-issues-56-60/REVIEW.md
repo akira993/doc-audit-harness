@@ -200,3 +200,7 @@
 - CR2-8 既存の改行 bin 正例（test_codex_probe:233）は正例を置換し改行は負例へ移行／CR2-9 先頭 `-` 禁止は撤回、`command -v --` に
 - CR2-10 ADOPTION §7 は期待段落の完全一致＋段落外差分 0／CR2-11 CM literal の 3 キー完全一致／CR2-12 AST で return 後の文 0・必須メソッド名集合／CR2-13 symlink cleanup
 - 判定: **差し戻し（rev.2 で再批判）**
+### Sol cr2-R2（rev.2 → rev.3）— (A) 9 件・(B) 1 件
+- CR2-4 再 disabled 出力は seam ごとに既存 3 形（mdq bin 無し／ax・codex 既定名／graph 保持）を維持／CR2-11 再 Phase 0 節で合成指示文の完全一致・count 1
+- CR2-14 codex 正例は 2 回呼び出し／CR2-15 `-x` stub 正例／CR2-16 ファイル別必須名／CR2-17 ef995f0 の既存テスト名包含／CR2-18 CLI 23 ID の正確な集合／CR2-19 ja は区切り無し・en は先頭スペース／CR2-20 whitespace-only を ADOPTION に／CR2-21 seam 別出力キー
+- 判定: **差し戻し（rev.3 で再批判）**
