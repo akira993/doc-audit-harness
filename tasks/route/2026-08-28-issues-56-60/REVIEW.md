@@ -144,3 +144,7 @@
 - 検査系成果物の実数: #58 絶対パス **20 ID**／#56 判定表 **3 probe × 20 ID** ＋ contextMode 式 **13 ID**（実行）＋ キー集合 5/4/5 分岐／#60 caller env **7 ID** ＋ 5 分岐／#57 probe-record **固定 33 ID・7 テスト**（10 seam schema・rebind 値・display 1 行性・symlink 4 種）／契約テスト test_v014 **9 本**／§7 固定文 **en 6・ja 6**／付録ファイル **43**・行 **52**／スコープ検査 3 段（allowlist 24 path・保護 root 25 entry）各 Stage で clean／禁止 engine ファイル **20 path** byte 一致。
 - 計画レビューの実数: Sol **5 往復**（R1 17・R2 17・R3 18・R4 15・R5 11 件、全件反映または #59 見送りへ転記）、Opus **2 ラウンド**（O1〜O8・N1〜N5）、最終 `codex exec review` **P2 ×2 → 修正済み**。
 - 見送り（ユーザー判断待ち）: #59 ledger（`59-design-note.md`）、#56 第 2 段。出荷後: PR merge → `release-handoff.sh <merge-sha> 61`（tag `docaudit--v0.14.0`・Release・#57/#58/#60 close・skills-dir 同期）。
+
+## 追補: PR #61 merge 後の `/code-review`（ユーザー実行、2026-08-28）
+- PR #61 は `ef995f0` で merge 済み（tag 未作成）。code-review 所見 10 件（CONFIRMED 6・PLAUSIBLE 4、最高 medium）。根本原因: 「Phase 5 は rebind のみ」×「記録は fail-open」で、再開していない run にも unknown 行が出る（#1 harness 辞退の run 再取得で記録消失、#2 codex backend で MDQ_DEGRADE 未束縛、#3 contextMode validator の厳格さ、#4 codexReviewState 書き込み失敗、#6 接尾辞 gating が会話変数）。他: #5 状態行の優先順位、#7 ensure_ascii、#8 graph 3 probe の NUL、#9 「Rows 6–8」の宙吊り参照、#10 判定ブロック三重化＋python 3 回起動。
+- ユーザー指示: 修正計画 → Sol → Opus → 実装 → commit → ユーザーが再 code-review。計画 `PLAN-cr1.md`（branch `fix/v0.14.0-code-review-followup`、版 0.14.0 据え置き、handoff は fix PR の merge 後）。
