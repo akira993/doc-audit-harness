@@ -198,7 +198,7 @@ class TestV013Contracts(unittest.TestCase):
         self.assertEqual(
             {plugin_version, latest_sha_version, adoption_version,
              adoption_ja_version, stamp_version},
-            {"0.13.2"})
+            {"0.14.0"})
 
     def test_j_only_allowlisted_0_12_0_references_remain(self):
         old_version = "0." "12.0"
@@ -207,12 +207,12 @@ class TestV013Contracts(unittest.TestCase):
             "docs/ADOPTION.md": [
                 rf"Separately, v{old} can opt Phase 3 into .*",
                 rf"\*\*v{old} behavior changes:\*\*.*",
-                rf"Existing unmodified stamped 0\.10\.1, 0\.11\.0, {old}, 0\.13\.0, or 0\.13\.1 templates can be updated directly to 0\.13\.2 with",
+                rf"Existing unmodified stamped 0\.10\.1, 0\.11\.0, 0\.12\.0, 0\.13\.0, 0\.13\.1, or 0\.13\.2 templates can be updated directly to 0\.14\.0 with",
             ],
             "docs/ADOPTION.ja.md": [
                 rf"これとは別に、v{old} では Phase 3 を .*",
                 rf"\*\*v{old} の挙動変更:\*\*.*",
-                rf"変更されていない stamp 付きの 0\.10\.1、0\.11\.0、{old}、0\.13\.0、または 0\.13\.1 テンプレートは、",
+                rf"変更されていない stamp 付きの 0\.10\.1、0\.11\.0、0\.12\.0、0\.13\.0、0\.13\.1、または 0\.13\.2 テンプレートは、",
             ],
             "skills/audit/references/engine-shas.json": [
                 rf'\s*"{old}": \{{',

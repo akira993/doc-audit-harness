@@ -208,7 +208,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.13.2  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.14.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -244,6 +244,8 @@ CocoIndex は `.cocoindex_code/settings.yml` が存在する場合のみ初期�
 `seal-run.py` または `read-manifest.py` が失敗した場合は run を解放して停止する。`read-manifest.py` は未 seal の manifest を拒否する。
 自動検出に頼っていた config は `/docaudit:init` でキーを追加するまで `not-configured` になる。
 
+**v0.14.0 の挙動変更:** `indexing`、`contextMode`、`webExtract`、`codexReview` のキーでは、`enabled` は JSON の真偽値でなければなりません。`enabled:false` 以外の場合、`enabled` が真偽値でない、キーがオブジェクトでない（`null` を含む）、または `indexing`・`webExtract`・`codexReview` の `bin` が文字列でない、空、NUL を含むときは `invalid-config` を報告し、ツールを起動しません（キーが無い場合は従来どおり有効で、`bin` の非文字列値は変換されず、読めない設定は従来どおり Phase 0 より前に監査を停止します）。`indexing` キーが不正な場合は、未インストール時と同じく Phase 0 の mdq 確認ゲートが起動します。`codexReview.required:true` と不正な `codexReview` キーを組み合わせた場合は、codex を黙って実行せず `REFUSED` になります。Phase 0 の probe 結果は `$RUN_DIR/phase0-probes.json` に保存されます（表示専用で、verdict の入力にはなりません）。Phase 5 の状態行は初回実行でも再開実行でもその記録から描画され、記録が無いか読めない場合は「state unknown after resume」と表示されます。codex probe は呼び出し元の `CODEX_HOME` と、そこに `auth.json` があるかどうかを報告します（表示専用で、wrapper 自身の環境は観測されません）。`import-audit-scope.py` はリポジトリルート配下の絶対パスの `--config`／`--scope` を受け付けます（POSIX パスのみ）。
+
 ---
 
 ## 4. プロジェクトをオンボードする
@@ -272,8 +274,8 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.1、0.11.0、0.12.0、0.13.0、または 0.13.1 テンプレートは、
-`/docaudit:init --harness --refresh` で 0.13.2 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、または 0.13.2 テンプレートは、
+`/docaudit:init --harness --refresh` で 0.14.0 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、

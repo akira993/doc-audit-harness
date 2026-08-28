@@ -20,6 +20,33 @@ def normalize_paragraphs(text):
 
 
 class TestV014Contracts(unittest.TestCase):
+    def test_v014_behavior_changes_paragraph(self):
+        en = [
+            "indexing / contextMode / webExtract / codexReview keys now require a JSON boolean enabled; unless enabled is false, a non-boolean enabled, a non-object key (including null), or — for indexing / webExtract / codexReview — a non-string, empty, or NUL-containing bin reports invalid-config and never runs the tool (an absent key still defaults to enabled; a non-string bin is no longer coerced; an unreadable config still stops the audit before Phase 0 as before)",
+            "an invalid indexing key fires the Phase-0 mdq confirmation gate like not-installed",
+            "codexReview.required:true combined with an invalid codexReview key is now REFUSED instead of silently running codex",
+            "Phase-0 probe results are persisted to $RUN_DIR/phase0-probes.json (display-only, never a verdict input); Phase-5 status lines are rendered from that record on fresh and resumed runs and print \"state unknown after resume\" when it is missing or unreadable",
+            "the codex probe reports the caller's CODEX_HOME and whether auth.json exists there (display-only; a wrapper's own environment is not observed)",
+            "import-audit-scope.py accepts an absolute --config/--scope path under the repository root (POSIX paths only)",
+        ]
+        ja = [
+            "`indexing`、`contextMode`、`webExtract`、`codexReview` のキーでは、`enabled` は JSON の真偽値でなければなりません。",
+            "`indexing` キーが不正な場合は、未インストール時と同じく Phase 0 の mdq 確認ゲートが起動します。",
+            "`codexReview.required:true` と不正な `codexReview` キーを組み合わせた場合は、codex を黙って実行せず `REFUSED` になります。",
+            "Phase 0 の probe 結果は `$RUN_DIR/phase0-probes.json` に保存されます（表示専用で、verdict の入力にはなりません）。Phase 5 の状態行は初回実行でも再開実行でもその記録から描画され、記録が無いか読めない場合は「state unknown after resume」と表示されます。",
+            "codex probe は呼び出し元の `CODEX_HOME` と、そこに `auth.json` があるかどうかを報告します（表示専用で、wrapper 自身の環境は観測されません）。",
+            "`import-audit-scope.py` はリポジトリルート配下の絶対パスの `--config`／`--scope` を受け付けます（POSIX パスのみ）。",
+        ]
+        for path, heading, expected in (
+                ("docs/ADOPTION.md", "**v0.14.0 behavior changes:**", en),
+                ("docs/ADOPTION.ja.md", "**v0.14.0 の挙動変更:**", ja)):
+            paragraphs = normalize_paragraphs(read(path))
+            paragraph = next((p for p in paragraphs if p.startswith(heading)), None)
+            self.assertIsNotNone(paragraph, path)
+            self.assertEqual(sum(sentence.replace("`", "") in paragraph for sentence in expected), 6)
+            for sentence in expected:
+                self.assertIn(sentence.replace("`", ""), paragraph.replace("`", ""))
+
     def test_reason_enumerations_and_gate_include_invalid_config(self):
         skill = read("skills/audit/SKILL.md")
         phase0 = skill.split("## Phase 0 —", 1)[1].split("## Phase 0.5", 1)[0]
