@@ -4,7 +4,6 @@ import importlib.util
 import json
 import os
 import re
-import shutil
 import stat
 import subprocess
 import sys
@@ -19,7 +18,7 @@ SCRIPTS = os.path.join(ROOT, "skills", "audit", "scripts")
 SCRIPT = os.path.join(SCRIPTS, "import-audit-scope.py")
 OPEN_RUN = os.path.join(SCRIPTS, "open-run.py")
 RESOLVE_IMPACT = os.path.join(SCRIPTS, "resolve-impact.py")
-DIR_FRAMEWORK = os.path.expanduser("~/Projects/dir-framework")
+FIXTURE_DIR = os.path.join(ROOT, "tests", "data", "dir-framework-scope")
 ABSENT = object()
 
 if SCRIPTS not in sys.path:
@@ -654,34 +653,41 @@ class ImportAuditScopeTests(unittest.TestCase):
         mapped = {item["path"]: item["provenance"] for item in out["impacted"]}
         self.assertIn(mapped.get("docs/a.md"), ("mapped", "both"))
 
-    def test_real_dir_framework_scope_has_24_rules_and_46_equivalence_paths(self):
-        scope_source = os.path.join(DIR_FRAMEWORK, ".claude", "audit-scope.json")
-        if not os.path.isfile(scope_source) or not os.path.isdir(os.path.join(DIR_FRAMEWORK, ".git")):
-            self.skipTest("~/Projects/dir-framework is unavailable")
-        source_paths = subprocess.run(
-            ["git", "-C", DIR_FRAMEWORK, "ls-files", "-z"],
-            check=True, stdout=subprocess.PIPE,
-        ).stdout.split(b"\0")
-        source_paths = [path.decode("utf-8") for path in source_paths if path]
-        self.assertEqual(len(source_paths), 46)
+    def test_dir_framework_fixture_scope_is_not_imported_with_24_rules_and_48_paths(self):
+        """DoD (15): the fixed 951570b fixture stays not-imported and checks 48 paths."""
+        scope_raw = read(os.path.join(FIXTURE_DIR, "audit-scope.json"))
+        config_raw = read(os.path.join(FIXTURE_DIR, "doc-audit.json"))
+        paths_raw = read(os.path.join(FIXTURE_DIR, "paths.txt"))
+        self.assertEqual(hashlib.sha256(scope_raw).hexdigest(),
+                         "d68186952fee273130685b329c1cd4727c34c55065866a054b51ab0629e0982d")
+        self.assertEqual(hashlib.sha256(config_raw).hexdigest(),
+                         "9723e2837c235c75fa28d32eb97f04d884d9a1d12ea001ea7e21bfd4bf44599c")
+        self.assertEqual(hashlib.sha256(paths_raw).hexdigest(),
+                         "b1a1356a14935bbd2aed214dbf7d732c25379213395f14ee4fd98d5689e7d91d")
+        scope_fixture = json.loads(scope_raw)
+        config_fixture = json.loads(config_raw)
+        source_paths = paths_raw.decode("utf-8").splitlines()
+        self.assertEqual(len(source_paths), 48)
+        self.assertEqual(len(scope_fixture), 24)
+        self.assertNotIn("auditScope", config_fixture)
 
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         root = temp.name
         for rel in source_paths:
-            source = os.path.join(DIR_FRAMEWORK, *rel.split("/"))
             target = os.path.join(root, *rel.split("/"))
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            shutil.copy2(source, target)
+            write(target, b"")
+        write(os.path.join(root, ".claude", "audit-scope.json"), scope_raw)
+        write(os.path.join(root, ".claude", "doc-audit.json"), config_raw)
         subprocess.run(["git", "init", "-q"], cwd=root, check=True)
         subprocess.run(["git", "add", "-f", "."], cwd=root, check=True)
         proc = self.invoke(root, "--check", "--json", "--doc-glob", "**/*.md")
         out = self.output(proc)
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
         self.assertEqual(out["state"], "not-imported")
-        self.assertEqual(out["rules"], 24)
+        self.assertEqual(out["rules"], len(scope_fixture))
         self.assertEqual(out["errors"], [])
-        self.assertEqual(out["equivalenceChecked"], 46)
+        self.assertEqual(out["equivalenceChecked"], len(source_paths))
 
 
 if __name__ == "__main__":

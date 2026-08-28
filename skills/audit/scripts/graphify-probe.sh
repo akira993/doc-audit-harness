@@ -28,33 +28,36 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# docGraph.enabled (default true) + docGraph.bin (default "graphify"); tolerate a
-# missing/invalid config by falling back to defaults.
-ENABLED="1"; BIN="graphify"
-if [[ -n "$CONFIG" ]]; then
-  IFS=$'\t' read -r ENABLED BIN < <(python3 -c '
-import json,sys
-e=True; b="graphify"
+# A seam is key-gated: a missing or invalid config never falls back to enabled.
+read -r STATE BIN < <(python3 -c '
+import json, sys
+default = "graphify"
 try:
-    s=(json.load(open(sys.argv[1])).get("docGraph") or {})
-    e=bool(s.get("enabled",True)); b=str(s.get("bin","graphify") or "graphify")
+    if not sys.argv[1]: raise ValueError()
+    with open(sys.argv[1], encoding="utf-8") as f: config = json.load(f)
+    if not isinstance(config, dict): raise ValueError()
+    if "docGraph" not in config: print("not-configured", default); raise SystemExit
+    seam = config["docGraph"]
+    if not isinstance(seam, dict): raise ValueError()
+    enabled = seam.get("enabled", True)
+    if not isinstance(enabled, bool): raise ValueError()
+    if not enabled: print("disabled-by-config", seam.get("bin", default) if isinstance(seam.get("bin", default), str) and seam.get("bin", default) else default); raise SystemExit
+    bin_name = seam.get("bin", default)
+    if not isinstance(bin_name, str) or not bin_name: raise ValueError()
+    print("enabled", bin_name)
 except Exception:
-    pass
-print(("1" if e else "0")+"\t"+b)
+    print("invalid-config", default)
 ' "$CONFIG")
-fi
-[[ -n "$BIN" ]] || BIN="graphify"
-[[ -n "$ENABLED" ]] || ENABLED="1"
-# JSON-safe copy of BIN for echoing into the JSON (BIN comes from user config).
-BIN_J="$(printf '%s' "$BIN" | tr -d '"\\' | tr -d '[:cntrl:]')"
 
-if [[ "$ENABLED" != "1" ]]; then
-  printf '{"docGraphAvailable":false,"docGraphBin":"%s","reason":"disabled-by-config","gitignoreOk":false}\n' "$BIN_J"
+emit() { python3 -c 'import json,sys; print(json.dumps({"docGraphAvailable":sys.argv[1] == "true", "docGraphBin":sys.argv[2], "reason":sys.argv[3], "gitignoreOk":sys.argv[4] == "true"}, separators=(",", ":")))' "$@"; }
+
+if [[ "$STATE" != "enabled" ]]; then
+  emit false "$BIN" "$STATE" false
   exit 0
 fi
 
 if ! command -v "$BIN" >/dev/null 2>&1; then
-  printf '{"docGraphAvailable":false,"docGraphBin":"%s","reason":"not-installed","gitignoreOk":false}\n' "$BIN_J"
+  emit false "$BIN" not-installed false
   exit 0
 fi
 
@@ -72,12 +75,12 @@ if ( cd "$REPO_ROOT" && "$BIN" update . ) >/dev/null 2>"$ERRF"; then
   else
     GITIGNORE_OK="false"
   fi
-  printf '{"docGraphAvailable":true,"docGraphBin":"%s","reason":"ok","gitignoreOk":%s}\n' "$BIN_J" "$GITIGNORE_OK"
+  emit true "$BIN" ok "$GITIGNORE_OK"
   exit 0
 else
   rc=$?
   TAIL="$(tail -n 3 "$ERRF" 2>/dev/null | tr '\n' ' ' | tr -d '"\\' | tr -d '[:cntrl:]')"
   echo "graphify update . failed (rc=$rc): $TAIL" >&2
-  printf '{"docGraphAvailable":false,"docGraphBin":"%s","reason":"update-failed","rc":%d,"gitignoreOk":false}\n' "$BIN_J" "$rc"
+  emit false "$BIN" update-failed false
   exit 0
 fi

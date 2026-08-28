@@ -171,47 +171,62 @@ Then probe **codegraph** (the `codegraph` CLI, a symbol graph — call graph, im
 doc-impact-verifier's symbol-level corroboration seam, the symbol-level counterpart of ax's
 external-URL seam. Deterministic (mdq-index.sh pattern — it keeps the index fresh via an actual
 build/refresh call, not just `--version`): run
-`bash "$SD/scripts/codegraph-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"` and parse
+`SYMBOL_GRAPH_PROBE_JSON="$(bash "$SD/scripts/codegraph-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR")"` and parse
 `{symbolGraphAvailable, symbolGraphBin, reason}` (`reason` ∈
-`ok`/`not-installed`/`disabled-by-config`/`index-failed`). Bind `SYMBOL_GRAPH_AVAILABLE` and
-`SYMBOL_GRAPH_BIN` (default `codegraph`) for the Phase-5 symbol-graph status line.
+`ok`/`not-installed`/`disabled-by-config`/`index-failed`/`not-configured`/`invalid-config`). Bind
+`SYMBOL_GRAPH_AVAILABLE="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["symbolGraphAvailable"]).lower())' "$SYMBOL_GRAPH_PROBE_JSON")"`,
+`SYMBOL_GRAPH_BIN="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["symbolGraphBin"])' "$SYMBOL_GRAPH_PROBE_JSON")"` (default `codegraph`), and
+`SYMBOL_GRAPH_REASON="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["reason"])' "$SYMBOL_GRAPH_PROBE_JSON")"`
+for the Phase-5 symbol-graph status line.
 `SYMBOL_GRAPH_BIN` affects only the Phase-0 probe; Phase 3's `workflow-template.js` invokes fixed
 `codegraph`, and Workflow receives only the availability boolean. The
-probe keeps the index fresh every run: `.codegraph/` absent → `codegraph init .` (first run,
+When the key exists, is not `enabled:false`, and the tool is installed, the probe keeps the index
+fresh: `.codegraph/` absent → `codegraph init .` (first run,
 confirmed 96ms on this repo); `.codegraph/` present → `codegraph sync .` (confirmed idempotent,
 fast); it never touches `.gitignore` itself (codegraph self-generates `.codegraph/.gitignore`).
 Always exits 0; any failure degrades to `SYMBOL_GRAPH_AVAILABLE=false` and the audit continues
-unaffected — symbol-level corroboration is a bonus, never a requirement.
+unaffected — symbol-level corroboration is a bonus, never a requirement. Invalid JSON, no config
+file, and a non-object top level are standalone-probe defenses; the ordinary audit stops before a probe.
 
 Then probe **graphify** (the `graphify` CLI, a unified code+doc graph), a candidate source for
 Phase 2's `mapGapCandidates` alongside the existing token heuristic. Deterministic, same pattern:
-run `bash "$SD/scripts/graphify-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"` and
+run `DOC_GRAPH_PROBE_JSON="$(bash "$SD/scripts/graphify-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR")"` and
 parse `{docGraphAvailable, docGraphBin, reason, gitignoreOk}` (`reason` ∈
-`ok`/`not-installed`/`disabled-by-config`/`update-failed`). Bind `DOC_GRAPH_AVAILABLE`,
-`DOC_GRAPH_BIN` (default `graphify`), and `DOC_GRAPH_GITIGNORE_OK` for Phase 2 and the Phase-5
-doc-graph status line. The probe runs `graphify update .` unconditionally (confirmed LLM-free and
+`ok`/`not-installed`/`disabled-by-config`/`update-failed`/`not-configured`/`invalid-config`). Bind
+`DOC_GRAPH_AVAILABLE="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["docGraphAvailable"]).lower())' "$DOC_GRAPH_PROBE_JSON")"`,
+`DOC_GRAPH_BIN="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["docGraphBin"])' "$DOC_GRAPH_PROBE_JSON")"`,
+`DOC_GRAPH_GITIGNORE_OK="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["gitignoreOk"]).lower())' "$DOC_GRAPH_PROBE_JSON")"`, and
+`DOC_GRAPH_REASON="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["reason"])' "$DOC_GRAPH_PROBE_JSON")"` for Phase 2 and the Phase-5
+doc-graph status line. When the key exists, is not `enabled:false`, and the tool is installed, the probe runs `graphify update .` (confirmed LLM-free and
 diff-based/idempotent — safe every run) and then checks whether `graphify-out/` is gitignored via
 `git check-ignore -q graphify-out` (graphify does NOT self-gitignore its output, unlike codegraph;
 report-only WARN via Phase 5 only, never a write). Aside: a detected topology change makes
 `graphify update .` write a dated backup under `graphify-out/<date>/` — a disk-hygiene accumulation
 this pass does not address (spec §6). Always exits 0; any failure degrades to
-`DOC_GRAPH_AVAILABLE=false` and the audit continues unaffected.
+`DOC_GRAPH_AVAILABLE=false` and the audit continues unaffected. Invalid JSON, no config file, and
+a non-object top level are standalone-probe defenses; the ordinary audit stops before a probe.
 
 Then probe **CocoIndex** (the `ccc` CLI, local-embedding semantic search), a second, independent
 candidate source for Phase 2's `mapGapCandidates`. Deterministic, same pattern: run
-`bash "$SD/scripts/cocoindex-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR"` and parse
+`SEMANTIC_SEARCH_PROBE_JSON="$(bash "$SD/scripts/cocoindex-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR")"` and parse
 `{semanticSearchAvailable, semanticSearchBin, reason}` (`reason` ∈
-`ok`/`not-installed`/`disabled-by-config`/`not-initialized`/`index-failed`). Bind
-`SEMANTIC_SEARCH_AVAILABLE` and `SEMANTIC_SEARCH_BIN` (default `ccc`) for Phase 2 and the Phase-5
-semanticSearch status line. This probe is the heaviest of the three (confirmed ~8.5s on this repo
+`ok`/`not-installed`/`disabled-by-config`/`not-initialized`/`index-failed`/`not-configured`/`invalid-config`/`gitignore-modified`). Bind
+`SEMANTIC_SEARCH_AVAILABLE="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["semanticSearchAvailable"]).lower())' "$SEMANTIC_SEARCH_PROBE_JSON")"`,
+`SEMANTIC_SEARCH_BIN="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["semanticSearchBin"])' "$SEMANTIC_SEARCH_PROBE_JSON")"`, and
+`SEMANTIC_SEARCH_REASON="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["reason"])' "$SEMANTIC_SEARCH_PROBE_JSON")"`
+for Phase 2 and the Phase-5 semanticSearch status line. This probe is the heaviest of the three (confirmed ~8.5s on this repo
 when it actually indexes) — and, the single most important sentence in this paragraph, **it never
-calls `ccc init` under any circumstance**: an absent `.cocoindex_code/` in the repo is a normal,
+calls `ccc init` under any circumstance**: an absent `.cocoindex_code/settings.yml` marker in the repo is a normal,
 silent `not-initialized` degrade (expected until the user runs `/docaudit:init`), NOT an error,
 because `ccc init` auto-appends `/.cocoindex_code/` to the target repo's `.gitignore` — a write the
-report-only audit phase must never trigger mid-run. Only when `.cocoindex_code/` already exists does
-the probe run `ccc index` to refresh (no path argument — `ccc index` operates on the cwd only;
-confirmed `ccc index .` errors "unexpected extra argument(s)"). Always exits 0; any failure degrades to
-`SEMANTIC_SEARCH_AVAILABLE=false` and the audit continues unaffected.
+report-only audit phase must never trigger mid-run. `ccc index` uses `require_project_root(auto_init=True)`:
+without that marker it can auto-initialize and append to `.gitignore`. Only when
+`.cocoindex_code/settings.yml` exists does the probe run `ccc index` to refresh (no path argument —
+`ccc index` operates on the cwd only; confirmed `ccc index .` errors "unexpected extra argument(s)").
+It compares `.gitignore` before and after indexing and reports `gitignore-modified` without restoring it.
+Always exits 0; any failure degrades to `SEMANTIC_SEARCH_AVAILABLE=false` and the audit continues
+unaffected. Invalid JSON, no config file, and a non-object top level are standalone-probe defenses;
+the ordinary audit stops before a probe.
 
 **Harness question (once, after all Phase-0 probes and before the firing table).** Read
 `harness.state` from `CFG`. If the `harness` key is absent, bind `HARNESS_STATE=unset` and, when
@@ -281,9 +296,9 @@ are never dropped. Otherwise, if there are no FAIL findings, bind
 - “修正して監査” pipes only distinct `path` values present in findings to
   `python3 "$SD/scripts/fix-scope.py" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR" --paths -`.
   Save that JSON as `$RUN_DIR/preflight-allowed.json`; denied paths remain findings and are never
-  edited. The helper's built-in case-insensitive deny for ADR, decisions, logs, and `.claude/**`
-  cannot be relaxed; `protectedGlobs` only adds denials and `diffGlobs` is never consulted. Before
-  editing, run
+  edited. The helper's built-in case-insensitive deny for ADR, decisions, logs, `.claude/**`, and
+  `CLAUDE.md`/`AGENTS.md` basenames cannot be relaxed; `protectedGlobs` only adds denials and
+  `diffGlobs` is never consulted. Before editing, run
   `python3 "$SD/scripts/fix-scope.py" --repo-root "$CLAUDE_PROJECT_DIR" --snapshot --allowed "$RUN_DIR/preflight-allowed.json" > "$RUN_DIR/preflight-snapshot.json"`.
   Edit only allowed documentation paths, then run
   `python3 "$SD/scripts/fix-scope.py" --repo-root "$CLAUDE_PROJECT_DIR" --verify "$RUN_DIR/preflight-snapshot.json" --allowed "$RUN_DIR/preflight-allowed.json"`.
@@ -364,13 +379,18 @@ it is not rebound after sealing.
 Seal the run before selecting or starting either verifier backend:
 `python3 "$SD/scripts/seal-run.py" --run-dir "$RUN_DIR" --repo-root "$CLAUDE_PROJECT_DIR" --evidence "$EVIDENCE"`.
 On success replace `EVIDENCE` with its complete stdout; its `digest` and updated `manifest` are
-the trusted seal. Exit 5 means the HEAD or complete change set drifted after Phase 1: release the
-run, stop, and say “Phase 1 以降にソースが変わりました。監査を再実行してください。” Do
-not launch either verifier backend and do not calculate a replacement digest by hand.
+the trusted seal. Exit 5 means the HEAD or complete change set drifted after Phase 1: run
+`python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --release --runid "$RUNID"`,
+stop, and say “Phase 1 以降にソースが変わりました。監査を再実行してください。” Do not launch either verifier backend and do not calculate a replacement digest by hand.
+Any other non-zero exit: run
+`python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --release --runid "$RUNID"`,
+report `seal-run:` stderr, stop without calling `read-manifest.py`, and do not launch either verifier backend.
 
 Immediately verify and read that exact sealed manifest once:
 `SEALED_MANIFEST="$(python3 "$SD/scripts/read-manifest.py" --run-dir "$RUN_DIR" --evidence "$EVIDENCE")"`.
-If this command fails, stop without launching a verifier. Parse only `SEALED_MANIFEST` and bind:
+If `read-manifest.py` fails, run
+`python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --release --runid "$RUNID"`,
+then stop without launching a verifier. Parse only `SEALED_MANIFEST` and bind:
 `SEALED_PHASE3_BACKEND="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["phase3Backend"])' "$SEALED_MANIFEST")"`,
 `SEALED_PHASE3_CODEX_TIMEOUT_SECONDS="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("phase3CodexTimeoutSeconds", ""))' "$SEALED_MANIFEST")"`,
 `SEALED_RUN_CLASS="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["runClass"])' "$SEALED_MANIFEST")"`,
@@ -675,22 +695,32 @@ lines, the findings it summarizes may already have contributed to the verdict vi
 - `CODE_REVIEW_STATE=not-model-invocable` → `💡 code-review: not run — /code-review is user-invocation-only (disable-model-invocation); run /code-review yourself before the audit if you want this layer included. (expected)`
 - Any other unavailable or failed command → the existing ⚠ WARN status for the unavailable review command.
 
-**symbol-graph status line** — always include exactly one, immediately after the code-review line; it is **non-blocking** (never changes the verdict), 3-state:
-- `SYMBOL_GRAPH_AVAILABLE` false → `💡 symbol-graph: not active — symbol-level corroboration unavailable; install: (see codegraph install docs)`
-- `SYMBOL_GRAPH_AVAILABLE` true (`reason:ok`) → `✓ symbol-graph: active (codegraph impact/node corroboration available; read-only)`
-- `reason:index-failed` → `⚠ symbol-graph: installed but index build failed — not available this run. [non-blocking]`
+**symbol-graph status line** — always include exactly one, immediately after the code-review line; it is **non-blocking** (never changes the verdict), 6-state:
+- `SYMBOL_GRAPH_REASON=not-configured` → `💡 symbol-graph: not configured — symbolGraph is absent from doc-audit.json, so the tool is not probed; run /docaudit:init to enable it.`
+- `SYMBOL_GRAPH_REASON=invalid-config` → `⚠ symbol-graph: doc-audit.json symbolGraph is invalid — tool not probed this run; fix the key. [non-blocking]`
+- `SYMBOL_GRAPH_REASON=not-installed` → `💡 symbol-graph: not active — symbol-level corroboration unavailable; install: (see codegraph install docs)`
+- `SYMBOL_GRAPH_REASON=disabled-by-config` → `💡 symbol-graph: disabled by config — symbol-level corroboration unavailable.`
+- `SYMBOL_GRAPH_REASON=index-failed` → `⚠ symbol-graph: installed but index build failed — not available this run. [non-blocking]`
+- `SYMBOL_GRAPH_REASON=ok` → `✓ symbol-graph: active (codegraph impact/node corroboration available; read-only)`
 
-**doc-graph status line** — always include exactly one, immediately after the symbol-graph line; it is **non-blocking** (never changes the verdict), 4-state:
-- `DOC_GRAPH_AVAILABLE` false with `reason` ∈ `{not-installed, disabled-by-config}` → `💡 doc-graph: not active — mapGapCandidates uses the token heuristic only; install: (see graphify install docs)`
-- `reason:update-failed` → `⚠ doc-graph: installed but index update failed — not available this run. [non-blocking]`
-- `DOC_GRAPH_AVAILABLE` true and `DOC_GRAPH_GITIGNORE_OK` true → `✓ doc-graph: active (mapGapCandidates supplemented via graphify; graphify-out/ gitignored)`
-- `DOC_GRAPH_AVAILABLE` true and `DOC_GRAPH_GITIGNORE_OK` false → `⚠ doc-graph: active but graphify-out/ is NOT gitignored — add it to .gitignore. [non-blocking]`
+**doc-graph status line** — always include exactly one, immediately after the symbol-graph line; it is **non-blocking** (never changes the verdict), 6-state (7 messages):
+- `DOC_GRAPH_REASON=not-configured` → `💡 doc-graph: not configured — docGraph is absent from doc-audit.json, so the tool is not probed; run /docaudit:init to enable it.`
+- `DOC_GRAPH_REASON=invalid-config` → `⚠ doc-graph: doc-audit.json docGraph is invalid — tool not probed this run; fix the key. [non-blocking]`
+- `DOC_GRAPH_REASON=not-installed` → `💡 doc-graph: not active — mapGapCandidates uses the token heuristic only; install: (see graphify install docs)`
+- `DOC_GRAPH_REASON=disabled-by-config` → `💡 doc-graph: disabled by config — mapGapCandidates uses the token heuristic only.`
+- `DOC_GRAPH_REASON=update-failed` → `⚠ doc-graph: installed but index update failed — not available this run. [non-blocking]`
+- `DOC_GRAPH_REASON=ok` and `DOC_GRAPH_GITIGNORE_OK=true` → `✓ doc-graph: active (mapGapCandidates supplemented via graphify; graphify-out/ gitignored)`
+- `DOC_GRAPH_REASON=ok` and `DOC_GRAPH_GITIGNORE_OK=false` → `⚠ doc-graph: active but graphify-out/ is NOT gitignored — add it to .gitignore. [non-blocking]`
 
-**semanticSearch status line** — always include exactly one, immediately after the doc-graph line; it is **non-blocking** (never changes the verdict), 3-state (4 distinguishable messages, same "not active" collapsing mdq's line already does):
-- `SEMANTIC_SEARCH_AVAILABLE` false and `reason` ∈ `{not-installed, disabled-by-config}` → `💡 semanticSearch: not active — mapGapCandidates gets no semantic-search source; install: uv tool install "cocoindex-code[full]==0.2.39"`
-- `SEMANTIC_SEARCH_AVAILABLE` false and `reason:not-initialized` → `💡 semanticSearch: not active — CocoIndex is installed but this repo isn't indexed yet; run /docaudit:init to set it up (or manually: ccc init && ccc index).`
-- `SEMANTIC_SEARCH_AVAILABLE` true (`reason:ok`) → `✓ semanticSearch: active (mapGapCandidates supplemented via CocoIndex semantic search; minScore=<config value>)`
-- `reason:index-failed` → `⚠ semanticSearch: installed but index update failed — not available this run. [non-blocking]`
+**semanticSearch status line** — always include exactly one, immediately after the doc-graph line; it is **non-blocking** (never changes the verdict), 8-state:
+- `SEMANTIC_SEARCH_REASON=not-configured` → `💡 semanticSearch: not configured — semanticSearch is absent from doc-audit.json, so the tool is not probed; run /docaudit:init to enable it.`
+- `SEMANTIC_SEARCH_REASON=invalid-config` → `⚠ semanticSearch: doc-audit.json semanticSearch is invalid — tool not probed this run; fix the key. [non-blocking]`
+- `SEMANTIC_SEARCH_REASON=not-installed` → `💡 semanticSearch: not active — mapGapCandidates gets no semantic-search source; install: uv tool install "cocoindex-code[full]==0.2.39"`
+- `SEMANTIC_SEARCH_REASON=disabled-by-config` → `💡 semanticSearch: disabled by config — mapGapCandidates gets no semantic-search source.`
+- `SEMANTIC_SEARCH_REASON=not-initialized` → `💡 semanticSearch: not active — CocoIndex is installed but this repo isn't indexed yet; run /docaudit:init to set it up (or manually: ccc init && ccc index).`
+- `SEMANTIC_SEARCH_REASON=index-failed` → `⚠ semanticSearch: installed but index update failed — not available this run. [non-blocking]`
+- `SEMANTIC_SEARCH_REASON=gitignore-modified` → `⚠ semanticSearch: .gitignore changed while ccc index ran — inspect it manually (git status / git diff -- .gitignore; if .gitignore is a symlink, resolve the target with readlink and review that file's content against your backup or VCS); not available this run. [non-blocking]`
+- `SEMANTIC_SEARCH_REASON=ok` → `✓ semanticSearch: active (mapGapCandidates supplemented via CocoIndex semantic search; minScore=<config value>)`
 
 **harness status line** — always include exactly one immediately after semanticSearch, using the
 effective `HARNESS_STATE`: `✓ harness: <state>` for active/declined states;

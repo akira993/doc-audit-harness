@@ -81,9 +81,9 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 の git diff と Phase 4 の `/code-review`・`/security-review` 出力をサンドボックスで処理（要約だけが context に入る） | 任意 — `ctx_*` ツールが在れば自動使用（conditional-force）、無ければ全文読取り |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: doc-impact-verifier がドキュメントの外部 URL 依存の主張を read-only・GET-only の fetch で照合できるようにする（静的 HTML のみ — JS レンダリングの SPA は非対応） | 任意 — 導入済みなら自動使用（conditional-force）、無ければ外部 URL の主張は未検証のまま |
 | [`codex`](https://github.com/openai/codex)（`@openai/codex` CLI） | 任意の Phase-3 文書別 backend と Phase 4 の第4敵対的レビュー。どちらも `codex exec -s read-only` | 任意 — Phase 3 は `phase3Backend:"codex"` の明示指定が必要。Phase 4 review は conditional-force。**完走した `critical`/`high` review 所見は verdict をブロックし得る**（下記参照） |
-| [`codegraph`](https://github.com/colbymchenry/codegraph) | Phase 3: doc-impact-verifier が変更ファイル自身のシンボルに依存する主張を read-only の `codegraph impact`/`node` で照合できるようにする | 任意 — 導入済みなら自動使用（conditional-force）、`ax` 同様に純粋な補助情報 |
-| [`graphify`](https://github.com/Graphify-Labs/graphify) | Phase 2: `mapGapCandidates` へのグラフ隣接ベースの第二候補源（provenance `graphify`） | 任意 — 導入済みなら自動使用（conditional-force）、無ければ `mapGapCandidates` は token heuristic のみ |
-| [CocoIndex](https://github.com/cocoindex-io/cocoindex-code)（`ccc`） | Phase 2: `mapGapCandidates` への意味検索ベースの第三候補源（provenance `semantic`） | 任意 — 導入済み **かつ** 既に `ccc init` 済みなら自動使用（conditional-force）、**docaudit 自身は `ccc init` を絶対に実行しない**（下記参照） |
+| [`codegraph`](https://github.com/colbymchenry/codegraph) | Phase 3: doc-impact-verifier が変更ファイル自身のシンボルに依存する主張を read-only の `codegraph impact`/`node` で照合できるようにする | 任意 — `symbolGraph` キーが存在し、無効化されておらず、tool が導入済みの場合に限り使用。`ax` 同様に純粋な補助情報 |
+| [`graphify`](https://github.com/Graphify-Labs/graphify) | Phase 2: `mapGapCandidates` へのグラフ隣接ベースの第二候補源（provenance `graphify`） | 任意 — `docGraph` キーが存在し、無効化されておらず、tool が導入済みの場合に限り使用。無ければ `mapGapCandidates` は token heuristic のみ |
+| [CocoIndex](https://github.com/cocoindex-io/cocoindex-code)（`ccc`） | Phase 2: `mapGapCandidates` への意味検索ベースの第三候補源（provenance `semantic`） | 任意 — `semanticSearch` キーが存在し、無効化されておらず、tool が導入済みで `.cocoindex_code/settings.yml` がある場合に限り使用。**docaudit 自身は `ccc init` を絶対に実行しない**（下記参照） |
 | [Serena](https://github.com/oraios/serena) (MCP) | `init` 時の code↔doc 発見をリッチ化 | 任意 — grep/heuristic に fallback |
 | プロジェクトのドキュメントツール（`/check-docs`, `doc-lint` …） | 委譲で Phase 4 をリッチ化 | 任意 — 無ければ generic fallback |
 | [`skill-creator`](https://github.com/anthropics/skills) / [`superpowers:writing-skills`](https://github.com/obra/superpowers) | `--scaffold` のレイヤスキルの生成・作り込み | 任意 — `/docaudit:init --scaffold` 使用時のみ |
@@ -134,9 +134,8 @@ fail-closed で終了する。
 （`codegraph impact <symbol> --json` — このサブコマンドにはパス絞り込みフラグが無いため
 `filePath` で後フィルタする、または `codegraph node <symbol> -f <changed-file>` — `-f` で直接
 曖昧性を解消するテキスト出力）— import ベースで本 repo のような subprocess 起動テストスタイルの
-repo では空を返すことが確認済みの `codegraph affected` は絶対に使わない。他の seam と同じく
-conditional-force（導入済みなら自動使用、`"symbolGraph": {"enabled": false}` で opt-out 可）で、
-Phase-0 probe が毎回 `.codegraph/` を最新化する（初回は `init`、以降は `sync` — 既存の
+repo では空を返すことが確認済みの `codegraph affected` は絶対に使わない。`symbolGraph` キーが
+存在し、無効化されておらず、tool が導入済みの場合に限り、Phase-0 probe が `.codegraph/` を最新化する（初回は `init`、以降は `sync` — 既存の
 `.codegraph/` への無条件 `init` は拒否されるため）。
 
 `graphify` と CocoIndex はどちらも Phase 2 専用で、**同じ**統合点 — 既存の token heuristic と
@@ -146,16 +145,16 @@ Phase-0 probe が毎回 `.codegraph/` を最新化する（初回は `init`、�
 パース — どちらも `--json` 非対応）、CocoIndex はローカル埋め込みの意味検索ベース
 （provenance `semantic`、`ccc search --json` から `score >= minScore`（既定 `0.4`）を満たす
 ものだけを採用 — `ccc search` には**足切りが無い**ことが確認済みで、無関係なクエリでも
-exit 0・limit 件を、目に見えて低いスコア帯で返す）。どちらも conditional-force
-（`"docGraph": {"enabled": false}` / `"semanticSearch": {"enabled": false}`）であり、どちらも
+exit 0・limit 件を、目に見えて低いスコア帯で返す）。どちらもキーが存在し、無効化されておらず、tool が導入済みの場合に限り使用され、どちらも
 `resolve-impact.py` 自身の cap 適用後に残った枠にのみ、優先順位 `mapped` ≥ `regression` ≥ `heuristic` ≥
 `graphify` ≥ `semantic` を厳守してマージする — 既存候補を1件たりとも押し出すことはない
 （Issue #8 の再発防止）。**CocoIndex について最も重要な規則: docaudit 自身は `ccc init` を
 絶対に実行しない** — `ccc init` は対象 repo の `.gitignore` に `/.cocoindex_code/` を自動追記する
 （実機確認済みの副作用）。report-only な audit フェーズがこの書き込みを実行中に誘発してはならない
-ため、`.cocoindex_code/` 不在は「未導入」とは別の、静かな `not-initialized` degrade 状態として
+ため、`.cocoindex_code/settings.yml` 不在は「未導入」とは別の、静かな `not-initialized` degrade 状態として
 扱う。初期化は `/docaudit:init` の中でのみ、`.gitignore` への書き込みを明示したユーザー承認を
-経て行われる。
+経て行われる。probe は `ccc index` の前後で `.gitignore` を比較し、変化した場合は
+`gitignore-modified` を報告するだけで復元しない。
 
 impact provenance は、`impactMap` のみなら `mapped`、現在の内容ハッシュが履歴と一致する前回 FAIL の再検証なら `regression`（impactMap-gap 候補ではない）、heuristic のみなら `heuristic`、両方が同じ
 文書へ到達した場合は `both`、任意の補完元なら `graphify` / `semantic`、anchor が無いか明示的な
@@ -175,10 +174,10 @@ N 件を直して再実行すれば `CONSISTENT` になるとは保証されな�
 同じ欠陥クラスを対象文書全体で横断的に掃除することを推奨する。
 
 各 audit は codex-review 行の直後にさらに3つの非ブロッキング状態行を出力する:
-**symbol-graph**（💡 未導入 / ✓ 稼働 / ⚠ 索引構築失敗）、**doc-graph**（💡 未導入 / ✓ 稼働 +
+**symbol-graph**（💡 未設定 / ⚠ 不正 / 💡 未導入 / ✓ 稼働 / ⚠ 索引構築失敗）、**doc-graph**（💡 未設定 / ⚠ 不正 / 💡 未導入 / ✓ 稼働 +
 `graphify-out/` gitignore 済み / ⚠ 稼働だが `graphify-out/` が gitignore されていない —
-追加せよ）、**semanticSearch**（💡 未導入-未インストール / 💡 未導入-未初期化（`/docaudit:init`
-への案内付き） / ✓ 稼働（設定済みの `minScore` を明記） / ⚠ 索引更新失敗）— いずれも verdict を
+追加せよ）、**semanticSearch**（💡 未設定 / ⚠ 不正 / 💡 未導入-未インストール / 💡 未導入-未初期化（`/docaudit:init`
+への案内付き） / ✓ 稼働（設定済みの `minScore` を明記） / ⚠ 索引更新失敗 / ⚠ gitignore-modified）— いずれも verdict を
 変えない。
 
 ---
@@ -203,7 +202,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.13.1  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.13.2  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -233,6 +232,12 @@ Phase 3 には明示的かつ fail-closed な `phase3Backend:"codex"` opt-in も
 ファイル名と front matter の日付は run ID 由来の **UTC 基準**なので、日付境界ではローカル日付と
 異なる場合がある。
 
+**v0.13.2 の挙動変更:** `docGlobs` を省略した場合、pre-flight fix の分類は `["docs/**/*.md","*.md"]` を既定とする。`CLAUDE.md` と `AGENTS.md` は大文字小文字を区別せず常に拒否される。
+`docGraph` / `semanticSearch` / `symbolGraph` のキーが無い場合は `not-configured` を報告し tool を一切起動しない。キーが不正な場合は `invalid-config` を報告する。
+CocoIndex は `.cocoindex_code/settings.yml` が存在する場合のみ初期化済みとみなす。`ccc index` の実行中に `.gitignore` が変化した場合は `gitignore-modified` を報告し、監査は復元しない。
+`seal-run.py` または `read-manifest.py` が失敗した場合は run を解放して停止する。`read-manifest.py` は未 seal の manifest を拒否する。
+自動検出に頼っていた config は `/docaudit:init` でキーを追加するまで `not-configured` になる。
+
 ---
 
 ## 4. プロジェクトをオンボードする
@@ -261,8 +266,8 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.1、0.11.0、0.12.0、または 0.13.0 テンプレートは、
-`/docaudit:init --harness --refresh` で 0.13.1 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.1、0.11.0、0.12.0、0.13.0、または 0.13.1 テンプレートは、
+`/docaudit:init --harness --refresh` で 0.13.2 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
@@ -288,7 +293,7 @@ cd ~/code/my-project
 |------|----|----|------|
 | `anchorPath` | string | はい | anchor 状態ファイルの repo 相対パス（慣習: `.claude/state/last-doc-audit.json`） |
 | `diffGlobs` | string[] | はい | 変更集合を絞る path glob。`**` は `/` を跨ぐ、`*` は跨がない。 |
-| `docGlobs` | string[] | いいえ | heuristic/generic スキャンでドキュメントとして扱うファイル（既定 `["docs/**/*.md","*.md"]`）。pre-flight fix path に限り、省略時は全パスを拒否する fail-closed 動作である。 |
+| `docGlobs` | string[] | いいえ | heuristic/generic スキャンでドキュメントとして扱うファイル（既定 `["docs/**/*.md","*.md"]`）。pre-flight fix path も同じ既定を使う。 |
 | `impactMap` | object[] | はい | `{changed: path\|glob, impacts: [docPath,…], note?: string, source?: string}` — 中核（§6）。`source:"audit-scope"` は生成物。`[]` で開始してもよい。 |
 | `auditScope` | object | いいえ | importer が書く `{path,sha256,importedAt,rules}`。手編集しない。 |
 | `ssotSources` | object[] | いいえ | `{name, value?, liveSource, docsThatCite: [path\|path:line,…]}` — ドキュメント横断の値整合 |
@@ -311,7 +316,7 @@ cd ~/code/my-project
 | `models` | object | いいえ | ネストした `{light:{enabled,maxChanged,maxImpacted,maxDiffLines,maxDiffBytes,sensitiveTokens}}`。light run の決定論的な上限。 |
 | `codexReview` | object | いいえ | `{enabled,required:bool=false,bin,model?,timeoutMs?}`。`required:true` は未完了 review を REFUSED にする。baseline 確立後に有効化する。 |
 | `digestExclude` | string[] | いいえ | glob ではない literal path のみであり、受理された各プレフィックス自体とその配下 path を許可する（末尾 `/` は正規化で除かれる）。`*`、`?`、`[` を含む値は `tree-digest.py` が拒否し、`seal-run.py` が失敗（exit 2）して run は seal されない。`digestExclude` で受理されるプレフィックス: `.claude/state`, `.claude/worktrees`, `.mdq`, `.codegraph`, `graphify-out`, `.cocoindex_code`. |
-| `protectedGlobs` | string[] | いいえ | pre-flight 修正を禁止する追加パス。組込みの ADR/decisions/logs/`.claude` 保護は解除不可。 |
+| `protectedGlobs` | string[] | いいえ | pre-flight 修正を禁止する追加パス。組込みの ADR/decisions/logs/`.claude` と、大文字小文字を区別しない `CLAUDE.md`/`AGENTS.md` basename 保護は解除不可。 |
 
 規則: `impacts` のエントリは **ドキュメントパスのみ** — 注釈は `note` に置く。`changed` は単一パス
 または glob。glob はエンジン独自の意味論: `**`=`/` を含む任意、`*`=`/` を含まない任意、`?`=`/` 以外 1 文字。

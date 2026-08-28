@@ -12,6 +12,7 @@ from docaudit_paths import matches_glob, validate_repo_path
 
 
 DENIED_PARTS = {"adr", "decisions", "logs"}
+DENIED_BASENAMES = {"claude.md", "agents.md"}
 
 
 def load_allowed(path):
@@ -84,8 +85,7 @@ def main():
         raw = sys.stdin.read() if args.paths == "-" else open(args.paths, encoding="utf-8").read()
         allowed = []
         denied = []
-        # Intentionally fail closed: omitted docGlobs rejects every pre-flight fix path.
-        doc_globs = config.get("docGlobs", [])
+        doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
         protected = config.get("protectedGlobs", [])
         for original in [line.strip() for line in raw.splitlines() if line.strip()]:
             reason = None
@@ -97,6 +97,8 @@ def main():
             lower_parts = path.lower().split("/")
             if reason is None and (lower_parts[0] == ".claude" or any(part in DENIED_PARTS for part in lower_parts)):
                 reason = "built-in protected path"
+            if reason is None and os.path.basename(path).casefold() in DENIED_BASENAMES:
+                reason = "agent instruction file"
             if reason is None and not any(matches_glob(path, pattern) for pattern in doc_globs):
                 reason = "path does not match docGlobs"
             if reason is None and any(matches_glob(path.lower(), str(pattern).lower()) for pattern in protected):

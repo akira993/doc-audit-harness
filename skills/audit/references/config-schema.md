@@ -7,7 +7,7 @@ live here; the plugin ships no project knowledge.
 |-----|------|----------|---------|
 | `anchorPath` | string | yes | repo-relative path to the anchor state file |
 | `diffGlobs` | string[] | yes | path globs that scope the change set (`**`=incl `/`, `*`=excl `/`) |
-| `docGlobs` | string[] | no | files treated as docs for the heuristic scan (default `["docs/**/*.md","*.md"]`); for pre-flight fix-path classification only, omission intentionally fails closed and rejects every fix path |
+| `docGlobs` | string[] | no | files treated as docs for the heuristic scan (default `["docs/**/*.md","*.md"]`); pre-flight fix-path classification uses the same default |
 | `frontMatterFields` | string[] | no | generic `format` layer requires these front-matter fields on every doc (WARN if missing); omit to skip front-matter checks |
 | `layerGlobs` | object | no | per-layer generic exclusions: `{format?:{exclude:string[]},existence?:{exclude:string[]},semantic?:{exclude:string[]}}`; exclusions also apply to explicit `--paths` input |
 | `frontMatterOverrides` | object[] | no | ordered generic `format` overrides: `{globs:string[],fields:string[]}`; the first entry whose `globs` contains a match wins, `fields:[]` skips the check, and no match falls back to `frontMatterFields` |
@@ -27,16 +27,16 @@ live here; the plugin ships no project knowledge.
 | `phase3CodexTimeoutSeconds` | number | no | per-document Codex execution timeout in seconds (default 600; integer 60..3600); excludes worker-queue wait, resets for each retry, and has effect only when `phase3Backend` is `"codex"` |
 | `models` | object | no | nested `{light:{enabled,maxChanged=10,maxImpacted=15,maxDiffLines=200,maxDiffBytes=65536,sensitiveTokens?}}` deterministic light-run limits; defaults are empirical, not measured service guarantees |
 | `digestExclude` | string[] | no | Non-glob literal paths only — each accepted prefix itself or any path below it (a trailing `/` is normalized away). Values containing `*`, `?`, or `[` are rejected by `tree-digest.py`; `seal-run.py` fails (exit 2) and the run is not sealed. Accepted `digestExclude` prefixes: `.claude/state`, `.claude/worktrees`, `.mdq`, `.codegraph`, `graphify-out`, `.cocoindex_code`. |
-| `protectedGlobs` | string[] | no | additional pre-flight fix deny patterns; built-in ADR/decisions/logs/`.claude` denial cannot be removed |
+| `protectedGlobs` | string[] | no | additional pre-flight fix deny patterns; built-in ADR/decisions/logs/`.claude` and case-insensitive `CLAUDE.md`/`AGENTS.md` basename denial cannot be removed |
 | `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:string[], saturationWarnRatio:number=0.5, excludeDocPathTokens:bool=false}` |
 | `regressionRecheck` | object | no | `{enabled:bool=false}` — opt-in recheck of the latest prior FAIL for unchanged documents |
 | `indexing` | object | no | `{enabled:bool=true, tool:string="mdq", bin:string="mdq", roots:string[]?}` — Phase-0 mdq preflight; `roots` overrides index roots (default: whole repo `.`, since mdq's own default roots miss `README.md`/`skills`/`agents`); `enabled:false` opts out even when mdq is installed (conditional-force) |
 | `contextMode` | object | no | `{enabled:bool=true}` — Phase-0 context-mode probe (by `ctx_*` tool availability + `ctx_doctor`); when context-mode is installed, large outputs (git diff, reviews) are processed in its sandbox instead of read in full. `enabled:false` opts out even when installed (conditional-force). No `bin`/`roots`/CLI — context-mode is a location-independent global plugin |
 | `webExtract` | object | no | `{enabled:bool=true, tool:string="ax", bin:string="ax"}` — Phase-0 `ax` CLI preflight; when `ax` is installed, doc-impact-verifier may corroborate a doc's external-URL-dependent claim by fetching it (read-only, GET-only). `enabled:false` opts out even when `ax` is installed (conditional-force). `tool` is reserved; runtime reads only `enabled` and `bin`. The `bin` override affects only the Phase-0 probe; Phase 3 Workflow invokes fixed `ax`. |
 | `codexReview` | object | no | `{enabled:bool=true, required:bool=false, bin:string="codex", model?:string, timeoutMs?:number=300000}` — `required:true` makes a non-completed codex review REFUSED. An explicit model is tried once; otherwise light uses `gpt-5.6-luna`, standard uses `gpt-5.6-terra`, and only the default light attempt may retry once as standard. Phase-0 probes the CLI and completed Phase-4 `critical`/`high` findings can block the verdict. |
-| `symbolGraph` | object | no | `{enabled:bool=true, tool:string="codegraph", bin:string="codegraph"}` — Phase-0 `codegraph` CLI preflight; when installed, doc-impact-verifier may corroborate a doc claim that depends on a changed file's own symbols via read-only `codegraph impact`/`node`. Report-only, never affects the verdict. `enabled:false` opts out even when `codegraph` is installed (conditional-force). `tool` is reserved; runtime reads only `enabled` and `bin`. The `bin` override affects only the Phase-0 probe; Phase 3 Workflow invokes fixed `codegraph`. |
-| `docGraph` | object | no | `{enabled:bool=true, tool:string="graphify", bin:string="graphify"}` — Phase-0 `graphify` CLI preflight; when installed, Phase 2 supplements `mapGapCandidates` with graph-adjacency candidates (provenance `graphify`). Report-only, never affects the verdict. `enabled:false` opts out even when `graphify` is installed (conditional-force). `tool` is reserved; runtime reads only `enabled` and `bin`. |
-| `semanticSearch` | object | no | `{enabled:bool=true, tool:string="cocoindex", bin:string="ccc", minScore?:number=0.4}` — Phase-0 `ccc` (CocoIndex) CLI preflight; when installed AND already initialized (`.cocoindex_code/` present), Phase 2 supplements `mapGapCandidates` with semantic-search candidates (provenance `semantic`) scoring `>= minScore`. **The audit itself never runs `ccc init`** — an uninitialized repo degrades to `reason:not-initialized`, distinct from `not-installed`; initialize via `/docaudit:init` (user-approved, discloses the `.gitignore` write). Report-only, never affects the verdict. `enabled:false` opts out even when `ccc` is installed (conditional-force). `tool` is reserved; runtime reads only `enabled` and `bin`. |
+| `symbolGraph` | object | no | `{enabled:bool=true, tool:string="codegraph", bin:string="codegraph"}` — key-gated Phase-0 `codegraph` CLI preflight: it runs only when this key exists, `enabled` is not false, and the tool is installed. It may corroborate changed-file symbols via read-only `codegraph impact`/`node`; report-only, never affects the verdict. `tool` is reserved; the probe validates `enabled` and `bin`. The `bin` override affects only the probe; Phase 3 Workflow invokes fixed `codegraph`. |
+| `docGraph` | object | no | `{enabled:bool=true, tool:string="graphify", bin:string="graphify"}` — key-gated Phase-0 `graphify` CLI preflight: it runs only when this key exists, `enabled` is not false, and the tool is installed. Phase 2 then supplements `mapGapCandidates` with graph-adjacency candidates (provenance `graphify`); report-only, never affects the verdict. `tool` is reserved; the probe validates `enabled` and `bin`. |
+| `semanticSearch` | object | no | `{enabled:bool=true, tool:string="cocoindex", bin:string="ccc", minScore?:number=0.4}` — key-gated Phase-0 `ccc` (CocoIndex) preflight: it runs only when this key exists, `enabled` is not false, the tool is installed, and `.cocoindex_code/settings.yml` marks the repo initialized. Phase 2 supplements `mapGapCandidates` with semantic-search candidates (provenance `semantic`) scoring `>= minScore`. **The audit itself never runs `ccc init`** — an uninitialized repo degrades to `reason:not-initialized`, distinct from `not-installed`; initialize via `/docaudit:init` (user-approved, discloses the `.gitignore` write). Report-only, never affects the verdict. `tool` is reserved; the probe validates `enabled`/`bin`/`minScore`; Phase 2 uses `minScore`. |
 
 `impacts` entries MUST be doc paths only; put commentary in `note`. `changed`
 accepts a single path or a glob.
@@ -153,8 +153,8 @@ but can force the current run to end as REFUSED.
 
 Phase 0.5 runs after `open-run.py` has acquired the lock and before baseline/seal. A FAIL asks an
 interactive user to fix and audit, continue without fixing, or stop. Only the first choice may
-edit: `fix-scope.py` permits finding paths that match `docGlobs`, denies ADR/decisions/logs and
-`.claude/**` case-insensitively, adds `protectedGlobs`, and verifies that no path outside the
+edit: `fix-scope.py` permits finding paths that match `docGlobs`, denies ADR/decisions/logs,
+`.claude/**`, and `CLAUDE.md`/`AGENTS.md` basenames case-insensitively, adds `protectedGlobs`, and verifies that no path outside the
 approved set changed. Non-interactive runs never edit. Pre-flight findings are gate evidence and
 therefore block CONSISTENT when they contain FAIL.
 
@@ -256,11 +256,12 @@ into `phase4.json` as blocking; `medium`/`low` remain non-blocking.
 
 ## codegraph (symbolGraph, Phase 0/3)
 
-`symbolGraph` is optional and conditional-force, mirroring `webExtract`'s shape but for the
+`symbolGraph` is optional and key-gated, mirroring `webExtract`'s shape but for the
 `codegraph` CLI — a symbol graph (call graph, impact/node lookup). Its sole role in the audit is
 letting `doc-impact-verifier` corroborate a doc claim that depends on a *changed file's own*
-symbols, the symbol-level counterpart of ax's external-URL seam. With `codegraph` on `PATH` (or
-`bin` pointed at a vendored binary), Phase 0 keeps the index fresh every run. The `bin` override
+symbols, the symbol-level counterpart of ax's external-URL seam. Only when the key exists,
+`enabled` is not false, and `codegraph` is on `PATH` (or `bin` points at a vendored binary) does
+Phase 0 keep the index fresh. The `bin` override
 affects this probe only: Workflow receives the availability boolean and Phase 3's template invokes
 fixed `codegraph`. `.codegraph/` absent
 → `codegraph init .` (first run only — a bare `init` against an existing `.codegraph/` is
@@ -273,14 +274,16 @@ subcommand, confirmed; `-f` disambiguates directly). `codegraph affected` is NEV
 (import-based; confirmed empty on subprocess-driven test-style repos). When `codegraph` is absent,
 `symbolGraph.enabled` is `false`, or the index build fails, symbol-level corroboration is silently
 unavailable — never a FAIL basis, and the audit stays tool-independent.
+Its probe reasons are `ok`, `not-installed`, `disabled-by-config`, `index-failed`,
+`not-configured`, and `invalid-config`.
 
 ## graphify (docGraph, Phase 0/2)
 
-`docGraph` is optional and conditional-force, for the `graphify` CLI — a unified code+doc graph.
+`docGraph` is optional and key-gated, for the `graphify` CLI — a unified code+doc graph.
 Its role is a second, independent candidate source for Phase 2's `mapGapCandidates` (provenance
 `graphify`), alongside the existing token heuristic — the first seam to integrate at the impact-
-resolution point itself, not Phase 3/4. With `graphify` on `PATH`, Phase 0 runs `graphify update .`
-unconditionally (confirmed LLM-free and diff-based/idempotent — safe every run), then checks
+resolution point itself, not Phase 3/4. Only when the key exists, `enabled` is not false, and
+`graphify` is on `PATH`, Phase 0 runs `graphify update .` (confirmed LLM-free and diff-based/idempotent), then checks
 whether `graphify-out/` is gitignored via `git check-ignore -q graphify-out` (graphify does NOT
 self-gitignore its output, unlike codegraph — a direct `.gitignore` read would miss global
 gitignore/`.git/info/exclude`/pattern-wording differences, so this is the confirmed method). Phase
@@ -293,20 +296,23 @@ change makes `graphify update .` write a dated backup under `graphify-out/<date>
 accumulates over repeated runs — a disk-only concern when `graphify-out/` is gitignored. When
 `graphify` is absent or `docGraph.enabled` is `false`, `mapGapCandidates` uses the token heuristic
 only — never a FAIL basis, and the audit stays tool-independent.
+Its probe reasons are `ok`, `not-installed`, `disabled-by-config`, `update-failed`,
+`not-configured`, and `invalid-config`.
 
 ## CocoIndex (semanticSearch, Phase 0/2)
 
-`semanticSearch` is optional and conditional-force, for the `ccc` (CocoIndex) CLI — local-embedding
+`semanticSearch` is optional and key-gated, for the `ccc` (CocoIndex) CLI — local-embedding
 semantic search. Its role is a third, independent candidate source for Phase 2's
 `mapGapCandidates` (provenance `semantic`), running alongside (not instead of) the graphify source
 — one finds candidates via graph adjacency, the other via semantic similarity. **The single most
 important rule for this seam: the audit itself NEVER runs `ccc init`.** `ccc init` auto-appends
 `/.cocoindex_code/` to the target repo's `.gitignore` (confirmed real side effect), a write the
-report-only audit phase must never trigger mid-run — so an absent `.cocoindex_code/` directory is
+report-only audit phase must never trigger mid-run — so an absent `.cocoindex_code/settings.yml` marker is
 its own terminal probe state, `reason:not-initialized`, distinct from `not-installed`. This is a
 silent, expected degrade (no WARN) until the user runs `/docaudit:init`, which proposes running
 `ccc init && ccc index` behind **explicit user approval that discloses the `.gitignore` write**.
-Only when `.cocoindex_code/` already exists does Phase 0 run `ccc index` (no path argument — it
+Only when the key exists, `enabled` is not false, `ccc` is installed, and
+`.cocoindex_code/settings.yml` exists does Phase 0 run `ccc index` (no path argument — it
 operates on the cwd only; confirmed `ccc index .` errors "unexpected extra argument(s)") to refresh (confirmed
 the heaviest of the three seams' Phase-0 costs, ~8.5s on this repo). Phase 2's
 `impact-supplement.py` then runs `ccc search "<changeSummary>" --json --limit 10` once: `ccc
@@ -316,7 +322,10 @@ results, just at a visibly lower score band), so every result's `score` MUST cle
 0.36-0.62, noise at 0.23-0.26) before doc-filtering (via `docGlobs`) and admitting it as a
 candidate. When `ccc` is absent, not yet initialized, or `semanticSearch.enabled` is `false`,
 `mapGapCandidates` simply gets no semantic-search source — never a FAIL basis, and the audit stays
-tool-independent.
+tool-independent. The probe compares `.gitignore` before and after `ccc index`; a change reports
+`reason:gitignore-modified` and is never reverted by the audit.
+Its probe reasons are `ok`, `not-installed`, `disabled-by-config`, `not-initialized`,
+`index-failed`, `not-configured`, `invalid-config`, and `gitignore-modified`.
 
 ## Generic fallback layers
 
