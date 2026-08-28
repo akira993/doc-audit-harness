@@ -113,3 +113,16 @@
 - diff 精読: `import-audit-scope.py`（成分検査→apparent/real root 接頭辞→`validate_repo_path`、`main` で apparent root 保持）、3 probe（`CONFIG_SET` で指定有無分離、評価順序どおり、bin は base64 受け渡し・NUL 拒否、JSON は `json.dumps`、既存分岐のキー集合不変＋codex の 3 キー）、SKILL.md（CM 3 値式 verbatim、MDQ_REASON/AX_REASON、ゲート、Phase-5 3 行、caller 接尾辞は `rebind` 参照、診断文、Phase 4 注記、#59 注記、防御 1 句）、config-schema 4 行（`roots`/`tool` の既存記述は温存）、ADOPTION en/ja。
 - 指摘: なし（軽微メモ: bin の末尾改行は `$(…)` で落ちるが判定表外・非ブロッキング）。
 - 実装セッション S1b（Terra workspace-write, high）: session `01a0477e-2278-7883-9c32-0c9a62606ec1`（起動 2026-08-28T08:30:51Z）
+
+### S1b R1〜R3 — 承認（commit `67acd8a`）
+- R1: worker が許可外の必要変更（`test_v0131_docs_contracts.py` の付録ファイル数 42→43、ADOPTION 付録一覧）を修正せず報告 → boss が正当と判定し allowlist/PLAN §7 に `test_v0131_docs_contracts.py` を追加（commit `44d58b0`）して差し戻し。
+- R2: 付録行数 51→52 も同テストの必然的追随 → 承認。boss の diff 精読で `make_rebind` が `codexReview` 記録欠損時に `reviewState` を落とす乖離を検出 → 修正指示（テストケース追加、固定 ID 33）。
+- R3: worker 報告 Ran 579 OK skip 0。boss 再実測 `s1b-full-tests-v.log` **Ran 579 tests OK, skipped 0 行**。DoD (10)(11) の固定テスト名（test_probe_record 7 本＝固定 ID ≥24 の in-test assert、test_v014 8 本）を `-v` 出力で確認。scope-check（44d58b0 / 3c8faa1）scope-clean、forbidden-clean、gate が phase0-probes を読まない（grep 0）、SKILL に表示用式なし。
+- diff 精読: `probe-record.py`（成分 walk・dir fd 基準の O_EXCL|O_NOFOLLOW 一時ファイル＋`os.replace(dir_fd)`・分岐別 union・`rebind` 値化・display は 200 字切り詰め後エスケープ・fail は exit 2）、SKILL.md（記録 10 行＋Phase 3 再記録・O8 固定文・再開段落＋N5 復元文・Phase 5 `--read` 一本化・unknown 6 行＋codex null/not-required 枝・Guardrails 1 句）、config-schema、ADOPTION 付録 en/ja。
+- 実装セッション S2（Luna workspace-write, medium）: session `01a04796-c7b7-7911-826d-f0d66c3a1150`（起動 2026-08-28T08:57:43Z）
+
+### S2 R1〜R3 — 承認（commit `6960712`）
+- R1: `test_g_refresh_paragraph_versions`（許可ファイルだが S2 プロンプトの範囲外）を worker が修正せず報告 → 承認して差し戻し。同時に ja §7 の 2 文言（「指定できます」→必須、「直下」→「ルート配下」）を修正指示。
+- R2: Release notes 3 行目のキーワード羅列を文章化。
+- R3: worker 報告 Ran 580 OK skip 0。boss 再実測 `s2-full-tests-v.log` **Ran 580 tests OK, skipped 0 行**、`test_v014_behavior_changes_paragraph` 実行確認、scaffold stamp 0.14.0、`bash -n` handoff OK、旧定数不在、`0.13.2` 残存は `tests/test_v0131_docs_contracts.py:91`（test_g の期待集合）のみ＝正当（PLAN §0-10 の allowlist に追記扱い）。
+- diff 精読: plugin.json、ADOPTION en/ja（表示行・refresh・§7 6 文）、engine-shas 0.14.0（3 hash は 0.13.2 と同値）、test_scaffold/test_v013（:201・:210・:215）、test_release_handoff 再標的（path・tag・title・ISSUES {57,58,60}・notes 完全一致 2 文＋必須語 8）、release-handoff.sh（v0.13.2 版と機能同一、版・Issue・notes のみ差し替え）。
