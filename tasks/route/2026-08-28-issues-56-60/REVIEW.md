@@ -184,3 +184,7 @@
 - N2/N3 graph 3 表の並べ替えは無意味・CM/AX の現状記述誤り → 並べ替え撤回、現行順序 assert／N1 harness 辞退時の Phase 0 再実行コスト → 最終報告に運用注記／N4 33 文字 ×2 の実行コスト → 全数維持（約 30 秒）
 - 判定: **rev.7 で実装承認（Opus「設計差し替え不要」）**
 - 実装セッション cr1（Terra workspace-write, medium）: session `01a04809-a942-7dd3-8f0c-e7597cd5aeba`（起動 2026-08-28T11:03:15Z）
+
+### cr1 実装 R1〜R2 — 承認（commit `04a0624`）
+- R1: worker 報告 Ran 585 failures=1（自己修正後の再実行未了）。boss 再実測で `test_v0132_contracts::test_semantic_search_schema_describes_probe_validation_and_phase2_min_score` 失敗 → config-schema の固定句分断 → 差し戻し。
+- R2: 固定句復元。boss 最終再実測 `cr1-final-full-tests-v.log` **Ran 585 tests OK, skipped 0**、scope-check（BASE ef995f0）scope-clean、forbidden-clean、bash -n 6 probe、mkdtemp 0、旧文言 0、ADOPTION 単一置換 bytes 一致、`(caller info unavailable)` 1 回。diff 精読: SKILL（reopen 順序・無条件記録・CM 正規化・unknown 文言・gating・共通規則・C9）、3 graph probe（制御文字判定、disabled 分岐の既定名正規化）、config-schema 表 3 行。

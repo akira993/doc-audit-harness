@@ -1,0 +1,4 @@
+boss 差し戻し（1 点）: boss 再実測のフルスイートで `tests.test_v0132_contracts.TestV0132S1bContracts.test_semantic_search_schema_describes_probe_validation_and_phase2_min_score` が失敗（Ran 585, failures=1）。
+原因: `config-schema.md` の `semanticSearch` 行で、C8 の追記文を「the probe validates `enabled`/`bin`/`minScore`; Phase 2 uses `minScore`」の途中（`;` の後）に挿入したため、その固定句が分断された。
+修正: 固定句「`tool` is reserved; the probe validates `enabled`/`bin`/`minScore`; Phase 2 uses `minScore`.」を元の連続した形に戻し、C8 の文はその**後**に追加する（`symbolGraph`／`docGraph` 行も同様に、既存の固定句（`the probe validates `enabled` and `bin``等）を分断していないか確認して揃える）。`test_v0132_contracts.py` は編集禁止。
+その後、単独作業・commit なしで: `python3 -m unittest -v tests.test_v0132_contracts tests.test_v014_contracts` → フルスイート `python3 -m unittest discover -s tests -t . -v > /tmp/cr1-full.log 2>&1; rc=$?; tail -3 /tmp/cr1-full.log; echo rc=$rc; grep -c ' \.\.\. skipped' /tmp/cr1-full.log` を実行し、`Ran N`・rc・skip を報告。
