@@ -1,0 +1,318 @@
+HEAD is now at e2838bf Merge pull request #62 from akira993/fix/v0.14.0-code-review-followup
+...................................................................................................................................................................................../Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpgb69sswq/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpgb69sswq/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp69bp2kfj/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp69bp2kfj/apps/worker/src/index.ts' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp69bp2kfj/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpt79us_qi/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpt79us_qi/docs/foo:bar' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpt79us_qi/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp6wub0_fl/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp6wub0_fl/docs/real.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp6wub0_fl/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpowyfj8x4/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpowyfj8x4/apps/worker/src/index.ts' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpowyfj8x4/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpxkq3b62e/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpxkq3b62e/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpmd4zfm65/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpmd4zfm65/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp45ksl20n/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp45ksl20n/docs/real.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp45ksl20n/apps/worker/src/index.ts' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp45ksl20n/docs/t.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpcysc3it6/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpcysc3it6/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp4b449axh/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp4b449axh/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:91: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp2nmi4alu/scripts/real.py' mode='w' encoding='UTF-8'>
+  open(os.path.join(self.repo, "scripts", "real.py"), "w").write("x\n")
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp2nmi4alu/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmph0ny5j_8/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpvrepaa1u/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpv52v_2pv/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpwacquqx0/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpnf3wvene/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpnf3wvene/docs/b.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpo8tx9ns8/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3j524d57/docs/api.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3j524d57/docs/foo+bar.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3j524d57/docs/foo bar.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3j524d57/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpr18g3el1/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmph0pnshbg/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp98p04zmj/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp6nsk2ep_/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp6nsk2ep_/docs/source.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpijvpvhbg/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp068b1pr6/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+../Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp22ty75ft/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpbyz97hx4/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp2a1v958r/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpwcz002kb/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp1pr0hc91/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpq0kho0ru/docs/skip.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpq0kho0ru/docs/alternate.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpq0kho0ru/docs/first.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpq0kho0ru/docs/fallback.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpnc1juoo2/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqt37_cjw/docs/format.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqt37_cjw/docs/existence.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqt37_cjw/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqt37_cjw/docs/orphan.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp4k3gkj4d/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp4k3gkj4d/docs/source.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp4k3gkj4d/docs/target.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmppeah6euh/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqgv0xjfd/docs/logs/doc_audit_2026-08-25.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqgv0xjfd/docs/logs/doc_audit_policy.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpkn5zrmsg/docs/logs/doc_audit_2026-08-25.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpkn5zrmsg/docs/logs/doc_audit_policy.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp18bcje8a/docs/logs/doc_audit_2026-08-25.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp18bcje8a/docs/target.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpv3z0n9_i/docs/logs/doc_audit_2026-08-25.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+../Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpfmqg0lt0/docs/logs/doc_audit_2026-08-25.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpkedb5osx/docs/logs/doc_audit_2026-08-25.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpkedb5osx/docs/kept.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+................./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3swv8fn1/docs/from-inline.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp3swv8fn1/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+....../Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpq01vy0v9/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpcox8wg1s/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpnnda87qx/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpaukisev7/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpaukisev7/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpaukisev7/docs/orphan.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpm3_p_vz6/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp1sqpkcfh/index.txt' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp1sqpkcfh/docs/target.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpgpt8um7t/index.txt' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpgpt8um7t/docs/target.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp29sr8rbu/index.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpx2bmvzy7/docs/target.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpj6a24z7q/docs/target.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp1y02r_3u/node_modules/pkg/x.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmp1y02r_3u/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpoii01cau/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpoii01cau/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpm4jek3u3/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpm4jek3u3/docs/b.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpbn5nqwvi/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpbn5nqwvi/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpqm5rgkpe/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+./Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpf_p85y0w/docs/README.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpf_p85y0w/docs/a.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_generic_layers.py:49: ResourceWarning: unclosed file <_io.TextIOWrapper name='/var/folders/77/ylhk5q556cz_rfg89pb1pfs40000gn/T/tmpf_p85y0w/docs/orphan.md' mode='w' encoding='utf-8'>
+  open(full, "w", encoding="utf-8").write(content)
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+.................................................................................................................................................................................................................................................................................................................................................................
+----------------------------------------------------------------------
+Ran 609 tests in 181.604s
+
+OK
+Switched to branch 'main'
+Your branch is up to date with 'origin/main'.
+issue #57 already closed
+issue #58 already closed
+issue #60 already closed
+Confirm that no docaudit run is in progress before skills-dir sync [y/N]: done — v0.14.0 released; issues closed; skills-dir synced

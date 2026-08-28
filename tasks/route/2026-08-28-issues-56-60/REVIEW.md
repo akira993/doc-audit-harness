@@ -237,3 +237,9 @@
 ### cr3 実装 R1 — 承認（commit `53afca1`）
 - worker 報告 Ran 609 OK。boss 再実測 `cr3-full-tests-v.log` **Ran 609 tests OK, skipped 0, expected failure 0**、`ensure_ascii=False` 0 件、`bash -n` OK、scope-clean（BASE 79938a5）、forbidden-clean（docs/SKILL/probe-record/v014/probe_record 不変）、§8 片 tests-clean（79938a5 の全テスト名残存・新 6 本の `... ok` 各 1 回）。
 - diff 精読: 9 emit サイトの `ensure_ascii=False` 除去のみ（`sys.stdout.buffer.write` と graph の encode 検証行は維持）。新テスト 6 本は `run_script` を経由せず bytes で受け、`isascii()`・`splitlines()==1`・JSON round-trip を assert。mdq は indexed/index-failed、ax は U+2028 入り version の ok、codex は bytes env `CODEX_HOME=b"/tmp/h\xffome"` で ok＋`os.fsencode` 一致を確認。
+
+## route-close 追補（v0.14.0 出荷、2026-08-29）
+- PR #62（code-review 3 周: 10 件 → 15 件 → V9 1 件）を `/code-review low 62` 指摘なしの後に merge（`e2838bf`）。`release-handoff.sh e2838bf… 62`: フルスイート Ran 609 OK → tag `docaudit--v0.14.0` = `e2838bf`（local/remote 一致）→ Release `docaudit v0.14.0 — invalid-config for all seams, probe persistence, CODEX_HOME visibility`（draft=false）→ #58/#60 close（#57 は既に closed）→ skills-dir 同期（`~/.claude/skills/docaudit` = 0.14.0、rsync 差分 0）。
+- `gh issue list --state open` = #56（第 2 段はユーザー判断）・#59（ledger、`59-design-note.md`）。
+- 残課題（次版候補・未起票）: (1) #59 ledger 専用 route、(2) #56 第 2 段の判断、(3) probe 判定ブロックの共有ヘルパー化（golden 同値性 harness 付き refactor）、(4) handoff 実行時のテストで `ResourceWarning`（未クローズ資源、204 行）が出る — 新テストの subprocess/一時ファイル後始末の見直し、(5) 1 周目 review の low 7 項目。
+- 教訓（memory に記録済み）: 検収は runtime diff だけでなくテスト本体の全文精読を必須にする／「無害」と判断した要求外の変更（`ensure_ascii=False`）が回帰を生んだ — PLAN 外の変更は差し戻す。
