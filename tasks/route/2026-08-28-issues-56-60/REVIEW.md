@@ -226,3 +226,6 @@
 ## 追補 3: 3 回目 `/code-review xhigh`（2026-08-29、セッション上限 429 で途中終了）
 - 完了した検証サブエージェント 1 本の CONFIRMED 所見 V9: cr2 で入った JSON emit の `ensure_ascii=False`（9 か所）は要求外で、U+0085/U+2028/U+2029 bin で 1 行契約が破れ、非 UTF-8 `CODEX_HOME` で codex probe が空出力・exit 0 になる回帰。boss の cr2 検収で「無害」と誤判定した箇所。
 - 計画 `PLAN-cr3.md`（1 件、9 か所を既定 `ensure_ascii=True` に戻す＋回帰テスト 6 本）。
+### Sol cr3-R1（PLAN-cr3 rev.1 → rev.2）— (A) 3 件・(B) 1 件
+- CR3-1 scope 基準を `79938a5` に／CR3-2 9 emit を実行経路で網羅（mdq indexed/index-failed、ax ok＋非 UTF-8 version、graph/codex ok）／CR3-3 `Ran N ≥ 609`・`79938a5` の名前包含・`... ok` ちょうど 1 回を §8 に／CR3-4 surrogate は `os.fsencode` で比較
+- 判定: **差し戻し → rev.2 で Opus へ**
