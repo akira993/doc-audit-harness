@@ -22,3 +22,4 @@ tests/test_scaffold.py
 tests/test_release_handoff.py
 tests/test_v014_contracts.py
 tests/test_probe_record.py
+tests/test_v0131_docs_contracts.py

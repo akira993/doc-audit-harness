@@ -161,7 +161,7 @@ S1a Terra `medium`／S1b Terra `high`／S2 Luna `medium`（`codex exec -m … -s
 
 ## 7. 変更範囲
 **許可**: `skills/audit/SKILL.md`、`skills/audit/scripts/{import-audit-scope.py,mdq-index.sh,ax-probe.sh,codex-probe.sh,probe-record.py(新)}`、`skills/audit/references/{config-schema.md,engine-shas.json}`、`docs/ADOPTION.md`、`docs/ADOPTION.ja.md`、`.claude-plugin/plugin.json`、
-`tests/{test_import_audit_scope.py,test_mdq_index.py,test_ax_probe.py,test_codex_probe.py,test_codex_review_plan.py,test_decide_verdict.py,test_v0132_contracts.py,test_v013_contracts.py,test_scaffold.py,test_release_handoff.py,test_v014_contracts.py(新),test_probe_record.py(新)}`、
+`tests/{test_import_audit_scope.py,test_mdq_index.py,test_ax_probe.py,test_codex_probe.py,test_codex_review_plan.py,test_decide_verdict.py,test_v0132_contracts.py,test_v013_contracts.py,test_v0131_docs_contracts.py(S1b 追認: 付録ファイル数 42→43),test_scaffold.py,test_release_handoff.py,test_v014_contracts.py(新),test_probe_record.py(新)}`、
 `tasks/route/2026-08-28-issues-56-60/release-handoff.sh(新)`。
 **禁止**: `skills/audit/scripts/{decide-verdict.py,start-run.py,docaudit_paths.py,write-evidence.py,docaudit_cache.py,mdq-health.py,graphify-probe.sh,cocoindex-probe.sh,codegraph-probe.sh,scaffold.py,write-template.py,open-run.py,seal-run.py,read-manifest.py,tree-digest.py,codex-dispatch.py,plan-dispatch.py}`、
 `skills/audit/references/codex-review-output.schema.json`、`data/**`、`tests/data/**`、`skills/init/SKILL.md`、`agents/**`、`.gitignore`、`.envrc`、`.serena/**`、`docs/superpowers/**`、`.claude/**`、`tasks/route/2026-08-28-issues-52-54-v0.13.2/**`、
