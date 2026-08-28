@@ -235,7 +235,7 @@ def unknown_rebind():
                 "healthy": None, "chunks": None, "status": None, "degrade": None},
         "context-mode": {"state": "unknown", "available": None, "healthy": None, "status": None},
         "ax": {"state": "unknown", "available": None, "reason": None},
-        "codex-review": {"state": "unknown", "available": None, "reason": None,
+        "codex-review": {"state": "unknown", "available": None, "reason": None, "bin": None,
                           "reviewState": None, "callerCodexHomeDisplay": None,
                           "callerCodexHomeSource": None, "callerAuthFile": None},
         "symbol-graph": {"state": "unknown", "available": None, "reason": None, "bin": None},
@@ -282,7 +282,8 @@ def make_rebind(record):
     if codex is not None:
         result["codex-review"] = {
             "state": "complete", "available": codex["codexReviewAvailable"],
-            "reason": codex["reason"], "reviewState": review_state,
+            "reason": codex["reason"], "bin": codex["codexReviewBin"],
+            "reviewState": review_state,
             "callerCodexHomeDisplay": display(codex["callerCodexHome"]),
             "callerCodexHomeSource": codex["callerCodexHomeSource"],
             "callerAuthFile": codex["callerAuthFile"],

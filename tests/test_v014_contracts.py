@@ -206,6 +206,16 @@ class TestV014Contracts(unittest.TestCase):
                 "CODEX_REVIEW_STATE=not-active", "CODEX_REVIEW_STATE=skipped-full-run",
                 "CODEX_REVIEW_STATE=completed", "CODEX_REVIEW_STATE` ∈ `{execution-failed, ref-invalid}"):
             self.assertIn(literal, phase5)
+        codex_block = phase5.split("**codex-review status line**", 1)[1].split(
+            "**code-review status line**", 1)[0]
+        invalid = "rebind.codex-review.reason=invalid-config"
+        self.assertIn(
+            "⚠ codex-review: doc-audit.json codexReview is invalid — not probed this run; fix the key. [non-blocking]",
+            codex_block)
+        for later in ("CODEX_REVIEW_STATE=phase4-not-required",
+                      "rebind.codex-review.reviewState=null",
+                      "CODEX_REVIEW_STATE=not-active"):
+            self.assertLess(codex_block.index(invalid), codex_block.index(later))
         self.assertIn("caller info unknown after resume", phase5)
         self.assertNotIn('callerCodexHome"]', skill)
 

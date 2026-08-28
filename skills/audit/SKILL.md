@@ -747,6 +747,7 @@ this suffix contract inside its lock-held report publication interval.
 **4-way display** over the five internal states and, unlike the mdq/context-mode/ax
 lines, the findings it summarizes may already have contributed to the verdict via Phase 4 step 3
 — word it so this isn't read as another purely-advisory line:
+- `rebind.codex-review.reason=invalid-config` → `⚠ codex-review: doc-audit.json codexReview is invalid — not probed this run; fix the key. [non-blocking]`
 - `rebind.codex-review.reviewState=null` → `⚠ codex-review: state unknown after resume [non-blocking]`
 - `CODEX_REVIEW_STATE=phase4-not-required` → `💡 codex-review: not run (phase 4 not required)`
 - `CODEX_REVIEW_STATE=not-active` → `💡 codex-review: not active (<CODEX_REVIEW_REASON>)`

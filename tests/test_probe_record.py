@@ -131,6 +131,7 @@ class TestProbeRecord(unittest.TestCase):
     def test_read_absent_corrupt_and_rebind_completeness(self):
         absent = self.read()
         self.assertTrue(all(value["state"] == "unknown" for value in absent["rebind"].values()))
+        self.assertIsNone(absent["rebind"]["codex-review"]["bin"])
         path = os.path.join(self.run, "phase0-probes.json")
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("{")
@@ -144,7 +145,11 @@ class TestProbeRecord(unittest.TestCase):
         self.assertTrue(all(value["state"] == "complete" for value in out.values()))
         self.assertEqual(out["mdq"], {"state": "complete", "available": True, "reason": "indexed", "bin": "mdq",
                                       "healthy": True, "chunks": 7, "status": "ok", "degrade": "n/a"})
-        self.assertEqual(out["codex-review"]["reviewState"], "completed")
+        self.assertEqual(out["codex-review"], {
+            "state": "complete", "available": True, "reason": "ok", "bin": "codex",
+            "reviewState": "completed", "callerCodexHomeDisplay": "/tmp/home",
+            "callerCodexHomeSource": "env", "callerAuthFile": "present",
+        })
 
     def test_rebind_missing_health_partial_and_display(self):
         self.write("indexing", probes()["indexing"])
@@ -166,6 +171,7 @@ class TestProbeRecord(unittest.TestCase):
         codex = self.read()["rebind"]["codex-review"]
         self.assertEqual(codex["state"], "unknown")
         self.assertEqual(codex["reviewState"], "completed")
+        self.assertIsNone(codex["bin"])
         for key in ("callerCodexHomeDisplay", "callerCodexHomeSource", "callerAuthFile"):
             self.assertIsNone(codex[key])
 
