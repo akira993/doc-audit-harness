@@ -1,4 +1,4 @@
-# PLAN-cr1 — PR #61 merge 後の `/code-review` 指摘 10 件の修正（rev.4, 2026-08-28 — Sol CR1-R1/R2/R3 反映）
+# PLAN-cr1 — PR #61 merge 後の `/code-review` 指摘 10 件の修正（rev.5, 2026-08-28 — Sol CR1-R1〜R4 反映）
 
 ## 0. 決定事項
 ユーザー指示: 「Code-Review で問題があれば、修正計画→Sol レビューを回し、最後に Opus 全体レビュー後、実装、コミット、その後にまた私が Code-Review を打ちます。」
@@ -6,9 +6,9 @@ PR #61 は `ef995f0` で merge 済み・**tag 未作成**。修正は branch `fi
 code-review 所見 10 件（high、CONFIRMED 6・PLAUSIBLE 4、最高 medium）を根本原因で整理。**Phase 5 の情報源は `rebind` のみ、判定不能は常に `unknown`**（Sol CR1-1 — 会話変数へのフォールバックは新設しない）。
 
 ### A. フレッシュ run で unknown 行が出る根本原因を塞ぐ（所見 #1・#2・#3・#4・#6）
-1. **harness 辞退で run を再取得した後は Phase 0 を丸ごと再実行する（#1、Sol CR1-2）**: SKILL.md:274-275 の「replace `RUNID`, `RUN_DIR`, and `EVIDENCE` from its stdout before continuing」の直後に固定文
-   `Then re-run Phase 0 from its first step on the new run — every probe, every probe-record.py call, and the mdq confirmation gate evaluated exactly as on a first pass against the new probe results (ask again when it fires and AskUserQuestion is available; otherwise apply the non-interactive rule; never reuse an earlier answer) — so the new run directory holds its own phase0-probes.json; then continue with Phase 0.5 exactly once (the harness question is not asked again because harness.declined is now recorded).` を追加（Sol CR2-1／CR3-1: 既回答は再利用しない — `MDQ_DEGRADE` は EVIDENCE に含まれず復元元が無く、`non-interactive`／`n/a` は承認ではない）。
-   契約テスト: この固定文が harness 段落内に **ちょうど 1 回**、`replace RUNID, RUN_DIR, and EVIDENCE` の後・`if the reopen fails` の前・Phase 0.5 見出しより前にある（順序 assert、CR2-6）。probe は冪等（mdq index は増分）。会話変数からの再記録は採らない。
+1. **harness 辞退で run を再取得した後は Phase 0 を丸ごと再実行する（#1、Sol CR1-2）**: SKILL.md:274-276 の reopen 段落を「`open-run.py` の終了値と成功 JSON を確認し、失敗なら既存の exit-4/6 規則で停止 → 成功時のみ `RUNID`・`RUN_DIR`・`EVIDENCE` を新値で束縛」の順に整え、**その束縛文の直後（失敗停止文より後）**に固定文（Sol CR4-1）
+   `Then re-run Phase 0 from its first step on the new run — every probe, every probe-record.py call, and the mdq confirmation gate evaluated exactly as on a first pass against the new probe results: if it fires and AskUserQuestion is available and the user has not asked the run not to pause, ask again; if it fires but questions are unavailable or suppressed, bind MDQ_DEGRADE="non-interactive"; if it does not fire or PHASE3_BACKEND_CONFIG is codex, bind MDQ_DEGRADE="n/a"; never reuse an earlier answer — so the new run directory holds its own phase0-probes.json; then continue with Phase 0.5 exactly once (the harness question is not asked again because harness.declined is now recorded).`（CR4-2 の 3 分岐） を追加（Sol CR2-1／CR3-1: 既回答は再利用しない — `MDQ_DEGRADE` は EVIDENCE に含まれず復元元が無く、`non-interactive`／`n/a` は承認ではない）。
+   契約テスト: この固定文が harness 段落内に **ちょうど 1 回**、`if the reopen fails`（停止文）の**後**・新 3 変数の束縛文の後・Phase 0.5 見出しより前にある（順序 assert、CR2-6／CR4-1）。probe は冪等（mdq index は増分）。会話変数からの再記録は採らない。
 2. **`MDQ_DEGRADE` の未束縛（#2）**: SKILL.md:103 の codex backend 分岐を含め、ゲートが発火しない・評価されない全経路で `MDQ_DEGRADE="n/a"` を束縛する: :121 を `When the gate does not fire, or is skipped because PHASE3_BACKEND_CONFIG is codex, bind MDQ_DEGRADE="n/a".` に改める。
    `mdq-health.py` が JSON を返せなかった場合（:100）は固定 JSON `{"files":0,"chunks":0,"searchSmoke":false,"healthy":false,"status":"probe-error"}` を `MDQ_HEALTH_PROBE_JSON` に束縛して記録する（固定文）。
 3. **contextMode 合成の正規化（#3、Sol CR1-3 — validator は変えない）**: SKILL.md:153 の合成説明を「`CM_AVAILABLE` が false のとき `contextModeHealthy` は**常に** `null`（`CM_HEALTHY` が束縛済みでも捨てる）。`CM_AVAILABLE` が true で `CM_HEALTHY` が未束縛のときは `contextModeHealthy:false`・`status:"probe-error"` に正規化する」に改める（固定文。表示分岐 3 本と一致）。テスト（CR2-7）: 正規化後の 2 形 `{false,null,"not-installed"}`／`{true,false,"probe-error"}` を書き込み `rebind.context-mode` を完全一致で assert。
@@ -17,7 +17,7 @@ code-review 所見 10 件（high、CONFIRMED 6・PLAUSIBLE 4、最高 medium）�
 5. **接尾辞の gating（#6）**: SKILL.md:757 の「When `CODEX_REVIEW_AVAILABLE=true`, append」→「When `rebind.codex-review.available` is true, append」（診断文も同様）。
 
 ### B. 状態行の優先順位（#5）
-6. Phase-5 の状態行節の冒頭に共通規則 1 文「Within each status-line table the first matching bullet wins: the whole-record unknown bullet (when the table has one) comes first, the `invalid-config` bullet second, then the remaining states; for codex-review the order is rebind.state=unknown → invalid-config → reviewState=null → the four CODEX_REVIEW_STATE branches.」を置き、**7 表すべて**で順序を契約テストで assert（Sol CR2-4／CR3-2。mdq／context-mode／ax／graph 3 表: unknown → invalid-config → その他。codex-review: `rebind.codex-review.state=unknown`（probe 記録全体の欠損）→ `reason=invalid-config`（S1b R4 で先頭化した枝を維持）→ `reviewState=null` → 4-way。現行 CM/AX は `invalid-config` が末尾、graph 3 表は unknown → not-configured → invalid-config → 並べ替え。S1a の「mdq 枝が `MDQ_AVAILABLE` false より前」・S1b R4 の「invalid-config が `phase4-not-required`/`reviewState=null`/`not-active` より前」は維持）。
+6. Phase-5 の状態行節の冒頭に共通規則 1 文「Within each status-line table the first matching bullet wins: the whole-record unknown bullet (when the table has one) comes first, the `invalid-config` bullet second, then the remaining states. The codex-review table has no whole-record unknown bullet: its order is invalid-config → reviewState=null → the four CODEX_REVIEW_STATE branches, and rebind.codex-review.state=unknown only replaces the caller suffix with (caller info unavailable).」を置き、**7 表すべて**で順序を契約テストで assert（Sol CR2-4／CR3-2／CR4-3。mdq／context-mode／ax／graph 3 表: unknown → invalid-config → その他。codex-review: `reason=invalid-config` → `reviewState=null` → 4-way、`state=unknown && reviewState!=null` は 4-way＋`(caller info unavailable)` — S1b R4 の順序と `test_probe_record.py:169` の部分状態を維持。現行 CM/AX は `invalid-config` が末尾、graph 3 表は unknown → not-configured → invalid-config → 並べ替え。S1a の「mdq 枝が `MDQ_AVAILABLE` false より前」・S1b R4 の「invalid-config が `phase4-not-required`/`reviewState=null`/`not-active` より前」は維持）。
 
 ### C. 文字列伝送の安全性と可読性（#7・#8・#9）
 7. **#7（ensure_ascii）は不採用**（Sol CR1-4: `ensure_ascii=False` は U+0085/U+2028/U+2029 で 1 行性を破る。現行 ASCII エスケープは安全側）。`probe-record.py::display` に U+0085/U+2028/U+2029 を含む値でも 1 行であることのテストを追加（現行実装で通る＝回帰防止）。最終報告で「表示は ASCII エスケープ」を明記。
@@ -51,12 +51,12 @@ Fable。計画・レビュー・検証再実行・PR 作成。実装は書かな
 ## 6. 完了条件（DoD）— すべて非 0 終了で判定
 - (1) `test_v014_contracts.py`: A1 固定文（reopen 後の Phase 0 再実行・`never reuse an earlier answer` を含む、count==1＋位置）、新接尾辞 `(caller info unavailable)` ちょうど 1 回・旧 `caller info unknown after resume` 0 回、A4 の新 unknown 文言 7 行＋§7 ④ en/ja（旧 `state unknown after resume` は SKILL/ADOPTION/テストで grep 0）、A2 の `or is skipped because PHASE3_BACKEND_CONFIG is codex` と mdq-health 固定 JSON、A3 の正規化文（`always null`／`false`・`probe-error`）、A4 の 1 文、A5 の `rebind.codex-review.available`（旧 `CODEX_REVIEW_AVAILABLE=true`, append は grep 0）、B6 の規則文＋7 表すべてで unknown → invalid-config → その他の順序 assert、C9 新文言（旧 `Rows 6` は grep 0）。
 - (2) `test_probe_record.py`: display が U+0085/U+2028/U+2029/`\n` を含む値で 1 行（`"\n" not in`・`splitlines()==1`）。固定 ID 集合更新。
-- (3) 3 graph probe テスト: 制御文字 33 文字全走査 → `invalid-config`＋sentinel 不起動、`{"enabled":false,"bin":"a\nb"}` → `disabled-by-config`＋既定 bin、内部スペース入りパスの正例、全 reason 分岐のキー集合完全一致。`test_v0132_contracts` green（reason 集合不変）。
+- (3) 3 graph probe テスト: 制御文字 33 文字全走査 → `invalid-config`＋sentinel 不起動（enabled 側 33 件）、**同じ 33 文字を `enabled:false` 複合で 33 件** → `disabled-by-config`＋既定 bin＋sentinel 不起動（CR4-5）、内部スペース入りパスの正例、全 reason 分岐のキー集合完全一致。`test_v0132_contracts` green（reason 集合不変）。
 - (4) `test "$(grep -c 'mkdtemp' tests/test_mdq_index.py tests/test_ax_probe.py tests/test_codex_probe.py tests/test_probe_record.py | awk -F: '{s+=$2} END{print s}')" -eq 0`。
 - (5) フルスイート: `python3 -m unittest discover -s tests -t . -v > /tmp/cr1-full.log 2>&1; rc=$?; tail -3 /tmp/cr1-full.log; test $rc -eq 0 && test "$(grep -c ' \.\.\. skipped' /tmp/cr1-full.log)" -eq 0`（`Ran N` 報告）。`bash -n` 6 probe。
 - (6) 禁止ファイル: `git diff --quiet ef995f0 -- <§7 禁止一覧>`。
 - (7) スコープ検査: `BASE_COMMIT=ef995f0 SCOPE_COMMIT=<boss commit> BOSS_COMMIT=<同> python3 tasks/route/2026-08-28-issues-56-60/scope-check.py`（CR2-5。allowlist は cr1 用、tracked＋未追跡を許可集合と比較、保護 root の hash 一致、exit 1 で違反）。
-- (8) ADOPTION の段落限定（CR3-7）: `git diff ef995f0 -- docs/ADOPTION.md docs/ADOPTION.ja.md | grep '^[+-][^+-]'` の全行が `state unknown` を含み、行数が各ファイル ≤ 4（§7 ④ の 1 文の差し替えのみ）。
+- (8) ADOPTION の段落限定（CR3-7／CR4-4）: §8 の python 片で、`git show ef995f0:docs/ADOPTION.md` に対し旧句 `state unknown after resume` → 新句 `state unknown (probe record unavailable)` を**ちょうど 1 回**置換した期待バイト列と実ファイルが完全一致（ja も同様）。差分 0 件・同一行の別改変は失敗。
 
 ## 7. 変更範囲
 **許可**: `skills/audit/SKILL.md`、`skills/audit/scripts/{codegraph-probe.sh,graphify-probe.sh,cocoindex-probe.sh}`、`skills/audit/references/config-schema.md`、`docs/ADOPTION.md`、`docs/ADOPTION.ja.md`（§7 ④ の unknown 文言のみ）、
@@ -74,6 +74,15 @@ test "$(grep -c 'mkdtemp' tests/test_mdq_index.py tests/test_ax_probe.py tests/t
 test "$(grep -c 'state unknown after resume' skills/audit/SKILL.md docs/ADOPTION.md docs/ADOPTION.ja.md tests/test_v014_contracts.py | awk -F: '{s+=$2} END{print s}')" -eq 0 || exit 1
 git diff --quiet ef995f0 -- skills/audit/scripts/probe-record.py skills/audit/scripts/mdq-index.sh skills/audit/scripts/ax-probe.sh skills/audit/scripts/codex-probe.sh skills/audit/scripts/decide-verdict.py skills/audit/scripts/start-run.py skills/audit/scripts/write-evidence.py skills/audit/scripts/docaudit_paths.py skills/audit/scripts/open-run.py skills/audit/scripts/mdq-health.py skills/init/SKILL.md agents tests/data .claude-plugin skills/audit/references/engine-shas.json && echo forbidden-clean || exit 1
 BASE_COMMIT=ef995f0 SCOPE_COMMIT=<boss commit> BOSS_COMMIT=<boss commit> python3 tasks/route/2026-08-28-issues-56-60/scope-check.py || exit 1
-test "$(git diff ef995f0 -- docs/ADOPTION.md docs/ADOPTION.ja.md | grep '^[+-][^+-]' | grep -vc 'state unknown')" -eq 0 || exit 1
+python3 - <<'PY' || exit 1
+import subprocess,sys
+old='state unknown after resume'; new='state unknown (probe record unavailable)'
+bad=[]
+for f in ('docs/ADOPTION.md','docs/ADOPTION.ja.md'):
+    base=subprocess.run(['git','show','ef995f0:'+f],capture_output=True,text=True,check=True).stdout
+    if base.count(old)!=1: bad.append(f+': baseline has %d occurrences'%base.count(old)); continue
+    if open(f,encoding='utf-8').read()!=base.replace(old,new): bad.append(f+': differs from the single-replacement expectation')
+print('\n'.join(bad) or 'adoption-clean'); sys.exit(1 if bad else 0)
+PY
 test "$(grep -c 'caller info unknown after resume' skills/audit/SKILL.md tests/test_v014_contracts.py | awk -F: '{s+=$2} END{print s}')" -eq 0 || exit 1
 ```

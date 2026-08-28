@@ -169,3 +169,9 @@
 - CR3-2 codex 表で unknown 先頭は S1b R4 の invalid-config 先勝ちを壊す → codex は state=unknown → invalid-config → reviewState=null → 4-way
 - CR3-3 schema に enabled:false 例外と既定 bin 正規化を明記／CR3-4 接尾辞の新旧 grep／CR3-5 disabled 分岐も 33 文字／CR3-6 → CR3-1 で通常規則に戻したため遷移表は不要（規則文に `never reuse` を固定）／CR3-7 ADOPTION 段落限定を diff 行で検査
 - 判定: **差し戻し（rev.4 で収束確認 R4）**
+### Sol CR1-R4（rev.4 → rev.5）— (A) 4 件・(B) 1 件
+- CR4-1 再実行文が reopen 失敗確認より前 → 失敗停止文の後・新 3 変数束縛の後に配置（順序 assert 更新）
+- CR4-2 ゲートの 3 分岐（質問／non-interactive／n/a）を固定文に明記
+- CR4-3 codex 表に whole-record unknown を新設すると既知 reviewState の部分回復が到達不能 → codex は invalid-config → reviewState=null → 4-way を維持、state=unknown は接尾辞のみ
+- CR4-4 ADOPTION 検査は差分 0 件でも通る → ef995f0 基準の単一置換期待バイト列と完全一致／CR4-5 DoD (3) に disabled 側 33 件を明記
+- 判定: **差し戻し（rev.5 で最終ラウンド R5）**
