@@ -34,6 +34,7 @@ def enum():
             if not os.path.lexists(p): continue
             s=os.lstat(p); kind='symlink' if stat.S_ISLNK(s.st_mode) else 'file' if stat.S_ISREG(s.st_mode) else 'dir' if stat.S_ISDIR(s.st_mode) else 'other'
             h=hashlib.sha256(open(p,'rb').read()).hexdigest() if kind=='file' else hashlib.sha256(os.readlink(p).encode() if kind=='symlink' else b'').hexdigest()
+            if kind=='file' and s.st_nlink!=1: kind='hardlinked-file'
             out[p]=(h,oct(stat.S_IMODE(s.st_mode)),kind)
     return out
 base={}

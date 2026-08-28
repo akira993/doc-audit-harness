@@ -210,3 +210,6 @@
 ### Sol cr2-R4（rev.4 → rev.5）— (A) 8 件、すべて検査精度
 - CR2-29 `... ok` の厳密判定＋expected failure 0／CR2-30 既存テストも実行確認／CR2-31 sentinel はカスタム bin・trim 後名も marker／CR2-32 空白位置別 ID（lead/trail/both/nbsp）＋制御文字は途中配置／CR2-33 scope-check がディレクトリ項目も lstat（boss 修正・baseline 再生成）／CR2-34 ADOPTION ⑦ は旧 reason を断定しない／CR2-35 schema テスト名を REQ に／CR2-36 graph reason 集合を固定
 - 判定: **差し戻し（rev.5 で最終 R5）**
+### Sol cr2-R5（rev.5 → rev.6、上限到達）— (A) 4 件（文面・検査精度）
+- CR2-37 dash は正例のみ（C9 の負例から削除）／CR2-38 DoD の旧 ID を新 6 ID に統一／CR2-39 expected failure は結果行のみ検出／CR2-40 保護ファイルは `st_nlink==1`（boss 修正）
+- 判定: **上限到達。(A) 全件を rev.6 に反映し、Opus 全体敵対レビューへ**
