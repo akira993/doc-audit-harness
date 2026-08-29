@@ -1,8 +1,9 @@
-"""Branch, publication, and archive-boundary tests for the v0.14.0 handoff."""
+"""Branch, publication, and archive-boundary tests for the v0.15.0 handoff."""
 
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tarfile
@@ -15,20 +16,21 @@ HANDOFF = os.path.join(
     ROOT,
     "tasks",
     "route",
-    "2026-08-28-issues-56-60",
+    "2026-08-29-issue-56-stage2-v0.15.0",
     "release-handoff.sh",
 )
 APPROVED = "a" * 40
 WRONG = "c" * 40
-TAG = "docaudit--v0.14.0"
-TITLE = "docaudit v0.14.0 — invalid-config for all seams, probe persistence, CODEX_HOME visibility"
-ISSUES = {"57", "58", "60"}
-PRECLOSED = {"57", "58"}
+TAG = "docaudit--v0.15.0"
+TITLE = "docaudit v0.15.0 — key-gated webExtract and codexReview"
+ISSUES = {"56"}
+PRECLOSED = {"56"}
 REQUIRED_BODY = (
     APPROVED,
-    "Closes #57, #58, #60.",
-    "Partially addresses #56 (stage 1) and #59 (operational note); both remain open.",
-    "#56", "#57", "#58", "#59", "#60", "invalid-config", "phase0-probes.json", "CODEX_HOME",
+    "Closes #56.",
+    "#59 remains open for the mechanical cross-version resume prohibition.",
+    "#63 remains open for the all-seam sealed-config / TOCTOU design.",
+    "#56", "#59", "#63", "not-configured", "webExtract", "codexReview",
 )
 
 
@@ -154,7 +156,8 @@ def run_gh():
         }
         finish()
     if args[:2] == ["issue", "view"]:
-        finish(output=state["issues"][args[2]])
+        issue_state = state["issues"].get(args[2])
+        finish(0 if issue_state else 1, issue_state)
     if args[:2] == ["issue", "close"]:
         issue = args[2]
         state["issues"][issue] = "CLOSED"
@@ -215,7 +218,7 @@ class TestReleaseHandoff(unittest.TestCase):
             "local_tags": {},
             "remote_tags": {},
             "releases": {},
-            "issues": {issue: "OPEN" for issue in ISSUES},
+            "issues": {issue: "OPEN" for issue in ISSUES | {"59", "63"}},
             "closed": [],
         }
         self.save_state()
@@ -424,7 +427,7 @@ class TestReleaseHandoff(unittest.TestCase):
 
     def test_resume_release_with_preclosed_issues_closes_only_remaining(self):
         self.assertTrue(PRECLOSED)
-        self.assertTrue(PRECLOSED < ISSUES)
+        self.assertEqual(PRECLOSED, ISSUES)
         self.mark_tag_published()
         self.state["releases"][TAG] = self.valid_release()
         for issue in PRECLOSED:
@@ -444,6 +447,45 @@ class TestReleaseHandoff(unittest.TestCase):
         self.assertEqual(len(self.calls("gh", ["release", "create"])), 1)
         self.assertEqual(len(self.calls("gh", ["issue", "close"])), len(ISSUES))
         self.assertEqual(self.calls("rsync"), [])
+
+    def test_close_calls_target_only_issue_56(self):
+        proc = self.run_handoff(APPROVED, "42")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        closed = {call["args"][2]
+                  for call in self.calls("gh", ["issue", "close"])}
+        self.assertEqual(closed, {"56"})
+
+    def test_issue_59_remains_open(self):
+        proc = self.run_handoff(APPROVED, "42")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.load_state()["issues"]["59"], "OPEN")
+
+    def test_release_notes_close_directive_and_issue_59_continuation(self):
+        proc = self.run_handoff(APPROVED, "42")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        body = self.load_state()["releases"][TAG]["body"]
+        self.assertEqual(set(re.findall(r"\bCloses #(\d+)\b", body)), {"56"})
+        self.assertIn(
+            "#59 remains open for the mechanical cross-version resume prohibition.",
+            body,
+        )
+
+    def test_issue_63_open_allows_publication_and_remains_open(self):
+        proc = self.run_handoff(APPROVED, "42")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        state = self.load_state()
+        self.assertEqual(state["issues"]["63"], "OPEN")
+        views = self.calls("gh", ["issue", "view"])
+        self.assertIn("63", {call["args"][2] for call in views})
+        self.assertIn("#63", state["releases"][TAG]["body"])
+
+    def test_issue_63_not_open_stops_before_publication(self):
+        self.state["issues"]["63"] = "CLOSED"
+        self.save_state()
+        proc = self.run_handoff(APPROVED, "42")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("tracking issue #63 must be OPEN", proc.stderr)
+        self.assert_no_release_mutations()
 
 
 if __name__ == "__main__":
