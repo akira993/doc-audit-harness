@@ -65,7 +65,7 @@ inside `EVIDENCE`, not separate transport variables:
 | (g) waiting for `/code-review` | same as (f) |
 | (h) Phase-4 evidence complete | (g) + phase4 |
 
-Phase-5 status lines are always rendered from probe-record.py --read (its "rebind" map is authoritative, on fresh and resumed runs alike; only the Phase-3 refresh-failure detail comes from the conversation and is omitted after a resume); a line marked unknown prints its "state unknown (probe record unavailable)" form; CODEX_REVIEW_STATE is rebound from rebind.codex-review.reviewState; a failed read marks all lines unknown; none of this changes the verdict. After a resume, Phase 4 may restore any missing operational availability, reason, or binary variables from `rebind` before it constructs the codex review plan.
+Phase-5 status lines are rendered from probe-record.py --read (its "rebind" map is authoritative except for the webExtract/codexReview resume re-probe rule below; only the Phase-3 refresh-failure detail comes from the conversation and is omitted after a resume); a line marked unknown prints its "state unknown (probe record unavailable)" form; CODEX_REVIEW_STATE is rebound from rebind.codex-review.reviewState; a failed read marks all lines unknown; none of this changes the verdict. After a resume, do not restore operational webExtract/codexReview availability, reason, or binary values from `rebind`. Re-run `ax-probe.sh` and `codex-probe.sh` against the current config before either consumer, bind each seam's operational availability/reason/bin from that same probe stdout, and re-record that same stdout through `probe-record.py` so the existing upsert overwrites those two seam records while preserving every other seam. If a re-probe cannot start, emits non-JSON, or cannot be parsed, do not use the old rebind values: apply the fresh Phase-0 degrade (`AX_AVAILABLE=false` with `AX_REASON=probe-error`, or `CODEX_REVIEW_AVAILABLE=false`) and continue. If any re-probe or its re-record fails, force that seam's Phase-5 display to its `state unknown` form and never display its old record as current; this remains non-blocking, while `codexReview.required:true` is handled fail-closed by the existing planner and verdict checks.
 
 Before gate invocation, any terminal path after a successful open MUST release the run with
 the matching `open-run.py --release --runid "$RUNID"` command above. A temporary
@@ -159,7 +159,7 @@ verifier's sole use for it is corroborating a doc's claim against an external up
 context-mode, ax is a plain CLI binary with no runtime tool-availability signal, so this probe is
 **deterministic** (mdq-pattern), not skill-level: run
 `AX_PROBE_JSON="$(bash "$SD/scripts/ax-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR")"` and parse
-`{axAvailable, axBin, axVersion, reason}` (`reason` ∈ `ok`/`not-installed`/`disabled-by-config`/`invalid-config`).
+`{axAvailable, axBin, axVersion, reason}` (`reason` ∈ `ok`/`not-installed`/`disabled-by-config`/`not-configured`/`invalid-config`).
 Bind `AX_AVAILABLE` (the `axAvailable` field), `AX_REASON` (the `reason` field), and `AX_BIN` (the `axBin` field, default `ax`) for
 the Phase-5 ax status line. `AX_BIN` affects only the Phase-0 probe; Phase 3's
 `workflow-template.js` invokes fixed `ax`, and Workflow receives only the availability boolean.
@@ -168,6 +168,7 @@ Immediately record it:
 The script always exits 0 and never touches the network
 (`ax --version` reports the local binary's own version); any failure degrades to `AX_AVAILABLE=false`
 and the audit continues unaffected — external-URL corroboration is a bonus, never a requirement.
+This seam is key-gated: when `webExtract` is absent, the probe reports `not-configured` and never runs the tool.
 
 Then probe **codex** (the `codex` CLI, plain `codex exec` — no openai-codex plugin dependency),
 Phase 4's adversarial fourth review. Like ax, codex is a plain CLI binary with no runtime
@@ -175,7 +176,7 @@ tool-availability signal, so this probe is **deterministic** (ax-pattern), not s
 `CODEX_PROBE_JSON="$(bash "$SD/scripts/codex-probe.sh" --config "$CFG" --repo-root "$CLAUDE_PROJECT_DIR")"`
 and parse
 `{codexReviewAvailable, codexReviewBin, codexReviewVersion, probeCommands, reason}` (`reason` ∈
-`ok`/`not-installed`/`disabled-by-config`/`probe-exec-failed`/`invalid-config`). Bind
+`ok`/`not-installed`/`disabled-by-config`/`probe-exec-failed`/`not-configured`/`invalid-config`). Bind
 `CODEX_REVIEW_AVAILABLE="$(python3 -c 'import json,sys; print(str(json.loads(sys.argv[1])["codexReviewAvailable"]).lower())' "$CODEX_PROBE_JSON")"`
 and `CODEX_REVIEW_BIN` (the `codexReviewBin` field, default `codex`)
 and bind the probe reason with
@@ -187,11 +188,12 @@ sandbox, permissions, or wrapper arguments. Environments that need a wrapper mus
 `codexReview.required:true`; enabling it after the first baseline has been established is
 recommended. The script always exits 0 and never touches the network (`codex --version` and
 `codex exec --help` inspect the local binary only); any failure degrades to
-`CODEX_REVIEW_AVAILABLE=false`. **Unlike the mdq/context-mode/ax
+`CODEX_REVIEW_AVAILABLE=false`. This seam is key-gated: when `codexReview` is absent, the probe
+reports `not-configured` and never runs the tool. **Unlike the mdq/context-mode/ax
 probes above, this one is not purely advisory** — when Phase 4 actually runs a codex review to
 completion, its `critical`/`high` findings DO fold into the verdict (§Phase 4 step 3, §Guardrails);
 the probe itself is still non-fatal, but downstream of it this seam behaves differently from the
-other three. An unreadable, non-object, or absent config makes the probe report invalid-config only when the probe is invoked directly; in a normal audit such a config stops before Phase 0.
+other three. An unreadable, non-object, or absent config makes the probe report invalid-config when the probe is invoked directly; it never falls back to enabled. In a normal audit such a config stops before Phase 0.
 Immediately record the existing probe JSON:
 `printf '%s' "$CODEX_PROBE_JSON" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam codexReview --stdin >/dev/null || echo "⚠ probe-record: codexReview not recorded [non-blocking]"`.
 
@@ -646,12 +648,17 @@ Before constructing any status line, run
 Within each status-line table the first matching bullet wins: the whole-record unknown bullet (when the table has one) comes first, the invalid-config bullet second, then the remaining states; for codex-review use invalid-config → review-state-not-recorded → probe-record-unavailable → 4-way.
 
 If that read fails, use the script's seven unknown-shaped values for every status line and continue.
-For both fresh and resumed runs, bind the Phase-5 inputs exclusively from `PROBE_REBIND.rebind`:
+For fresh runs, bind the Phase-5 inputs exclusively from `PROBE_REBIND.rebind`:
 `mdq`, `context-mode`, `ax`, `codex-review`, `symbol-graph`, `doc-graph`, and `semantic-search`,
-in the existing display order. Rebind `CODEX_REVIEW_STATE` from
+in the existing display order. On resume, webExtract/codexReview are the exception: re-run their
+key-gated probes, bind their operational values and overwrite their records from the same stdout,
+then read `PROBE_REBIND`; if re-probing or re-recording fails, force only that seam's display state
+to unknown. Rebind `CODEX_REVIEW_STATE` from
 `rebind.codex-review.reviewState`; retain the existing four literal state branches below. A failed
-record write merely emits its `⚠ probe-record: <seam> not recorded [non-blocking]` warning and
-continues; a failed read makes all seven status lines unknown; neither case changes the verdict.
+record write for other seams merely emits its `⚠ probe-record: <seam> not recorded [non-blocking]`
+warning and continues; a failed read makes all seven status lines unknown; neither case changes
+the verdict. A failed resume re-record for webExtract/codexReview additionally forces its own line
+unknown as specified above.
 
 When `reportPath` is configured, generate the complete human report body **before starting the
 gate**, with the change set, impacted docs and per-doc verdicts, delegated-check results, review
@@ -744,6 +751,7 @@ this suffix contract inside its lock-held report publication interval.
 **ax status line** — always include exactly one, immediately after the context-mode line; it is **non-blocking** (never changes the verdict):
 - `rebind.ax.state=unknown` → `⚠ ax: state unknown (probe record unavailable) [non-blocking]`
 - `AX_REASON=invalid-config` → `⚠ ax: doc-audit.json webExtract is invalid — not probed this run; fix the key. [non-blocking]`
+- `AX_REASON=not-configured` → `💡 ax: not configured — add doc-audit.json webExtract to enable external URL checks [non-blocking]`
 - `AX_AVAILABLE` false → `💡 ax: not active — external-URL claims go unverified; install: curl -fsSL https://ax.yusuke.run/install | sh`
 - `AX_AVAILABLE` true → `✓ ax: active (external-URL corroboration available; read-only, GET-only)`
 
@@ -754,7 +762,7 @@ lines, the findings it summarizes may already have contributed to the verdict vi
 - `rebind.codex-review.state=complete` and `rebind.codex-review.reason=invalid-config` (any `reviewState`) → `⚠ codex-review: doc-audit.json codexReview is invalid — not probed this run; fix the key. [non-blocking]`
 - `rebind.codex-review.state=complete` and `rebind.codex-review.reviewState=null` → `⚠ codex-review: review state not recorded [non-blocking]`, with the recorded caller suffix.
 - `rebind.codex-review.state=unknown` and `rebind.codex-review.reviewState=null` → `⚠ codex-review: state unknown (probe record unavailable) [non-blocking]`, with no suffix.
-- `rebind.codex-review.state=complete` and `rebind.codex-review.reviewState` is non-null → 4-way: `phase4-not-required` is `💡 codex-review: not run (phase 4 not required)`; `not-active` is `💡 codex-review: not active (<rebind.codex-review.reason>)`; `skipped-full-run` is `💡 codex-review: skipped (full run without codexReview.required)`; `completed` is `✓ codex-review: completed (findings included in verdict when present)`; and `execution-failed`/`ref-invalid` is `⚠ codex-review: did not run (<rebind.codex-review.reviewState>) — findings not folded [non-blocking unless codexReview.required]`. When `rebind.codex-review.available` is true, append the caller suffix.
+- `rebind.codex-review.state=complete` and `rebind.codex-review.reviewState` is non-null → 4-way: `phase4-not-required` is `💡 codex-review: not run (phase 4 not required)`; `not-active` is `💡 codex-review: not active (<rebind.codex-review.reason>)` (the reason may be `not-configured`); `skipped-full-run` is `💡 codex-review: skipped (full run without codexReview.required)`; `completed` is `✓ codex-review: completed (findings included in verdict when present)`; and `execution-failed`/`ref-invalid` is `⚠ codex-review: did not run (<rebind.codex-review.reviewState>) — findings not folded [non-blocking unless codexReview.required]`. When `rebind.codex-review.available` is true, append the caller suffix.
 - `rebind.codex-review.state=unknown` and `rebind.codex-review.reviewState` is non-null → the same 4-way, except `not-active` is `💡 codex-review: not active (reason unavailable)` and append ` (caller info unavailable)` only when `reviewState` ∈ `{completed, execution-failed}`.
 The four-way state aliases are `CODEX_REVIEW_STATE=phase4-not-required`, `CODEX_REVIEW_STATE=not-active`, `CODEX_REVIEW_STATE=skipped-full-run`, `CODEX_REVIEW_STATE=completed`, and `CODEX_REVIEW_STATE` ∈ `{execution-failed, ref-invalid}`.
 The recorded caller suffix is

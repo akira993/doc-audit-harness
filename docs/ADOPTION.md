@@ -80,8 +80,8 @@ Key properties to internalize:
 | [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code built-in review skills (Phase 4); `/security-review` runs in the audit, while `/code-review` is user-invocation-only | optional — `/security-review` runs when available; `/code-review` is offered to the user and is not model-invocable |
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 whole-repo index + Phase 3 chunked doc reads (~90%+ savings on large docs; upstream bench 97–99%) | optional — auto-used when present (conditional-force); grep when absent |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 git diff + Phase 4 `/code-review`·`/security-review` output processed in its sandbox (only distilled summaries enter context) | optional — auto-used when its `ctx_*` tools are present (conditional-force); read in full when absent |
-| [`ax`](https://ax.yusuke.run/) | Phase 3: lets doc-impact-verifier corroborate a doc's external-URL-dependent claims via a read-only, GET-only fetch (static HTML only — no JS-rendered SPA support) | optional — auto-used when installed (conditional-force); external-URL claims go unverified when absent |
-| [`codex`](https://github.com/openai/codex) (`@openai/codex` CLI) | optional Phase-3 per-document backend, and Phase 4's fourth adversarial review, both via `codex exec -s read-only` | optional — Phase 3 requires explicit `phase3Backend:"codex"`; Phase 4 review is conditional-force; **completed `critical`/`high` review findings CAN block the verdict** — see below |
+| [`ax`](https://ax.yusuke.run/) | Phase 3: lets doc-impact-verifier corroborate a doc's external-URL-dependent claims via a read-only, GET-only fetch (static HTML only — no JS-rendered SPA support) | optional — key-gated by `webExtract`; used only when the key exists, is not disabled, and the tool is installed; external-URL claims go unverified otherwise |
+| [`codex`](https://github.com/openai/codex) (`@openai/codex` CLI) | optional Phase-3 per-document backend, and Phase 4's fourth adversarial review, both via `codex exec -s read-only` | optional — Phase 3 requires explicit `phase3Backend:"codex"`; Phase 4 review is key-gated by `codexReview`; **completed `critical`/`high` review findings CAN block the verdict** — see below |
 | [`codegraph`](https://github.com/colbymchenry/codegraph) | Phase 3: lets doc-impact-verifier corroborate a doc claim that depends on a changed file's own symbols via read-only `codegraph impact`/`node` | optional — used only when the `symbolGraph` key exists, is not disabled, and the tool is installed; purely advisory, like `ax` |
 | [`graphify`](https://github.com/Graphify-Labs/graphify) | Phase 2: a second, independent candidate source for `mapGapCandidates` via graph adjacency (provenance `graphify`) | optional — used only when the `docGraph` key exists, is not disabled, and the tool is installed; `mapGapCandidates` uses the token heuristic otherwise |
 | [CocoIndex](https://github.com/cocoindex-io/cocoindex-code) (`ccc`) | Phase 2: a third, independent candidate source for `mapGapCandidates` via local-embedding semantic search (provenance `semantic`) | optional — used only when the `semanticSearch` key exists, is not disabled, the tool is installed, and `.cocoindex_code/settings.yml` exists; **docaudit itself never runs `ccc init`** — see below |
@@ -112,8 +112,9 @@ Every audit prints a non-blocking **context-mode status line** immediately after
 **only** role in docaudit is letting Phase 3's `doc-impact-verifier` corroborate a doc's claim
 that depends on an external upstream URL (an upstream doc, an API spec, etc.) by fetching it —
 GET-only (`-X POST`, `-d`, `-o` are never used), and fetched content is treated as data, never
-as instructions. It is conditional-force the same way (auto-used when installed; opt out with
-`"webExtract": {"enabled": false}`) and a failed/timed-out fetch is reported as "external check
+as instructions. It is key-gated: add `"webExtract": {}` to opt in, or set
+`"webExtract": {"enabled": false}` to opt out; an absent key reports `not-configured` and never
+runs the tool. A failed/timed-out fetch is reported as "external check
 unavailable" rather than counted as a FAIL. `ax` is a static HTML parser (no JS rendering) and
 is pre-1.0, so treat its flag surface as subject to change. Every audit prints a non-blocking
 **ax status line** immediately after the context-mode one: 💡 when not active (with an install
@@ -121,14 +122,17 @@ hint), ✓ when active — it never changes the verdict.
 
 `codex` (the CLI, `@openai/codex` npm package — **not** the openai-codex Claude Code plugin,
 which cannot be invoked autonomously) is Phase 4's fourth review, after `/code-review` and
-`/security-review`. It is conditional-force (auto-used when installed; opt out with
-`"codexReview": {"enabled": false}`). Phase 0's probe runs only `<bin> --version` and
+`/security-review`. Its Phase-4 integration is key-gated: add `"codexReview": {}` to opt in, or
+set `"codexReview": {"enabled": false}` to opt out; an absent key reports `not-configured` and
+never runs the tool. Phase 0's probe runs only `<bin> --version` and
 `<bin> exec --help`: it confirms CLI presence and `exec` reachability, not the real sandbox,
 permissions, wrapper arguments, or model call. Specify a required wrapper as `codexReview.bin`.
 The probe displays the caller's `CODEX_HOME` (or `$HOME/.codex`) and whether `auth.json` exists
 there. A wrapper's own environment is not visible to the probe, so repositories that depend on
 environment activation should use an equivalent launch wrapper such as
 `direnv exec <repo> codex` and treat the displayed caller values as diagnostic context only.
+With no `codexReview` key, the probe does not inspect caller `CODEX_HOME` or `auth.json` and
+returns neutral caller values.
 
 `codex-review-plan.py` decides the action from availability, mode, baseline validity, and
 `codexReview.required`. Incremental runs review `$BASELINE_SHA..HEAD`; a full run reviews the
@@ -228,7 +232,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.14.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.15.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -270,6 +274,14 @@ must add the key via `/docaudit:init`.
 
 **v0.14.0 behavior changes:** indexing / contextMode / webExtract / codexReview keys now require a JSON boolean enabled; unless enabled is false, a non-boolean enabled, a non-object key (including null), or — for indexing / webExtract / codexReview — a non-string, empty, whitespace-only, whitespace-padded, ASCII-control-character (U+0000–U+001F or U+007F), or non-UTF-8-encodable bin reports invalid-config and never runs the tool (an absent key still defaults to enabled; a non-string bin is no longer coerced; an unreadable config still stops the audit before Phase 0 as before). an invalid indexing key fires the Phase-0 mdq confirmation gate like not-installed. codexReview.required:true combined with an invalid codexReview key is now REFUSED instead of silently running codex. Phase-0 probe results are persisted to $RUN_DIR/phase0-probes.json (display-only, never a verdict input); Phase-5 status lines are rendered from that record on fresh and resumed runs and print "state unknown (probe record unavailable)" when it is missing or unreadable. the codex probe reports the caller's CODEX_HOME and whether auth.json exists there (display-only; a wrapper's own environment is not observed). import-audit-scope.py accepts an absolute --config/--scope path under the repository root (POSIX paths only). the symbolGraph / docGraph / semanticSearch probes now apply the same bin validation: a newly rejected bin reports invalid-config before the tool lookup, and with enabled:false an invalid bin is displayed as the default name.
 
+**v0.15.0 behavior changes:** webExtract and codexReview are now key-gated like symbolGraph/docGraph/semanticSearch: an absent key reports not-configured and never runs the tool — ax and codex no longer run implicitly on configs without those keys (previously an absent key defaulted to enabled); a directly invoked probe with an unreadable or absent config now reports invalid-config instead of falling back to enabled, and the codex probe collects no caller CODEX_HOME/auth.json information for a keyless config (neutral values are recorded)
+
+for a new run, or a run resumed before its codex review has run, a keyless config therefore loses the Phase-4 codex review and its verdict-affecting critical/high findings — an audit that was NEEDS FIX only because of implicit codex findings can become CONSISTENT after upgrading; add "codexReview": {} to keep the old best-effort behavior, or additionally "required": true for a separate, stronger fail-closed guarantee (a non-completed review becomes REFUSED — this is NOT the old implicit behavior)
+
+on resume, the operational webExtract and codexReview state is re-derived by re-running their key-gated probes against the current config (probe records are overwritten accordingly); a run whose codex review already completed keeps those findings — cross-version in-flight resume is discouraged: start a fresh run (a mechanical prohibition is tracked in #59)
+
+indexing and contextMode keep their enabled-by-default behavior (intentional: they reduce token consumption); enabled:false and invalid-config semantics are unchanged for all four seams, and bin validation is unchanged for the three bin-bearing seams (indexing/webExtract/codexReview; contextMode has no bin)
+
 ---
 
 ## 4. Onboard a project
@@ -300,7 +312,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, or 0.13.2 templates can be updated directly to 0.14.0 with
+Existing unmodified stamped 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, or 0.13.2 templates can be updated directly to 0.15.0 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so

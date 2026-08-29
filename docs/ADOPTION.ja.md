@@ -79,8 +79,8 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code 組込みの review スキル（Phase 4）。`/security-review` は監査で実行し、`/code-review` はユーザー実行のみ | 任意 — `/security-review` は利用可能なら実行、`/code-review` はユーザーに提案（モデルからは起動不可） |
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 で repo 全体を索引 + Phase 3 でチャンク読取り（大きい doc で ~90%+ 削減、upstream ベンチ 97–99%） | 任意 — 在れば自動使用（conditional-force）、非搭載で grep |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 の git diff と Phase 4 の `/code-review`・`/security-review` 出力をサンドボックスで処理（要約だけが context に入る） | 任意 — `ctx_*` ツールが在れば自動使用（conditional-force）、無ければ全文読取り |
-| [`ax`](https://ax.yusuke.run/) | Phase 3: doc-impact-verifier がドキュメントの外部 URL 依存の主張を read-only・GET-only の fetch で照合できるようにする（静的 HTML のみ — JS レンダリングの SPA は非対応） | 任意 — 導入済みなら自動使用（conditional-force）、無ければ外部 URL の主張は未検証のまま |
-| [`codex`](https://github.com/openai/codex)（`@openai/codex` CLI） | 任意の Phase-3 文書別 backend と Phase 4 の第4敵対的レビュー。どちらも `codex exec -s read-only` | 任意 — Phase 3 は `phase3Backend:"codex"` の明示指定が必要。Phase 4 review は conditional-force。**完走した `critical`/`high` review 所見は verdict をブロックし得る**（下記参照） |
+| [`ax`](https://ax.yusuke.run/) | Phase 3: doc-impact-verifier がドキュメントの外部 URL 依存の主張を read-only・GET-only の fetch で照合できるようにする（静的 HTML のみ — JS レンダリングの SPA は非対応） | 任意 — `webExtract` キーで有効化し、キーが存在して無効化されておらず tool が導入済みの場合のみ使用。その他では外部 URL の主張は未検証のまま |
+| [`codex`](https://github.com/openai/codex)（`@openai/codex` CLI） | 任意の Phase-3 文書別 backend と Phase 4 の第4敵対的レビュー。どちらも `codex exec -s read-only` | 任意 — Phase 3 は `phase3Backend:"codex"` の明示指定が必要。Phase 4 review は `codexReview` キーで有効化。**完走した `critical`/`high` review 所見は verdict をブロックし得る**（下記参照） |
 | [`codegraph`](https://github.com/colbymchenry/codegraph) | Phase 3: doc-impact-verifier が変更ファイル自身のシンボルに依存する主張を read-only の `codegraph impact`/`node` で照合できるようにする | 任意 — `symbolGraph` キーが存在し、無効化されておらず、tool が導入済みの場合に限り使用。`ax` 同様に純粋な補助情報 |
 | [`graphify`](https://github.com/Graphify-Labs/graphify) | Phase 2: `mapGapCandidates` へのグラフ隣接ベースの第二候補源（provenance `graphify`） | 任意 — `docGraph` キーが存在し、無効化されておらず、tool が導入済みの場合に限り使用。無ければ `mapGapCandidates` は token heuristic のみ |
 | [CocoIndex](https://github.com/cocoindex-io/cocoindex-code)（`ccc`） | Phase 2: `mapGapCandidates` への意味検索ベースの第三候補源（provenance `semantic`） | 任意 — `semanticSearch` キーが存在し、無効化されておらず、tool が導入済みで `.cocoindex_code/settings.yml` がある場合に限り使用。**docaudit 自身は `ccc init` を絶対に実行しない**（下記参照） |
@@ -97,8 +97,9 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 `ax` は mdq/context-mode の組とは無関係: read-only の Web/API 抽出 CLI で、docaudit での役割は
 **Phase 3 の `doc-impact-verifier` がドキュメントの外部 URL 依存の主張（upstream ドキュメント・
 API 仕様等）を fetch して照合できるようにする**、それだけである。GET のみ（`-X POST`・`-d`・
-`-o` は一切使わない）、fetch した内容は指示ではなくデータとして扱う。導入済みなら自動使用
-（conditional-force、`"webExtract": {"enabled": false}` で opt-out 可）、fetch 失敗/タイムアウトは
+`-o` は一切使わない）、fetch した内容は指示ではなくデータとして扱う。`"webExtract": {}` を追加して
+有効化し、`"webExtract": {"enabled": false}` で無効化する。キー不在は `not-configured` を報告して
+tool を起動しない。fetch 失敗/タイムアウトは
 FAIL ではなく「外部照合不能 (external check unavailable)」として報告される。`ax` は静的 HTML
 パーサー（JS レンダリング非対応）であり pre-1.0 のため、フラグ面は変更されうる。各 audit は
 context-mode 行の直後に非ブロッキングの **ax 状態行**を出力する: 未導入なら 💡（導入コマンド
@@ -106,14 +107,16 @@ context-mode 行の直後に非ブロッキングの **ax 状態行**を出力�
 
 `codex`（CLI 本体、`@openai/codex` npm パッケージ — 自律実行から呼び出せない openai-codex
 Claude Code plugin とは**別物**）は、`/code-review`・`/security-review` の後に走る Phase 4 の第4の
-レビューである。conditional-force（導入済みなら自動使用、`"codexReview": {"enabled": false}` で
-opt-out 可）である。Phase 0 の probe は `<bin> --version` と `<bin> exec --help` だけを実行し、CLI の
+レビューである。Phase-4 統合は key-gated で、`"codexReview": {}` を追加して有効化し、
+`"codexReview": {"enabled": false}` で無効化する。キー不在は `not-configured` を報告して tool を
+起動しない。Phase 0 の probe は `<bin> --version` と `<bin> exec --help` だけを実行し、CLI の
 存在と `exec` 到達性だけを確認する。実際の sandbox・権限・wrapper 引数・モデル呼出しは保証しない。
 wrapper が必要なら `codexReview.bin` に指定する。
 probe は呼び出し元の `CODEX_HOME`（未指定時は `$HOME/.codex`）と、そこに
 `auth.json` があるかを表示する。ただし wrapper 内部の環境は probe から見えないため、環境の有効化に
 依存するリポジトリでは `direnv exec <repo> codex` 相当の wrapper で起動し、表示値は呼び出し元の
 診断情報としてのみ扱う。
+`codexReview` キー不在時は呼び出し元の `CODEX_HOME` / `auth.json` を調べず、中立値を返す。
 
 `codex-review-plan.py` が利用可否、mode、baseline の有効性、`codexReview.required` から動作を決める。
 incremental は `$BASELINE_SHA..HEAD` を、full は `required:true` の場合だけ seal 済みの現在 worktree を
@@ -208,7 +211,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.14.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.15.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -246,6 +249,14 @@ CocoIndex は `.cocoindex_code/settings.yml` が存在する場合のみ初期�
 
 **v0.14.0 の挙動変更:** `indexing`、`contextMode`、`webExtract`、`codexReview` のキーでは、`enabled` は JSON の真偽値でなければなりません。`enabled:false` 以外の場合、`enabled` が真偽値でない、キーがオブジェクトでない（`null` を含む）、または `indexing`・`webExtract`・`codexReview` の `bin` が文字列でない、空、空白のみ、前後に空白がある、ASCII 制御文字（U+0000–U+001F または U+007F）を含む、または UTF-8 に符号化できないときは `invalid-config` を報告し、ツールを起動しません（キーが無い場合は従来どおり有効で、`bin` の非文字列値は変換されず、読めない設定は従来どおり Phase 0 より前に監査を停止します）。`indexing` キーが不正な場合は、未インストール時と同じく Phase 0 の mdq 確認ゲートが起動します。`codexReview.required:true` と不正な `codexReview` キーを組み合わせた場合は、codex を黙って実行せず `REFUSED` になります。Phase 0 の probe 結果は `$RUN_DIR/phase0-probes.json` に保存されます（表示専用で、verdict の入力にはなりません）。Phase 5 の状態行は初回実行でも再開実行でもその記録から描画され、記録が無いか読めない場合は「state unknown (probe record unavailable)」と表示されます。codex probe は呼び出し元の `CODEX_HOME` と、そこに `auth.json` があるかどうかを報告します（表示専用で、wrapper 自身の環境は観測されません）。`import-audit-scope.py` はリポジトリルート配下の絶対パスの `--config`／`--scope` を受け付けます（POSIX パスのみ）。symbolGraph / docGraph / semanticSearch の probe も同じ bin 検証を適用します。新たに拒否される bin はツール探索の前に invalid-config を報告し、enabled:false のときは不正な bin を既定名で表示します。
 
+**v0.15.0 の挙動変更:** webExtract と codexReview は symbolGraph/docGraph/semanticSearch と同じ key-gated になった: キーが無い場合は not-configured と報告し、tool を一切起動しない — キー無し config で ax / codex が暗黙に実行されることはなくなった（従来はキー不在＝既定有効）。probe を単体で直接呼んだ場合も、読めない・存在しない config は既定有効へフォールバックせず invalid-config になる。また codex probe はキー無し config では呼び出し元の CODEX_HOME / auth.json 情報を収集しない（中立値を記録する）
+
+したがって、新規 run および codex review 実行前に resume した run では、キー無し config は Phase-4 codex review と、その verdict に影響する critical/high 所見を失う — 暗黙の codex 所見だけが理由で NEEDS FIX だった audit は、更新後 CONSISTENT になり得る。旧来の best-effort 挙動を維持するには "codexReview": {} を追加する。さらに "required": true を付けると別種のより強い fail-closed 保証になる（未完走の review が REFUSED になる — これは旧来の暗黙挙動ではない）
+
+resume 時、webExtract と codexReview の運用状態は key-gated な probe を現在の config に対して再実行して導出し直す（probe 記録も対応して上書きされる）。codex review が既に完走した run はその所見を保持する — 版をまたぐ resume は非推奨であり、新しい run を開始すること（機械的な禁止機構は #59 で追跡）
+
+indexing と contextMode は従来どおり既定有効（トークン消費を減らす装置としての意図的設計）。enabled:false と invalid-config の意味論は 4 seam すべてで不変、bin 検査は bin を持つ 3 seam（indexing/webExtract/codexReview）で不変（contextMode に bin は無い）
+
 ---
 
 ## 4. プロジェクトをオンボードする
@@ -275,7 +286,7 @@ cd ~/code/my-project
 `scripts/check-docs.py`。
 
 変更されていない stamp 付きの 0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、または 0.13.2 テンプレートは、
-`/docaudit:init --harness --refresh` で 0.14.0 へ直接更新できる。利用者が変更したテンプレートは
+`/docaudit:init --harness --refresh` で 0.15.0 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
