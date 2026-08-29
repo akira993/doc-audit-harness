@@ -487,6 +487,14 @@ class TestReleaseHandoff(unittest.TestCase):
         self.assertIn("tracking issue #63 must be OPEN", proc.stderr)
         self.assert_no_release_mutations()
 
+    def test_issue_59_not_open_stops_before_publication(self):
+        self.state["issues"]["59"] = "CLOSED"
+        self.save_state()
+        proc = self.run_handoff(APPROVED, "42")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("tracking issue #59 must be OPEN", proc.stderr)
+        self.assert_no_release_mutations()
+
 
 if __name__ == "__main__":
     unittest.main()

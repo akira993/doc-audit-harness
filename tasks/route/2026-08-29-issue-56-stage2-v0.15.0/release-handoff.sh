@@ -62,6 +62,8 @@ RESTORE_MAIN=0
 [ "$(git rev-parse HEAD)" = "$APPROVED_SHA" ] || die "HEAD changed while restoring main"
 [ -z "$(git status --porcelain --untracked-files=no)" ] || die "tests changed tracked files"
 
+tracking_state="$(gh issue view 59 --json state -q .state)" || die "cannot read tracking issue #59"
+[ "$tracking_state" = "OPEN" ] || die "tracking issue #59 must be OPEN (got: $tracking_state)"
 tracking_state="$(gh issue view 63 --json state -q .state)" || die "cannot read tracking issue #63"
 [ "$tracking_state" = "OPEN" ] || die "tracking issue #63 must be OPEN (got: $tracking_state)"
 
