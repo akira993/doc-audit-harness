@@ -143,8 +143,11 @@
   ADOPTION en/ja, README, plugin.json, engine-shas）・テスト 10（新規 test_v015_contracts 含む）・
   handoff script 1。全て PLAN §7 許可一覧内。
 - audit verdict: `.claude/doc-audit.json` 未導入のため `/docaudit:audit` は不実行。代替の機械ゲート =
-  フルスイート **Ran 629 tests OK, skip 0**（boss 追認）＋契約テスト（v013/v0132/v014/v015）＋
-  残骸 grep ゲート **files=101 / units=2789 / hits=0** → **CONSISTENT 相当を 1 回で達成**（LLM 消費ゼロ）。
+  フルスイート **Ran 630 tests OK, skip 0**（boss が最終 HEAD で実測。629 は P2 修正 20706eb の
+  1 テスト追加前の計測値 — advisor 指摘で HEAD と計数の対応を再実行して確定）＋契約テスト
+  （v013/v0132/v014/v015）＋残骸 grep ゲート **files=101 / units=2789 / hits=0**
+  → **CONSISTENT 相当を 1 回で達成**（LLM 消費ゼロ）。P2 修正後の codex exec review 再実行は
+  行わない（blocking 0 は修正前に成立、修正は boss が diff 精読＋対象テスト追認済み — トークン抑制の裁定）。
 - SSoT 更新: **0 ファイル**（AGENTS.md/PROJECT.md は本 repo に存在しない。規約・仕様の変更は
   config-schema.md／ADOPTION §7／SKILL.md に記録済み）。
 - 検査系成果物の実数: ax probe **27 ID**／codex probe **27 ID**／呼出し回数固定 **6 分岐**／
