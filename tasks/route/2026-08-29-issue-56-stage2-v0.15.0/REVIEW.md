@@ -133,6 +133,33 @@
   boss 追認: `tests.test_release_handoff` **Ran 24 OK**・`bash -n` OK・diff 2 ファイルのみ（許可内）。
   commit `20706eb`。判定: **承認**（完了条件 §6-6 blocking 0 充足）。
 
+## route-close（手順 7 — merge 前時点。tag/Release/同期は PR merge 後の handoff で実施し追補を書く）
+- 対象タスク: Issue #56 第 2 段（webExtract/codexReview key-gate 化）→ docaudit v0.15.0（minor）。
+  PR **#64**（branch `fix/v0.15.0-issue-56-stage2`、`Closes #56`。merge はユーザー）。
+- 記録時点の HEAD: `d507647c90cfced203506024b7de511a1cfb4c9c`（route 記録 commit 込み）。
+  `git status --short` は既存の未追跡 `?? .claude/` のみ。
+- 確定した変更ファイル（`git diff --name-only main...HEAD`、route 記録除く 23 件）: engine 4
+  （ax-probe/codex-probe/probe-record/codex-review-plan）・文書 8（SKILL.md, config-schema, init SKILL,
+  ADOPTION en/ja, README, plugin.json, engine-shas）・テスト 10（新規 test_v015_contracts 含む）・
+  handoff script 1。全て PLAN §7 許可一覧内。
+- audit verdict: `.claude/doc-audit.json` 未導入のため `/docaudit:audit` は不実行。代替の機械ゲート =
+  フルスイート **Ran 629 tests OK, skip 0**（boss 追認）＋契約テスト（v013/v0132/v014/v015）＋
+  残骸 grep ゲート **files=101 / units=2789 / hits=0** → **CONSISTENT 相当を 1 回で達成**（LLM 消費ゼロ）。
+- SSoT 更新: **0 ファイル**（AGENTS.md/PROJECT.md は本 repo に存在しない。規約・仕様の変更は
+  config-schema.md／ADOPTION §7／SKILL.md に記録済み）。
+- 検査系成果物の実数: ax probe **27 ID**／codex probe **27 ID**／呼出し回数固定 **6 分岐**／
+  probe-record **12 ID**（mutation 7・未知フィールド 1・上書き正負 2 含む）／codex-review-plan
+  **既存 16 行維持＋追加 7**／ASCII・1 行 **2 probe**／resume 再 probe 配線 **2 本**／
+  release-handoff **既存 18 method 維持＋追加 6**（#59/#63 前提条件・#59 負テスト含む、Ran 24 OK）／
+  残骸ゲート走査 **101 files・2789 units・0 hits**（保持 5 path 負テスト成功）。
+- 計画レビューの実数: Sol **5 往復**（R1 12・R2 10・R3 13・R4 13・R5 7 件 — 全件受理/修正受理/rescope
+  転記）、Opus **3 ラウンド**（O1 条件付き→O2 残 2→O3 指摘なし・承認）、最終 codex exec review
+  **P2 ×1 → 修正済み（20706eb）**。
+- 据え置き（Issue 追跡）: **#59**（ledger・版跨ぎ禁止）・**#63**（TOCTOU 全 seam 封印設計 — 本 route で
+  起票、ユーザー承認済み）。handoff は両者の OPEN を公開前提条件として検証する。
+- 出荷後手順: PR #64 merge（ユーザー）→ `release-handoff.sh <merge-sha> 64`（tag `docaudit--v0.15.0`・
+  Release・#56 close・`~/.claude/skills/docaudit/` 同期）→ 本 REVIEW に追補。
+
 ## worker review（完了時に実測値を記入）
 - PLAN §5 の項目 1〜18 は全て実装。未実装項目なし。
 - フルスイート: `Ran 629 tests in 194.007s`, `OK`, skip 0。ベースライン 609 から +20。
