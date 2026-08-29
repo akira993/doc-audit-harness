@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # codex-probe.sh — Phase-0 preflight: detect the `codex` CLI (plain `codex exec`,
-# no plugin dependency) for docaudit's Phase-4 adversarial Codex review seam
-# (ax-pattern: conditional-force). If codex is present, bind
+# no plugin dependency) for docaudit's key-gated Phase-4 adversarial Codex review
+# seam. Only a config containing codexReview may enable the tool. If codex is present, bind
 # CODEX_REVIEW_AVAILABLE/CODEX_REVIEW_BIN so Phase 4 may run a Codex review. If
-# codex is absent / disabled, emit codexReviewAvailable:false and let the audit
+# codex is absent / disabled / not configured, emit codexReviewAvailable:false and let the audit
 # continue unaffected — codex being unavailable is never a FAIL reason (though a
 # *completed* codex review's critical/high findings can be, per spec §5.4).
 #
@@ -15,7 +15,10 @@ set -uo pipefail
 CONFIG=""; CONFIG_SET=0; REPO_ROOT="$(pwd)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --config) CONFIG_SET=1; CONFIG="$2"; shift 2;;
+    --config)
+      CONFIG_SET=1
+      if [[ $# -ge 2 ]]; then CONFIG="$2"; shift 2; else CONFIG=""; shift; fi
+      ;;
     --repo-root) REPO_ROOT="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
@@ -23,18 +26,21 @@ done
 
 DECISION="$(python3 -c '
 import base64,json,sys
-state="enabled"; binary="codex"
+state="invalid"; binary="codex"
 try:
-    if sys.argv[1] == "1":
-        if not sys.argv[2]: raise ValueError
-        config=json.load(open(sys.argv[2]))
-        if not isinstance(config,dict): raise ValueError
-        if "codexReview" in config:
-            seam=config["codexReview"]
-            if not isinstance(seam,dict): raise ValueError
-            if "enabled" in seam and not isinstance(seam["enabled"],bool): raise ValueError
-            if seam.get("enabled") is False: state="disabled"
-            elif "bin" in seam:
+    if sys.argv[1] != "1" or not sys.argv[2]: raise ValueError
+    config=json.load(open(sys.argv[2]))
+    if not isinstance(config,dict): raise ValueError
+    if "codexReview" not in config:
+        state="not-configured"
+    else:
+        seam=config["codexReview"]
+        if not isinstance(seam,dict): raise ValueError
+        if "enabled" in seam and not isinstance(seam["enabled"],bool): raise ValueError
+        if seam.get("enabled") is False: state="disabled"
+        else:
+            state="enabled"
+            if "bin" in seam:
                 value=seam["bin"]
                 if (not isinstance(value,str) or not value or value != value.strip()
                     or any(ord(c) <= 31 or ord(c) == 127 for c in value)): raise ValueError
@@ -47,6 +53,11 @@ sys.stdout.buffer.write(line.encode("utf-8"))
 ' "$CONFIG_SET" "$CONFIG")"
 IFS=$'\t' read -r CONFIG_STATE BIN_B64 <<< "$DECISION"
 BIN="$(python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.argv[1]))' "$BIN_B64")"
+
+if [[ "$CONFIG_STATE" == "not-configured" ]]; then
+  printf '{"codexReviewAvailable":false,"codexReviewBin":"codex","codexReviewVersion":null,"probeCommands":[],"reason":"not-configured","callerCodexHome":null,"callerCodexHomeSource":"unknown","callerAuthFile":"unknown"}\n'
+  exit 0
+fi
 
 CALLER_HOME=""; CALLER_SOURCE="unknown"; CALLER_AUTH="unknown"; CALLER_NULL=1
 if [[ -n "${CODEX_HOME:-}" ]]; then

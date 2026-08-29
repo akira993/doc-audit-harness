@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # ax-probe.sh — Phase-0 preflight: detect the `ax` CLI (structured web/API extraction)
-# for doc-impact-verifier's read-only external-URL corroboration seam (mdq-pattern:
-# conditional-force). If ax is present, bind AX_AVAILABLE/AX_BIN so the verifier may
-# corroborate doc claims against upstream URLs. If ax is absent / disabled, emit
-# axAvailable:false and let the audit continue unaffected (external checks unavailable
-# is never a FAIL reason). Output: single-line JSON.
+# for doc-impact-verifier's key-gated, read-only external-URL corroboration seam.
+# Only a config containing webExtract may enable the tool. If ax is present, bind
+# AX_AVAILABLE/AX_BIN so the verifier may corroborate doc claims against upstream
+# URLs. If ax is absent / disabled / not configured, emit axAvailable:false and let
+# the audit continue unaffected. Output: single-line JSON.
 #
 # NOTE: no `set -e` — failures are handled explicitly; we ALWAYS emit JSON + exit 0.
 # NOTE: no network use — `ax --version` prints the local binary's own version and
@@ -14,7 +14,10 @@ set -uo pipefail
 CONFIG=""; CONFIG_SET=0; REPO_ROOT="$(pwd)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --config) CONFIG_SET=1; CONFIG="$2"; shift 2;;
+    --config)
+      CONFIG_SET=1
+      if [[ $# -ge 2 ]]; then CONFIG="$2"; shift 2; else CONFIG=""; shift; fi
+      ;;
     --repo-root) REPO_ROOT="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
@@ -22,18 +25,21 @@ done
 
 DECISION="$(python3 -c '
 import base64,json,sys
-state="enabled"; binary="ax"
+state="invalid"; binary="ax"
 try:
-    if sys.argv[1] == "1":
-        if not sys.argv[2]: raise ValueError
-        config=json.load(open(sys.argv[2]))
-        if not isinstance(config,dict): raise ValueError
-        if "webExtract" in config:
-            seam=config["webExtract"]
-            if not isinstance(seam,dict): raise ValueError
-            if "enabled" in seam and not isinstance(seam["enabled"],bool): raise ValueError
-            if seam.get("enabled") is False: state="disabled"
-            elif "bin" in seam:
+    if sys.argv[1] != "1" or not sys.argv[2]: raise ValueError
+    config=json.load(open(sys.argv[2]))
+    if not isinstance(config,dict): raise ValueError
+    if "webExtract" not in config:
+        state="not-configured"
+    else:
+        seam=config["webExtract"]
+        if not isinstance(seam,dict): raise ValueError
+        if "enabled" in seam and not isinstance(seam["enabled"],bool): raise ValueError
+        if seam.get("enabled") is False: state="disabled"
+        else:
+            state="enabled"
+            if "bin" in seam:
                 value=seam["bin"]
                 if (not isinstance(value,str) or not value or value != value.strip()
                     or any(ord(c) <= 31 or ord(c) == 127 for c in value)): raise ValueError
@@ -49,6 +55,10 @@ BIN="$(python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(s
 
 if [[ "$CONFIG_STATE" == "invalid" ]]; then
   printf '{"axAvailable":false,"axBin":"ax","axVersion":null,"reason":"invalid-config"}\n'
+  exit 0
+fi
+if [[ "$CONFIG_STATE" == "not-configured" ]]; then
+  printf '{"axAvailable":false,"axBin":"ax","axVersion":null,"reason":"not-configured"}\n'
   exit 0
 fi
 if [[ "$CONFIG_STATE" == "disabled" ]]; then
