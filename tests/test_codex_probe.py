@@ -82,6 +82,25 @@ class TestCodexProbe(unittest.TestCase):
         self.assertEqual(out["probeCommands"], [])
 
     def test_json_emit_is_ascii_one_line(self):
+        cfg = os.path.join(self.repo, ".claude", "keyless-json-emit.json")
+        write(cfg, "{}")
+        keyless_env = {os.fsencode(key): os.fsencode(value) for key, value in os.environ.items()}
+        keyless_env[b"CODEX_HOME"] = b"/tmp/h\xffome"
+        keyless = subprocess.run(
+            ["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+            capture_output=True, env=keyless_env,
+        )
+        self.assertEqual(keyless.returncode, 0, keyless.stderr)
+        self.assertTrue(keyless.stdout.isascii())
+        self.assertEqual(keyless.stdout.count(b"\n"), 1)
+        self.assertTrue(keyless.stdout.endswith(b"\n"))
+        self.assertEqual(json.loads(keyless.stdout), {
+            "codexReviewAvailable": False, "codexReviewBin": "codex",
+            "codexReviewVersion": None, "probeCommands": [],
+            "reason": "not-configured", "callerCodexHome": None,
+            "callerCodexHomeSource": "unknown", "callerAuthFile": "unknown",
+        })
+
         def invoke(bin_name, env):
             cfg = os.path.join(self.repo, ".claude", "json-emit.json")
             write(cfg, json.dumps({"codexReview": {"bin": bin_name}}))
@@ -138,24 +157,22 @@ class TestCodexProbe(unittest.TestCase):
                          [stub + " --version", stub + " exec --help"])
 
     def test_default_when_no_codexreview_block(self):
-        # enabled defaults true, bin defaults "codex"; codex may or may not be installed
-        # in the test env — either way the script must emit valid JSON and exit 0.
         out = run_script(self.repo, {})
-        self.assertIn(out["reason"], ("ok", "not-installed", "probe-exec-failed"))
-        if out["reason"] == "ok":
-            self.assertTrue(out["codexReviewAvailable"])
-        else:
-            self.assertFalse(out["codexReviewAvailable"])
-            self.assertIsNone(out["codexReviewVersion"])
+        self.assertEqual(out, {
+            "codexReviewAvailable": False, "codexReviewBin": "codex",
+            "codexReviewVersion": None, "probeCommands": [],
+            "reason": "not-configured", "callerCodexHome": None,
+            "callerCodexHomeSource": "unknown", "callerAuthFile": "unknown",
+        })
 
-    def test_config_decision_table_v014(self):
+    def test_config_decision_table_v015(self):
         case_ids = {
             "absent", "empty", "disabled", "en_str", "en_int", "en_null",
             "key_null", "key_true", "key_str", "key_list", "cfg_omitted",
-            "cfg_empty", "cfg_missing", "cfg_broken", "top_list", "top_null",
+            "cfg_value_missing", "cfg_empty", "cfg_missing", "cfg_broken", "top_list", "top_null",
             "bin_int", "bin_empty", "bin_nul", "compound", "bin_ws_lead", "bin_ws_trail", "bin_ws_both", "bin_ws_nbsp", "bin_wsonly", "bin_surrogate",
         }
-        self.assertEqual(len(case_ids), 26)
+        self.assertEqual(len(case_ids), 27)
         bindir = self.tmpdir()
         marker = os.path.join(bindir, "sentinel")
         make_exec(os.path.join(bindir, "codex"),
@@ -177,12 +194,14 @@ class TestCodexProbe(unittest.TestCase):
             "bin_ws_lead":{"codexReview":{"bin":" codex"}}, "bin_ws_trail":{"codexReview":{"bin":"codex "}}, "bin_ws_both":{"codexReview":{"bin":" codex "}}, "bin_ws_nbsp":{"codexReview":{"bin":"\u00a0codex"}}, "bin_wsonly":{"codexReview":{"bin":"   "}}, "bin_surrogate":'{"codexReview":{"bin":"\\ud800"}}',
             "compound": {"codexReview": {"enabled": False, "bin": []}},
         }
-        invalid = case_ids - {"absent", "empty", "disabled", "cfg_omitted", "compound"}
+        invalid = case_ids - {"absent", "empty", "disabled", "compound"}
         for case_id in sorted(case_ids):
             with self.subTest(case_id=case_id):
                 cfg = os.path.join(self.repo, case_id + ".json")
                 args = ["bash", SCRIPT]
-                if case_id != "cfg_omitted":
+                if case_id == "cfg_value_missing":
+                    args += ["--config"]
+                elif case_id != "cfg_omitted":
                     if case_id == "cfg_empty": cfg = ""
                     elif case_id == "cfg_missing": pass
                     elif case_id == "cfg_broken": write(cfg, "{")
@@ -190,20 +209,34 @@ class TestCodexProbe(unittest.TestCase):
                         value = payloads[case_id]
                         write(cfg, value if isinstance(value, str) else json.dumps(value))
                     args += ["--config", cfg]
-                args += ["--repo-root", self.repo]
+                if case_id != "cfg_value_missing":
+                    args += ["--repo-root", self.repo]
                 before = read_marker(marker)
                 proc = subprocess.run(args, capture_output=True, text=True, env=env)
                 self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertTrue(proc.stdout.isascii())
                 self.assertEqual(len(proc.stdout.splitlines()), 1)
+                self.assertTrue(proc.stdout.endswith("\n"))
+                self.assertEqual(proc.stdout.count("\n"), 1)
                 out = json.loads(proc.stdout)
                 if case_id in invalid:
                     self.assertEqual(out["reason"], "invalid-config")
                     self.assertEqual(out["codexReviewBin"], "codex")
                     self.assertEqual(read_marker(marker), before)
+                elif case_id == "absent":
+                    self.assertEqual(out, {
+                        "codexReviewAvailable": False, "codexReviewBin": "codex",
+                        "codexReviewVersion": None, "probeCommands": [],
+                        "reason": "not-configured", "callerCodexHome": None,
+                        "callerCodexHomeSource": "unknown", "callerAuthFile": "unknown",
+                    })
+                    self.assertEqual(read_marker(marker), before)
                 elif case_id in {"disabled", "compound"}:
                     self.assertEqual(out["reason"], "disabled-by-config")
+                    self.assertEqual(read_marker(marker), before)
                 else:
                     self.assertEqual(out["reason"], "ok")
+                    self.assertEqual(read_marker(marker), (before or b"") + b"calledcalled")
 
     def test_caller_codex_home_and_auth_file(self):
         case_ids = {
@@ -257,13 +290,14 @@ class TestCodexProbe(unittest.TestCase):
         make_exec(ok, version_stub())
         make_exec(bad, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo v; exit 0; fi\nexit 9\n')
         configs = [
+            ("not-configured", {}),
             ("invalid-config", {"codexReview": None}),
             ("disabled-by-config", {"codexReview": {"enabled": False}}),
             ("not-installed", {"codexReview": {"bin": "missing-codex-v014"}}),
             ("probe-exec-failed", {"codexReview": {"bin": bad}}),
             ("ok", {"codexReview": {"bin": ok}}),
         ]
-        self.assertEqual(len(configs), 5)
+        self.assertEqual(len(configs), 6)
         expected_base = {
             "codexReviewAvailable", "codexReviewBin", "codexReviewVersion",
             "probeCommands", "reason",

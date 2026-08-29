@@ -119,24 +119,18 @@ class TestAxProbe(unittest.TestCase):
         self.assertEqual(out["axVersion"], "0.1.10-stub")
 
     def test_default_when_no_webextract_block(self):
-        # enabled defaults true, bin defaults "ax"; ax may or may not be installed
-        # in the test env — either way the script must emit valid JSON and exit 0.
         out = run_script(self.repo, {})
-        self.assertIn(out["reason"], ("ok", "not-installed"))
-        if out["reason"] == "ok":
-            self.assertTrue(out["axAvailable"])
-        else:
-            self.assertFalse(out["axAvailable"])
-            self.assertIsNone(out["axVersion"])
+        self.assertEqual(out, {"axAvailable": False, "axBin": "ax",
+                               "axVersion": None, "reason": "not-configured"})
 
-    def test_config_decision_table_v014(self):
+    def test_config_decision_table_v015(self):
         case_ids = {
             "absent", "empty", "disabled", "en_str", "en_int", "en_null",
             "key_null", "key_true", "key_str", "key_list", "cfg_omitted",
-            "cfg_empty", "cfg_missing", "cfg_broken", "top_list", "top_null",
+            "cfg_value_missing", "cfg_empty", "cfg_missing", "cfg_broken", "top_list", "top_null",
             "bin_int", "bin_empty", "bin_nul", "compound", "bin_ws_lead", "bin_ws_trail", "bin_ws_both", "bin_ws_nbsp", "bin_wsonly", "bin_surrogate",
         }
-        self.assertEqual(len(case_ids), 26)
+        self.assertEqual(len(case_ids), 27)
         bindir = self.tmpdir()
         marker = os.path.join(bindir, "sentinel")
         make_exec(os.path.join(bindir, "ax"),
@@ -158,12 +152,14 @@ class TestAxProbe(unittest.TestCase):
             "bin_ws_lead":{"webExtract":{"bin":" ax"}}, "bin_ws_trail":{"webExtract":{"bin":"ax "}}, "bin_ws_both":{"webExtract":{"bin":" ax "}}, "bin_ws_nbsp":{"webExtract":{"bin":"\u00a0ax"}}, "bin_wsonly":{"webExtract":{"bin":"   "}}, "bin_surrogate":'{"webExtract":{"bin":"\\ud800"}}',
             "compound": {"webExtract": {"enabled": False, "bin": []}},
         }
-        invalid = case_ids - {"absent", "empty", "disabled", "cfg_omitted", "compound"}
+        invalid = case_ids - {"absent", "empty", "disabled", "compound"}
         for case_id in sorted(case_ids):
             with self.subTest(case_id=case_id):
                 cfg = os.path.join(self.repo, case_id + ".json")
                 args = ["bash", SCRIPT]
-                if case_id != "cfg_omitted":
+                if case_id == "cfg_value_missing":
+                    args += ["--config"]
+                elif case_id != "cfg_omitted":
                     if case_id == "cfg_empty": cfg = ""
                     elif case_id == "cfg_missing": pass
                     elif case_id == "cfg_broken": write(cfg, "{")
@@ -171,20 +167,30 @@ class TestAxProbe(unittest.TestCase):
                         value = payloads[case_id]
                         write(cfg, value if isinstance(value, str) else json.dumps(value))
                     args += ["--config", cfg]
-                args += ["--repo-root", self.repo]
+                if case_id != "cfg_value_missing":
+                    args += ["--repo-root", self.repo]
                 before = read_marker(marker)
                 proc = subprocess.run(args, capture_output=True, text=True, env=env)
                 self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertTrue(proc.stdout.isascii())
                 self.assertEqual(len(proc.stdout.splitlines()), 1)
+                self.assertTrue(proc.stdout.endswith("\n"))
+                self.assertEqual(proc.stdout.count("\n"), 1)
                 out = json.loads(proc.stdout)
                 if case_id in invalid:
                     self.assertEqual(out, {"axAvailable": False, "axBin": "ax",
                                            "axVersion": None, "reason": "invalid-config"})
                     self.assertEqual(read_marker(marker), before)
+                elif case_id == "absent":
+                    self.assertEqual(out, {"axAvailable": False, "axBin": "ax",
+                                           "axVersion": None, "reason": "not-configured"})
+                    self.assertEqual(read_marker(marker), before)
                 elif case_id in {"disabled", "compound"}:
                     self.assertEqual(out["reason"], "disabled-by-config")
+                    self.assertEqual(read_marker(marker), before)
                 else:
                     self.assertEqual(out["reason"], "ok")
+                    self.assertEqual(read_marker(marker), (before or b"") + b"called")
 
     def test_output_key_sets_per_branch(self):
         expected = {"axAvailable", "axBin", "axVersion", "reason"}
@@ -192,13 +198,14 @@ class TestAxProbe(unittest.TestCase):
         ok = os.path.join(bindir, "ok")
         make_exec(ok, version_stub())
         outputs = [
+            run_script(self.repo, {}),
             run_script(self.repo, {"webExtract": {"enabled": False}}),
             run_script(self.repo, {"webExtract": None}),
             run_script(self.repo, {"webExtract": {"bin": "missing-ax-v014"}}),
             run_script(self.repo, {"webExtract": {"bin": ok}}),
         ]
         self.assertEqual({out["reason"] for out in outputs},
-                         {"disabled-by-config", "invalid-config",
+                         {"not-configured", "disabled-by-config", "invalid-config",
                           "not-installed", "ok"})
         for out in outputs:
             self.assertEqual(set(out), expected)
