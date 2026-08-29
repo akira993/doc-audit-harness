@@ -107,7 +107,7 @@ def validate_probe(seam, value):
         require(value, "axBin", str, seam)
         require_nullable_string(value, "axVersion", seam)
         reason = require(value, "reason", str, seam)
-        if reason not in {"ok", "not-installed", "disabled-by-config", "invalid-config"} or available != (reason == "ok"):
+        if reason not in {"ok", "not-installed", "disabled-by-config", "invalid-config", "not-configured"} or available != (reason == "ok"):
             raise Invalid("invalid webExtract availability/reason pair")
         return
     if seam == "codexReview":
@@ -118,13 +118,27 @@ def validate_probe(seam, value):
         if not all(isinstance(command, str) for command in commands):
             raise Invalid("codexReview.probeCommands has the wrong type")
         reason = require(value, "reason", str, seam)
-        if reason not in {"ok", "not-installed", "disabled-by-config", "probe-exec-failed", "invalid-config"} or available != (reason == "ok"):
-            raise Invalid("invalid codexReview availability/reason pair")
         require_nullable_string(value, "callerCodexHome", seam)
         if require(value, "callerCodexHomeSource", str, seam) not in {"env", "default", "unknown"}:
             raise Invalid("invalid callerCodexHomeSource")
         if require(value, "callerAuthFile", str, seam) not in {"present", "absent", "unknown"}:
             raise Invalid("invalid callerAuthFile")
+        if reason == "not-configured":
+            expected = {
+                "codexReviewAvailable": False,
+                "codexReviewBin": "codex",
+                "codexReviewVersion": None,
+                "probeCommands": [],
+                "reason": "not-configured",
+                "callerCodexHome": None,
+                "callerCodexHomeSource": "unknown",
+                "callerAuthFile": "unknown",
+            }
+            if value != expected:
+                raise Invalid("invalid codexReview not-configured record")
+            return
+        if reason not in {"ok", "not-installed", "disabled-by-config", "probe-exec-failed", "invalid-config"} or available != (reason == "ok"):
+            raise Invalid("invalid codexReview availability/reason pair")
         return
     if seam == "codexReviewState":
         if require(value, "state", str, seam) not in {

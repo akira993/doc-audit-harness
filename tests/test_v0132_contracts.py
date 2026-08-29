@@ -237,8 +237,8 @@ class TestV0132S1bContracts(unittest.TestCase):
             "semanticSearch": schema.split("## CocoIndex", 1)[1].split("## Generic", 1)[0],
         }
         expected = {
-            "webExtract": {"ok", "not-installed", "disabled-by-config", "invalid-config"},
-            "codexReview": {"ok", "not-installed", "disabled-by-config", "probe-exec-failed", "invalid-config"},
+            "webExtract": {"ok", "not-installed", "disabled-by-config", "not-configured", "invalid-config"},
+            "codexReview": {"ok", "not-installed", "disabled-by-config", "probe-exec-failed", "not-configured", "invalid-config"},
             "symbolGraph": {"ok", "not-installed", "disabled-by-config", "index-failed", "not-configured", "invalid-config"},
             "docGraph": {"ok", "not-installed", "disabled-by-config", "update-failed", "not-configured", "invalid-config"},
             "semanticSearch": {"ok", "not-installed", "disabled-by-config", "not-initialized", "index-failed", "not-configured", "invalid-config", "gitignore-modified"},
@@ -297,13 +297,23 @@ class TestV0132S1bContracts(unittest.TestCase):
                 match = re.search(rf'{variable}_REASON=.*?\["reason"\].*?"\${variable}_PROBE_JSON"', skill)
                 self.assertIsNotNone(match)
 
-    def test_init_skill_marks_three_omit_rules_as_not_configured(self):
-        """DoD (11): only the three selected OMIT rules name not-configured."""
+    def test_init_skill_marks_five_omit_rules_as_not_configured(self):
+        """DoD (11): all five key-gated OMIT rules name not-configured."""
         init = read_repo_file("skills/init/SKILL.md")
-        self.assertEqual(init.count("not-configured"), 3)
+        self.assertEqual(init.count("not-configured"), 5)
+        documented = set()
         for paragraph in re.split(r"\n\s*\n", init):
             if "not-configured" in paragraph:
-                self.assertRegex(paragraph, r"symbolGraph|docGraph|semanticSearch")
+                seams = set(re.findall(
+                    r"webExtract|codexReview|symbolGraph|docGraph|semanticSearch",
+                    paragraph,
+                ))
+                self.assertTrue(seams, paragraph)
+                documented.update(seams)
+        self.assertEqual(documented, {
+            "webExtract", "codexReview", "symbolGraph", "docGraph",
+            "semanticSearch",
+        })
 
     def test_settings_yml_marker_documented_in_five_files(self):
         """DoD (14): all five documents tie not-initialized to settings.yml."""

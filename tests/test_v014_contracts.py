@@ -52,9 +52,9 @@ class TestV014Contracts(unittest.TestCase):
         phase0 = skill.split("## Phase 0 —", 1)[1].split("## Phase 0.5", 1)[0]
         expected = {
             "mdq": {"not-installed", "disabled-by-config", "index-failed", "invalid-config"},
-            "ax": {"ok", "not-installed", "disabled-by-config", "invalid-config"},
+            "ax": {"ok", "not-installed", "disabled-by-config", "not-configured", "invalid-config"},
             "codex": {"ok", "not-installed", "disabled-by-config",
-                      "probe-exec-failed", "invalid-config"},
+                      "probe-exec-failed", "not-configured", "invalid-config"},
         }
         mdq_match = re.search(r"`reason` is ([^)]+)\)", phase0)
         self.assertIsNotNone(mdq_match)
@@ -87,7 +87,7 @@ class TestV014Contracts(unittest.TestCase):
         phase0 = skill.split("## Phase 0 —", 1)[1].split("## Phase 0.5", 1)[0]
         self.assertIn("`MDQ_REASON`", phase0)
         self.assertIn("`AX_REASON`", phase0)
-        self.assertIn("An unreadable, non-object, or absent config makes the probe report invalid-config only when the probe is invoked directly; in a normal audit such a config stops before Phase 0.", phase0)
+        self.assertIn("An unreadable, non-object, or absent config makes the probe report invalid-config when the probe is invoked directly; it never falls back to enabled. In a normal audit such a config stops before Phase 0.", phase0)
 
     def test_cm_enabled_expression_decision_table(self):
         skill = read("skills/audit/SKILL.md")
@@ -132,9 +132,9 @@ class TestV014Contracts(unittest.TestCase):
                     self.assertEqual(proc.returncode, 0, proc.stderr)
                     self.assertEqual(proc.stdout.strip(), expected)
 
-    def test_config_schema_four_seams_invalid_config(self):
+    def test_config_schema_default_enabled_seams_invalid_config(self):
         schema = read("skills/audit/references/config-schema.md")
-        for seam in ("indexing", "contextMode", "webExtract", "codexReview"):
+        for seam in ("indexing", "contextMode"):
             line = next(line for line in schema.splitlines()
                         if line.startswith("| `" + seam + "` |"))
             self.assertIn("`enabled` must be a JSON boolean", line)
@@ -223,9 +223,11 @@ class TestV014Contracts(unittest.TestCase):
         """DoD (11): recovery wording keeps evidence and verdict ownership unchanged."""
         skill = read("skills/audit/SKILL.md")
         self.assertIn('probe-record.py also receives --evidence "$EVIDENCE" for run-dir validation only; it is not an evidence producer and its stdout MUST NOT replace EVIDENCE.', skill)
-        self.assertIn('"rebind" map is authoritative', skill)
-        self.assertIn("Phase 4 may restore any missing operational availability, reason, or binary variables from `rebind`", skill)
-        self.assertIn("a failed read makes all seven status lines unknown; neither case changes the verdict", skill)
+        self.assertIn('"rebind" map is authoritative except for the webExtract/codexReview resume re-probe rule', skill)
+        self.assertNotIn("Phase 4 may restore any missing operational availability, reason, or binary variables from `rebind`", skill)
+        self.assertIn("After a resume, do not restore operational webExtract/codexReview availability, reason, or binary values from `rebind`", skill)
+        self.assertIn("a failed read makes all seven status lines unknown; neither case changes", skill)
+        self.assertIn("A failed resume re-record for webExtract/codexReview additionally forces its own line", skill)
         self.assertIn("`$RUN_DIR/phase0-probes.json` stores raw probe output for display only", skill)
         verdict = read("skills/audit/scripts/decide-verdict.py")
         self.assertNotIn("phase0-probes", verdict)

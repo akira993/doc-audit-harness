@@ -21,6 +21,14 @@ CASES = {
     "run_dir_mismatch", "invalid_runid", "symlink_repo_root", "codex_state_only",
 }
 
+V015_CASES = {
+    "accept_web_not_configured", "accept_codex_not_configured",
+    "mutate_available", "mutate_bin", "mutate_version", "mutate_commands",
+    "mutate_caller_home", "mutate_caller_source", "mutate_auth",
+    "reject_unknown_field", "overwrite_web_preserve_other",
+    "overwrite_codex_preserve_other",
+}
+
 
 def probes():
     return {
@@ -36,6 +44,24 @@ def probes():
         "symbolGraph": {"symbolGraphAvailable": True, "symbolGraphBin": "codegraph", "reason": "ok"},
         "docGraph": {"docGraphAvailable": True, "docGraphBin": "graphify", "reason": "ok", "gitignoreOk": True},
         "semanticSearch": {"semanticSearchAvailable": True, "semanticSearchBin": "ccc", "reason": "ok"},
+    }
+
+
+def web_not_configured():
+    return {"axAvailable": False, "axBin": "ax", "axVersion": None,
+            "reason": "not-configured"}
+
+
+def codex_not_configured():
+    return {
+        "codexReviewAvailable": False,
+        "codexReviewBin": "codex",
+        "codexReviewVersion": None,
+        "probeCommands": [],
+        "reason": "not-configured",
+        "callerCodexHome": None,
+        "callerCodexHomeSource": "unknown",
+        "callerAuthFile": "unknown",
     }
 
 
@@ -80,6 +106,84 @@ class TestProbeRecord(unittest.TestCase):
             "partial_missing", "display_boundary", "middle_symlink", "run_symlink", "file_symlink",
             "run_dir_mismatch", "invalid_runid", "symlink_repo_root", "codex_state_only",
         })
+
+    def test_v015_case_ids_are_fixed_and_complete(self):
+        self.assertEqual(len(V015_CASES), 12)
+        self.assertEqual(V015_CASES, {
+            "accept_web_not_configured", "accept_codex_not_configured",
+            "mutate_available", "mutate_bin", "mutate_version", "mutate_commands",
+            "mutate_caller_home", "mutate_caller_source", "mutate_auth",
+            "reject_unknown_field", "overwrite_web_preserve_other",
+            "overwrite_codex_preserve_other",
+        })
+
+    def test_not_configured_records_are_accepted_and_rebound(self):
+        self.write("webExtract", web_not_configured())
+        out = self.read()
+        self.assertEqual(out["seams"]["webExtract"], web_not_configured())
+        self.assertEqual(out["rebind"]["ax"], {
+            "state": "complete", "available": False, "reason": "not-configured",
+        })
+
+        self.write("codexReview", codex_not_configured())
+        out = self.read()
+        self.assertEqual(out["seams"]["codexReview"], codex_not_configured())
+        self.assertEqual(out["rebind"]["codex-review"], {
+            "state": "complete", "available": False, "reason": "not-configured",
+            "bin": "codex", "reviewState": None,
+            "callerCodexHomeDisplay": "(null)",
+            "callerCodexHomeSource": "unknown", "callerAuthFile": "unknown",
+        })
+
+    def test_codex_not_configured_mutation_table_is_rejected(self):
+        mutations = {
+            "mutate_available": ("codexReviewAvailable", True),
+            "mutate_bin": ("codexReviewBin", "other-codex"),
+            "mutate_version": ("codexReviewVersion", "1"),
+            "mutate_commands": ("probeCommands", ["codex --version"]),
+            "mutate_caller_home": ("callerCodexHome", "/tmp/leaked"),
+            "mutate_caller_source": ("callerCodexHomeSource", "env"),
+            "mutate_auth": ("callerAuthFile", "present"),
+        }
+        self.assertEqual(len(mutations), 7)
+        for case_id, (key, value) in mutations.items():
+            with self.subTest(case_id=case_id):
+                mutated = codex_not_configured()
+                mutated[key] = value
+                proc = self.command("--seam", "codexReview", "--stdin",
+                                    input=json.dumps(mutated))
+                self.assertEqual(proc.returncode, 2, proc.stdout)
+                self.assertIn("invalid codexReview not-configured record", proc.stderr)
+
+    def test_codex_not_configured_unknown_field_is_rejected(self):
+        value = codex_not_configured()
+        value["leakedHome"] = "/tmp/leaked"
+        proc = self.command("--seam", "codexReview", "--stdin", input=json.dumps(value))
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertIn("invalid codexReview not-configured record", proc.stderr)
+
+    def test_key_gated_upserts_replace_target_and_preserve_other_seams(self):
+        self.write("symbolGraph", probes()["symbolGraph"])
+        self.write("webExtract", probes()["webExtract"])
+        self.write("codexReview", probes()["codexReview"])
+
+        self.write("webExtract", web_not_configured())
+        after_web = self.read()["seams"]
+        self.assertEqual(after_web["webExtract"], web_not_configured())
+        self.assertEqual(after_web["codexReview"], probes()["codexReview"])
+        self.assertEqual(after_web["symbolGraph"], probes()["symbolGraph"])
+
+        self.write("codexReview", codex_not_configured())
+        after_codex = self.read()["seams"]
+        self.assertEqual(after_codex["codexReview"], codex_not_configured())
+        self.assertEqual(after_codex["webExtract"], web_not_configured())
+        self.assertEqual(after_codex["symbolGraph"], probes()["symbolGraph"])
+
+        invalid = codex_not_configured()
+        invalid["callerAuthFile"] = "present"
+        proc = self.command("--seam", "codexReview", "--stdin", input=json.dumps(invalid))
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertEqual(self.read()["seams"], after_codex)
 
     def test_upsert_overwrite_and_atomicity(self):
         first = self.write("indexing", probes()["indexing"])

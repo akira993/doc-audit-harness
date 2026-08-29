@@ -22,6 +22,7 @@ def main():
 
     with open(args.config, encoding="utf-8") as handle:
         config = json.load(handle)
+    configured = "codexReview" in config
     codex_config = config.get("codexReview", {})
     if not isinstance(codex_config, dict):
         codex_config = {}
@@ -29,7 +30,10 @@ def main():
     required = required_value is True
     invalid_required = not isinstance(required_value, bool)
 
-    if not parse_bool(args.available):
+    if not configured:
+        result = {"action": "not-active", "state": "not-active",
+                  "promptVariant": None, "reason": "not-configured"}
+    elif not parse_bool(args.available):
         result = {"action": "not-active", "state": "not-active",
                   "promptVariant": None, "reason": args.available_reason}
     elif args.mode == "full" and required:

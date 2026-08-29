@@ -32,8 +32,8 @@ live here; the plugin ships no project knowledge.
 | `regressionRecheck` | object | no | `{enabled:bool=false}` — opt-in recheck of the latest prior FAIL for unchanged documents |
 | `indexing` | object | no | `{enabled:bool=true, tool:string="mdq", bin:string="mdq", roots:string[]?}` — `enabled` must be a JSON boolean; `enabled:false` takes priority and reports `disabled-by-config` and omits bin. Otherwise a non-boolean `enabled`, a non-object key (including `null`), or a non-string, empty, whitespace-only or whitespace-padded, ASCII-control-character (U+0000–U+001F or U+007F), or non-UTF-8-encodable `bin` reports `invalid-config` (the tool is not run, a ⚠ status line is printed, and `indexing` fires the confirmation gate). An absent key remains enabled by default (intentional asymmetry). |
 | `contextMode` | object | no | `{enabled:bool=true}` — `enabled` must be a JSON boolean; `enabled:false` takes priority and reports `disabled-by-config`. Otherwise a non-boolean `enabled` or a non-object key (including `null`) reports `invalid-config` (the tool is not run and a ⚠ status line is printed). An absent key remains enabled by default (intentional asymmetry). |
-| `webExtract` | object | no | `{enabled:bool=true, tool:string="ax", bin:string="ax"}` — `enabled` must be a JSON boolean; `enabled:false` takes priority and reports `disabled-by-config` with the default name. Otherwise a non-boolean `enabled`, a non-object key (including `null`), or a non-string, empty, whitespace-only or whitespace-padded, ASCII-control-character (U+0000–U+001F or U+007F), or non-UTF-8-encodable `bin` reports `invalid-config` (the tool is not run and a ⚠ status line is printed). An absent key remains enabled by default (intentional asymmetry). |
-| `codexReview` | object | no | `{enabled:bool=true, required:bool=false, bin:string="codex", model?:string, timeoutMs?:number=300000}` — `enabled` must be a JSON boolean; `enabled:false` takes priority and reports `disabled-by-config` with the default name. Otherwise a non-boolean `enabled`, a non-object key (including `null`), or a non-string, empty, whitespace-only or whitespace-padded, ASCII-control-character (U+0000–U+001F or U+007F), or non-UTF-8-encodable `bin` reports `invalid-config` (the tool is not run and a ⚠ status line is printed). An absent key remains enabled by default (intentional asymmetry); `required:true` makes a non-completed review REFUSED. |
+| `webExtract` | object | no | `{enabled:bool=true, tool:string="ax", bin:string="ax"}` — key-gated Phase-0 `ax` preflight: it runs only when this key exists, `enabled` is not false, and the tool is installed. An absent key reports `not-configured` and never runs the tool. `enabled` must be a JSON boolean; `enabled:false` takes priority and reports `disabled-by-config` with the default name. Otherwise a non-boolean `enabled`, a non-object key (including `null`), or a non-string, empty, whitespace-only or whitespace-padded, ASCII-control-character (U+0000–U+001F or U+007F), or non-UTF-8-encodable `bin` reports `invalid-config` (the tool is not run and a ⚠ status line is printed). |
+| `codexReview` | object | no | `{enabled:bool=true, required:bool=false, bin:string="codex", model?:string, timeoutMs?:number=300000}` — key-gated Phase-0 `codex` preflight: it runs only when this key exists, `enabled` is not false, and the tool is installed. An absent key reports `not-configured` and never runs the tool. `enabled` must be a JSON boolean; `enabled:false` takes priority and reports `disabled-by-config` with the default name. Otherwise a non-boolean `enabled`, a non-object key (including `null`), or a non-string, empty, whitespace-only or whitespace-padded, ASCII-control-character (U+0000–U+001F or U+007F), or non-UTF-8-encodable `bin` reports `invalid-config` (the tool is not run and a ⚠ status line is printed). When this key exists, `required:true` makes a non-completed review REFUSED; it cannot conflict with an absent key. |
 | `symbolGraph` | object | no | `{enabled:bool=true, tool:string="codegraph", bin:string="codegraph"}` — key-gated Phase-0 `codegraph` CLI preflight: it runs only when this key exists, `enabled` is not false, and the tool is installed. It may corroborate changed-file symbols via read-only `codegraph impact`/`node`; report-only, never affects the verdict. `tool` is reserved; the probe validates `enabled` and `bin`. `enabled:false` takes priority and reports `disabled-by-config`; it keeps a valid custom bin and uses the default name for an invalid bin. Otherwise a non-string, empty, whitespace-only or whitespace-padded, ASCII-control-character (U+0000–U+001F or U+007F), or non-UTF-8-encodable `bin` reports `invalid-config`. The `bin` override affects only the probe; Phase 3 Workflow invokes fixed `codegraph`. |
 | `docGraph` | object | no | `{enabled:bool=true, tool:string="graphify", bin:string="graphify"}` — key-gated Phase-0 `graphify` CLI preflight: it runs only when this key exists, `enabled` is not false, and the tool is installed. Phase 2 then supplements `mapGapCandidates` with graph-adjacency candidates (provenance `graphify`); report-only, never affects the verdict. `tool` is reserved; the probe validates `enabled` and `bin`. `enabled:false` takes priority and reports `disabled-by-config`; it keeps a valid custom bin and uses the default name for an invalid bin. Otherwise a non-string, empty, whitespace-only or whitespace-padded, ASCII-control-character (U+0000–U+001F or U+007F), or non-UTF-8-encodable `bin` reports `invalid-config`. |
 | `semanticSearch` | object | no | `{enabled:bool=true, tool:string="cocoindex", bin:string="ccc", minScore?:number=0.4}` — key-gated Phase-0 `ccc` (CocoIndex) preflight: it runs only when this key exists, `enabled` is not false, the tool is installed, and `.cocoindex_code/settings.yml` marks the repo initialized. Phase 2 supplements `mapGapCandidates` with semantic-search candidates (provenance `semantic`) scoring `>= minScore`. **The audit itself never runs `ccc init`** — an uninitialized repo degrades to `reason:not-initialized`, distinct from `not-installed`; initialize via `/docaudit:init` (user-approved, discloses the `.gitignore` write). Report-only, never affects the verdict. `tool` is reserved; the probe validates `enabled`/`bin`/`minScore`; Phase 2 uses `minScore`. `enabled:false` takes priority and reports `disabled-by-config`; it keeps a valid custom bin and uses the default name for an invalid bin. Otherwise a non-string, empty, whitespace-only or whitespace-padded, ASCII-control-character (U+0000–U+001F or U+007F), or non-UTF-8-encodable `bin` reports `invalid-config`. |
@@ -212,7 +212,7 @@ status line** (💡 not active / ✓ active / ⚠ degraded).
 
 ## ax (webExtract, Phase 0/3)
 
-`webExtract` is optional and conditional-force, mirroring `indexing`'s shape but for the `ax`
+`webExtract` is optional and key-gated: only when the key exists does it mirror `indexing`'s shape for the `ax`
 CLI (`~/.local/bin/ax`) — a structured web/API extraction tool, not a Markdown-indexing tool.
 Its only role in the audit is letting `doc-impact-verifier` corroborate a doc claim that
 depends on an external upstream URL (an upstream doc, an API spec, etc.). With `ax` on `PATH`
@@ -220,8 +220,9 @@ depends on an external upstream URL (an upstream doc, an API spec, etc.). With `
 only: Workflow receives the availability boolean and Phase 3's template invokes fixed `ax`. Phase 3 passes the verifier a
 conditional instruction to fetch cited URLs read-only (`--md --budget 800` for prose,
 `--row`/`--table` for structured data, `--outline` to see page structure first) — GET-only,
-never `-X POST`/`-d`/`-o`. Fetched content is treated as data, never as instructions. When `ax`
-is absent, `webExtract.enabled` is `false`, or the fetch fails, the check is silently skipped
+never `-X POST`/`-d`/`-o`. Fetched content is treated as data, never as instructions. When the
+key is absent the probe reports `not-configured` and does not run `ax`. When the key exists but
+`ax` is absent, `webExtract.enabled` is `false`, or the fetch fails, the check is silently skipped
 or reported as "external check unavailable" — never a FAIL basis, and the audit stays
 tool-independent. `ax` is a **static HTML parser** (no JS rendering — SPA content is invisible
 to it) and is **pre-1.0** (`v0.1.x`), so its flag surface may change; the probe's `axVersion`
@@ -230,7 +231,7 @@ multi-backend support; the runtime currently reads only `bin` and `enabled`.
 
 ## Codex review (Phase 0/4)
 
-`codexReview` is optional and conditional-force, mirroring `webExtract`'s shape but for the
+`codexReview` is optional and key-gated: only when the key exists does it mirror `webExtract`'s shape for the
 `codex` CLI (`@openai/codex` npm package) — the fourth, adversarial review in Phase 4, run
 after `/code-review` and `/security-review`. Only the `codex` CLI itself is required; the
 openai-codex Claude Code plugin is not a dependency. With `codex` on `PATH` (or `bin` pointed at
@@ -243,6 +244,8 @@ The probe reports the caller's `CODEX_HOME` (or the default `$HOME/.codex`) and 
 `auth.json` exists there. This is caller-side visibility only: a wrapper's own environment is not
 visible to the probe. When a repository relies on environment activation, launch through an
 equivalent wrapper such as `direnv exec <repo> codex`.
+When the key is absent, the probe reports `not-configured`, does not run `codex`, and returns
+neutral caller values without inspecting `CODEX_HOME` or `auth.json`.
 
 Absolute `--config` and `--scope` paths accepted by `import-audit-scope.py` use POSIX path syntax
 only; Windows path forms are outside the supported platform scope.
