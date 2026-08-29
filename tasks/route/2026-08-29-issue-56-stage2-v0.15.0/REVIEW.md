@@ -186,3 +186,27 @@
   `git diff --name-only` と新規/ignore 対象の明示一覧で §7 許可範囲内であることを確認した。
 - フルスイートでは既存 `tests/test_generic_layers.py` 由来の ResourceWarning が出たが、失敗ではなく、
   同ファイルは許可外のため変更していない。
+
+## route-close 追補（handoff 実行後・2026-08-29）
+- 対象タスク: docaudit v0.15.0 出荷（Issue #56 第2段）。記録時点の HEAD＝main `1f9d5bf`
+  （PR #64 merge commit・handoff の承認 SHA と一致）。
+- handoff 実行 1 回目は **#59 前提条件ゲートで正しく停止**（公開副作用ゼロ・tag 未作成）:
+  P2 修正 commit `20706eb` の件名 `fix(release): require issue #59 OPEN...` を GitHub の
+  close キーワード解析が `fix ... #59` と解釈し、PR #64 merge 時に **#59 が意図せず自動 close**
+  されていた（timeline: closed via commit 20706eb, 2026-08-29T11:36:41Z）。#59 の実作業は
+  未着手のため boss が reopen（経緯コメント付き）し、承認済み状態（#59 据え置き・OPEN）へ復元。
+  → 教訓: Conventional Commits の `fix(...)` 件名に issue 参照 `#N` を併記すると GitHub が
+  auto-close し得る。据え置き Issue を件名で参照する場合は `issue #N` を件名から外すか
+  本文の非キーワード文脈に置く。P2 で追加した OPEN 前提条件ゲートがこの事故を公開前に検出した
+  （設計どおりの fail-closed）。
+- handoff 再実行（`echo y |` で同期確認に応答 — boss が docaudit 非実行を確認済み）: exit 0。
+  - detached `1f9d5bf` でフルスイート **Ran 630 tests OK**（残骸走査 files=102 units=2809 hits=0 —
+    route-close 記録の 101/2789 は branch 時点、merge commit 追補分で +1 file/+20 units、hits は 0 のまま）。
+  - tag `docaudit--v0.15.0` = `1f9d5bf`（local/remote 一致を実測）。
+  - GitHub Release 公開: https://github.com/akira993/doc-audit-harness/releases/tag/docaudit--v0.15.0
+    （title/isDraft=false を実測確認）。
+  - Issue 状態（実測）: **#56 CLOSED**（PR 本文 `Closes #56` による merge 時 auto-close —
+    handoff は「already closed」で冪等スキップ）／**#59 OPEN**／**#63 OPEN**。
+  - skills-dir 同期: `~/.claude/skills/docaudit/` = v0.15.0 archive（rsync dry-run 差分ゼロ・
+    plugin.json version 0.15.0 一致を実測）。
+- これで route の全工程（実装→検収→最終 review→merge→tag/Release/#56 close→ローカル同期）完了。
