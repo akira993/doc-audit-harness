@@ -205,3 +205,9 @@ worker: R3-1（7 本の shell を stdin 渡し＋parse 失敗は exit 2、codegr
 | 検査系成果物の実数 | CT-1: `call sites 22／exempt 3／getters 13／scripts 21／observers 19`（PLAN §9.5 と一致）／CT-2: `対象 21 本を検査`／フルスイート `Ran 716 tests / OK`（基線 655） |
 | 残る手順（ユーザー依頼） | PR #68 のマージ（self-merge は不可）→ boss が handoff: tag `docaudit--v0.16.0`、GitHub Release、`~/.claude/skills/docaudit/` 全 tree 同期、#63／#59 close。follow-up: dir-framework の `harness.engineVersion`（現 0.15.0）更新と harness refresh、#66 方式 B の別 route |
 | 教訓 | 長時間 codex は `nohup … &` で切り離す（Bash 10 分で kill）／worker は PLAN 内矛盾で正しく停止する（3 回）／`codex exec review --uncommitted` が boss 精読の見逃し 2 件（ARG_MAX・signature 窓）を拾った／**不備**: codex worker 向けプロンプト（08〜14）に、グローバル CLAUDE.md が全委譲に要求する凝縮版行動規範（プロンプト注入・設定書き込み拒否の規律を含む）を貼付していなかった（Opus/change-reviewer 向けには貼付済み）。実害は無かったが、本 route のプロンプトを次回のテンプレートにする際は必ず末尾に付けること |
+
+## Route-close addendum — handoff 完了（2026-08-31）
+
+- PR #68 をユーザーがマージ → main = merge commit `d77ad97c76fbbb0fd359d2544368fa164e784a10`。boss が main で再実測: `Ran 716 tests / OK`、CT-1 `call sites 22／exempt 3／getters 13／scripts 21／observers 19`、CT-2 `対象 21 本を検査`（`boss-main-tests.log`／`boss-main-ct.log`）。
+- `echo y | release-handoff.sh d77ad97… 68`（v0.15.1 版から派生、`release-handoff.sh`、ログ `handoff-run.log`）exit 0: detached でフルスイート `Ran 716 / OK` → tag `docaudit--v0.16.0` = `d77ad97`（local/remote 一致を boss が実測）→ GitHub Release https://github.com/akira993/doc-audit-harness/releases/tag/docaudit--v0.16.0（title「docaudit v0.16.0 — sealed-config verify-on-read + Phase-4 flip counter」、非 draft）→ #63・#59 を completed で close → `~/.claude/skills/docaudit/` を tag の archive から rsync 同期（plugin.json 0.16.0、`sealed_config.py` 存在を boss が確認）。
+- open Issue: #66（方式 B、別 route）。follow-up: dir-framework の `harness.engineVersion` 0.15.0 → 0.16.0 と `/docaudit:init --harness --refresh`（旧 stamp は plugin engine fallback＋WARN になる）。
