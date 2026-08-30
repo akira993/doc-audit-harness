@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SHAS = "skills/audit/references/engine-shas.json"
 EXPECTED = {".claude/state", ".claude/worktrees", ".mdq", ".codegraph", "graphify-out", ".cocoindex_code"}
 DOCS = (("skills/audit/references/config-schema.md", "Accepted `digestExclude` prefixes:", "the run is not sealed"),
         ("docs/ADOPTION.md", "Accepted `digestExclude` prefixes:", "the run is not sealed"),
@@ -88,7 +89,8 @@ class TestV0131DocsContracts(unittest.TestCase):
         self.assertNotIn("auditScope", keys)
 
     def test_g_refresh_paragraph_versions(self):
-        target = {"0.10.1", "0.11.0", "0." "12.0", "0.13.0", "0.13.1", "0.13.2", json.loads(read(".claude-plugin/plugin.json"))["version"]}
+        plugin_version = json.loads(read(".claude-plugin/plugin.json"))["version"]
+        target = set(json.loads(read(SHAS))) | {plugin_version}
         for path, needle in (("docs/ADOPTION.md", "templates can be updated directly to"), ("docs/ADOPTION.ja.md", "へ直接更新できる")):
             paragraphs = [" ".join(part.split()) for part in re.split(r"\n\s*\n", read(path)) if needle in part]
             self.assertEqual(len(paragraphs), 1, f"{path}: refresh paragraphs={len(paragraphs)}")

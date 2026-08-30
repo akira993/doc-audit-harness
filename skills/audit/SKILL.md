@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Change-driven documentation audit. Use when the user asks to audit docs since the last audit, check documentation consistency after code/config changes, run a full doc consistency sweep, or verify nothing is stale before a release. Diffs since the anchor, maps changed files to impacted docs, runs /security-review; /code-review is offered for the user to run (not model-invocable), and emits one CONSISTENT/NEEDS FIX verdict. Report-only.
+description: Change-driven documentation audit. Use when the user asks to audit docs since the last audit, check documentation consistency after code/config changes, run a full doc consistency sweep, or verify nothing is stale before a release. Diffs since the anchor, maps changed files to impacted docs, runs /security-review; /code-review is offered for the user to run (not started by the audit itself yet), and emits one CONSISTENT/NEEDS FIX verdict. Report-only.
 argument-hint: "[--full] [--break-lock] [--accept-config]"
 ---
 
@@ -213,9 +213,9 @@ Immediately record it:
 `SYMBOL_GRAPH_BIN` affects only the Phase-0 probe; Phase 3's `workflow-template.js` invokes fixed
 `codegraph`, and Workflow receives only the availability boolean. The
 When the key exists, is not `enabled:false`, and the tool is installed, the probe keeps the index
-fresh: `.codegraph/` absent → `codegraph init .` (first run,
-confirmed 96ms on this repo); `.codegraph/` present → `codegraph sync .` (confirmed idempotent,
-fast); it never touches `.gitignore` itself (codegraph self-generates `.codegraph/.gitignore`).
+fresh: a regular `<dir>/codegraph.db` (`CODEGRAPH_DIR` honored) → `codegraph sync .`; an absent
+database → `codegraph init .`; a symlink or non-regular database/directory → no execution and
+`index-failed`. `init` idempotency is version-dependent, so the probe does not rely on it.
 Always exits 0; any failure degrades to `SYMBOL_GRAPH_AVAILABLE=false` and the audit continues
 unaffected — symbol-level corroboration is a bonus, never a requirement. Invalid JSON, no config
 file, and a non-object top level are standalone-probe defenses; the ordinary audit stops before a probe.
@@ -775,7 +775,7 @@ A `⚠ probe-record: <seam> not recorded` warning earlier in the run explains a 
 
 **code-review status line** — include exactly one immediately after the codex-review line:
 - `CODE_REVIEW_STATE=ran` → `✓ code-review: ran (findings folded into phase4)`
-- `CODE_REVIEW_STATE=not-model-invocable` → `💡 code-review: not run — /code-review is user-invocation-only (disable-model-invocation); run /code-review yourself before the audit if you want this layer included. (expected)`
+- `CODE_REVIEW_STATE=not-model-invocable` → `💡 code-review: not run — the audit does not start /code-review itself yet (tracked in #66); run it when offered in an interactive audit, or before the audit, if you want this layer included. (expected)`
 - Any other unavailable or failed command → the existing ⚠ WARN status for the unavailable review command.
 
 **symbol-graph status line** — always include exactly one, immediately after the code-review line; it is **non-blocking** (never changes the verdict), 6-state:

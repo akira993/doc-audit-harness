@@ -9,7 +9,7 @@ from real-world use.
 
 > **docaudit is report-only by default.** It maps what changed to the docs that describe it,
 > verifies them, runs `/security-review`, offers `/code-review` for the user to run
-> (it is not model-invocable), and emits one
+> (the audit does not start it on its own yet; autonomous invocation is tracked in #66), and emits one
 > **CONSISTENT / NEEDS FIX / REFUSED** verdict. The sole documentation-edit exception is
 > a pre-flight FAIL that you explicitly choose to fix; `fix-scope.py` then limits edits
 > to approved doc paths and rejects changes elsewhere. Non-interactive runs never edit.
@@ -53,7 +53,7 @@ running five phases on each audit:
 | 1 | **Baseline + diff** — read the anchor, compute the change set since it (merge-base diff + uncommitted + untracked), filtered by `diffGlobs`. No anchor ⇒ full mode. | `compute-baseline.sh` |
 | 2 | **Impact resolution** — map changed files → impacted docs (explicit `impactMap` ∪ heuristic), plus `ssotSources` to re-verify, plus a `truncated` flag. | `resolve-impact.py` |
 | 3 | **Change-impact verification** — one verifier per impacted doc adversarially checks *"does this doc still match the changed source?"* (PASS/WARN/FAIL). | Workflow fan-out by default; opt-in `codex-dispatch.py` backend |
-| 4 | **Existing layers + reviews** — run your project's doc checks (or the built-in generic fallback), the boundary command, then `/security-review`; offer `/code-review` for the user to run because it is not model-invocable. | delegated commands / `generic-layers.py` |
+| 4 | **Existing layers + reviews** — run your project's doc checks (or the built-in generic fallback), the boundary command, then `/security-review`; offer `/code-review` once in interactive runs because the audit does not start it itself yet (#66). | delegated commands / `generic-layers.py` |
 | 5 | **Gate + report + anchor** — roll up to one verdict, write the report while holding the run lock, and (only if CONSISTENT) update the anchor. | `write-template.py` + `decide-verdict.py` |
 
 Key properties to internalize:
@@ -77,7 +77,7 @@ Key properties to internalize:
 | A **git repository** at the audit root | the engine diffs with git | yes (see §10 for sub-dirs) |
 | [Python 3](https://www.python.org/) (standard library only) | the engine scripts; no `pip install` needed | yes |
 | [`git`](https://git-scm.com/) | diff/anchor | yes |
-| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code built-in review skills (Phase 4); `/security-review` runs in the audit, while `/code-review` is user-invocation-only | optional — `/security-review` runs when available; `/code-review` is offered to the user and is not model-invocable |
+| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code built-in review skills (Phase 4); `/security-review` runs in the audit, while `/code-review` is offered to the user (not started by the audit yet; #66) | optional — `/security-review` runs when available; autonomous runs skip `/code-review` as expected and interactive runs offer it once |
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 whole-repo index + Phase 3 chunked doc reads (~90%+ savings on large docs; upstream bench 97–99%) | optional — auto-used when present (conditional-force); grep when absent |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 git diff + Phase 4 `/code-review`·`/security-review` output processed in its sandbox (only distilled summaries enter context) | optional — auto-used when its `ctx_*` tools are present (conditional-force); read in full when absent |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: lets doc-impact-verifier corroborate a doc's external-URL-dependent claims via a read-only, GET-only fetch (static HTML only — no JS-rendered SPA support) | optional — key-gated by `webExtract`; used only when the key exists, is not disabled, and the tool is installed; external-URL claims go unverified otherwise |
@@ -99,7 +99,7 @@ Every audit prints an **mdq status line**: a 💡 install nudge when mdq is abse
 `context-mode` is mdq's complement, not a competitor: **mdq optimizes Markdown *reads*,
 context-mode optimizes the *processing of large machine output*.** When its `ctx_*` tools are
 present, the audit runs the Phase-1 git diff and the Phase-4 `/security-review`; `/code-review`
-is offered to the user because it is not model-invocable during autonomous runs. Interactive
+is not started by the audit itself during autonomous runs (tracked in #66). Interactive
 runs ask once whether to run it before continuing. The resulting review output flows
 through context-mode's sandbox and pulls back only distilled summaries — the raw bytes
 never enter context. It is conditional-force the same way (auto-used when available; opt out with
@@ -162,8 +162,9 @@ path-scoping flag; or `codegraph node <symbol> -f <changed-file>`, text output d
 directly via `-f`) — never `codegraph affected`, which is import-based and confirmed empty on
 subprocess-driven test-style repos like this one. When the `symbolGraph` key exists, is not
 disabled, and the tool is installed, its Phase-0 probe keeps
-`.codegraph/` fresh every run (`init` the first time, `sync` thereafter — a bare `init` against an
-already-initialized `.codegraph/` is rejected).
+the index fresh: a regular `<dir>/codegraph.db` (`CODEGRAPH_DIR` honored) selects `sync`, an absent
+database selects `init`, and a symlink or non-regular database/directory is not executed and reports
+`index-failed`; `init` idempotency is version-dependent, so the probe does not rely on it.
 
 `graphify` and CocoIndex are Phase 2-only and both feed the SAME integration point —
 `mapGapCandidates`, alongside the existing token heuristic — via one shared script
@@ -232,7 +233,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.15.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.15.1  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -282,6 +283,10 @@ on resume, the operational webExtract and codexReview state is re-derived by re-
 
 indexing and contextMode keep their enabled-by-default behavior (intentional: they reduce token consumption); enabled:false and invalid-config semantics are unchanged for all four seams, and bin validation is unchanged for the three bin-bearing seams (indexing/webExtract/codexReview; contextMode has no bin)
 
+**v0.15.1 behavior changes:** the symbolGraph probe chooses `init` or `sync` from the state of `<dir>/codegraph.db`, honoring `CODEGRAPH_DIR`, so a leftover index directory without the database self-recovers on the next run; symlinked or non-regular index directories or databases are left untouched and report `index-failed`—valid symlink configurations that previously reached `sync` are intentionally unsupported because codegraph may overwrite the link target—and a renamed index directory selected by `CODEGRAPH_DIR` remains outside `tree-digest.py`'s fixed `.codegraph` known root and cannot be excluded with `digestExclude` (an existing limitation not addressed in this release).
+
+The `/code-review` wording now reflects the upstream capability for Claude to invoke it autonomously; audit behavior is unchanged, and autonomous invocation remains tracked in #66.
+
 ---
 
 ## 4. Onboard a project
@@ -312,7 +317,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, or 0.13.2 templates can be updated directly to 0.15.0 with
+Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, or 0.15.0 templates can be updated directly to 0.15.1 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so

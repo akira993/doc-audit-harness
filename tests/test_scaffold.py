@@ -169,6 +169,33 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         self.assertIn(".claude/skills/doc-lint/SKILL.md", out["created"])
         self.assertIn(f"@{out['stampVersion']} ", read(path))
 
+    def test_refresh_updates_all_unmodified_0_15_0_templates_to_0_15_1(self):
+        spec = importlib.util.spec_from_file_location("scaffold_under_test", SCRIPT)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        sources = module._harness_sources()
+        shipped = json.loads(read(SHAS))["0.15.0"]
+        paths = {
+            "check-docs": ".claude/commands/check-docs.md",
+            "doc-lint": ".claude/skills/doc-lint/SKILL.md",
+            "check-docs-engine": "scripts/check-docs.py",
+        }
+        before = {}
+        for name, relative in paths.items():
+            stamped = (module._python_with_stamp if name == "check-docs-engine"
+                       else module._markdown_with_stamp)(
+                           sources[name], name, "0.15.0", shipped[name])
+            before[name] = module._normalized_sha(stamped)
+            write(self.repo, relative, stamped)
+        proc = run(self.repo, "--harness", "--refresh")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["stampVersion"], "0.15.1")
+        self.assertEqual(set(paths.values()) & set(out["created"]), set(paths.values()))
+        for name, relative in paths.items():
+            refreshed = read(os.path.join(self.repo, relative))
+            self.assertIn("@0.15.1 ", refreshed)
+            self.assertEqual(module._normalized_sha(refreshed), before[name])
+
     def test_refresh_preserves_modified_historical_doc_lint(self):
         spec = importlib.util.spec_from_file_location("scaffold_under_test", SCRIPT)
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
@@ -211,11 +238,11 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         proc = run(self.repo, "--harness", "--refresh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["stampVersion"], "0.15.0")
+        self.assertEqual(out["stampVersion"], "0.15.1")
         self.assertIn("scripts/check-docs.py", out["created"])
         refreshed = read(path)
-        current = json.loads(read(SHAS))["0.15.0"]["check-docs-engine"]
-        self.assertIn(f"# docaudit-template: check-docs-engine@0.15.0 sha256:{current}\n",
+        current = json.loads(read(SHAS))["0.15.1"]["check-docs-engine"]
+        self.assertIn(f"# docaudit-template: check-docs-engine@0.15.1 sha256:{current}\n",
                       refreshed)
         self.assertEqual(module._normalized_sha(refreshed), current)
 
@@ -239,11 +266,11 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         proc = run(self.repo, "--harness", "--refresh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["stampVersion"], "0.15.0")
+        self.assertEqual(out["stampVersion"], "0.15.1")
         self.assertIn("scripts/check-docs.py", out["created"])
         refreshed = read(path)
-        current = json.loads(read(SHAS))["0.15.0"]["check-docs-engine"]
-        self.assertIn(f"# docaudit-template: check-docs-engine@0.15.0 sha256:{current}\n",
+        current = json.loads(read(SHAS))["0.15.1"]["check-docs-engine"]
+        self.assertIn(f"# docaudit-template: check-docs-engine@0.15.1 sha256:{current}\n",
                       refreshed)
         self.assertEqual(module._normalized_sha(refreshed), current)
 
@@ -309,7 +336,7 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         version = json.loads(read(PLUGIN))["version"]
-        self.assertEqual(version, "0.15.0")
+        self.assertEqual(version, "0.15.1")
         shipped = json.loads(read(SHAS))[version]
         actual = {name: module._normalized_sha(text)
                   for name, text in module._harness_sources().items()}

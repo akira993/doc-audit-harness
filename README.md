@@ -7,11 +7,11 @@ Change-driven documentation audit. Diffs the repo since the last clean audit
 impacted doc still matches its source, can install or integrate a local
 `/check-docs` + `doc-lint` harness, runs its cheap whole-tree checks before the
 deep audit, delegates the project's existing doc checks, runs `/security-review`,
-and offers `/code-review` for the user to run (it is not model-invocable) — rolling
+and offers `/code-review` for the user to run (the audit does not start it on its own yet; autonomous invocation is tracked in #66) — rolling
 everything into a single CONSISTENT / NEEDS FIX / REFUSED verdict. Report-only,
 except for user-approved pre-flight fixes restricted to named documentation files.
 
-In autonomous runs, `/code-review` is an expected user-invocation-only layer. Interactive
+The audit does not start `/code-review` itself: autonomous runs skip it as expected, while interactive
 runs offer the user one chance to run the configured `/code-review` before continuing.
 
 **New to docaudit? → [docs/ADOPTION.md](docs/ADOPTION.md)** (日本語: [docs/ADOPTION.ja.md](docs/ADOPTION.ja.md)) — full adoption guide: install,
@@ -23,7 +23,7 @@ hard-won gotchas. Copy-paste config template: [docs/examples/doc-audit.example.j
 - **Required:** [Claude Code](https://code.claude.com/docs), a **git** repo ([git](https://git-scm.com/)), and [Python 3](https://www.python.org/) (standard library only — no `pip install`).
 - **Local harness (optional, prompted by `init`):** no extra dependency; docaudit can generate `/check-docs`, `doc-lint`, and `scripts/check-docs.py`, or integrate compatible commands already in the repository.
 - **Optional:**
-  - [`/security-review`](https://code.claude.com/docs) — Claude Code built-in; `/code-review` is offered for the user to run because it is not model-invocable.
+  - [`/security-review`](https://code.claude.com/docs) — Claude Code built-in; `/code-review` is offered to the user but is not started by the audit yet (tracked in #66).
   - [`mdq` (markdown-query)](https://github.com/dahatake/skills) — Phase 0 auto-index + token-optimized chunked doc reads (~90%+ savings on large docs); the audit nudges you to install it when absent, else grep.
   - [`context-mode`](https://github.com/mksglu/context-mode) — sandboxed processing of large machine output (the git diff and review results) so only distilled summaries enter context, complementary to mdq; auto-used when its `ctx_*` tools are present, non-blocking status line when absent.
   - [`ax`](https://ax.yusuke.run/) — read-only, GET-only fetch of external upstream URLs so doc-impact-verifier can corroborate a doc's external-URL-dependent claims; static HTML only (no JS-rendered SPA support); key-gated by the `webExtract` key in `doc-audit.json`.

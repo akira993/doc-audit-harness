@@ -8,7 +8,7 @@ docaudit ハーネスを一度インストールし、任意のリポジトリ�
 
 > **docaudit は原則 report-only（報告専用）。** 変更内容を、それを説明するドキュメントへマッピング
 > し、検証し、`/security-review` を実行し、`/code-review` はユーザー実行を提案して
-> （モデルからは起動できない）、単一の
+> （監査自身はまだ起動しない。自律起動は #66 で追跡）、単一の
 > **CONSISTENT / NEEDS FIX / REFUSED** verdict を出す。唯一の文書編集例外は、pre-flight の
 > FAIL に対して利用者が明示的に「修正して監査」を選んだ場合である。`fix-scope.py` が承認済みの
 > 文書パスだけに制限し、非対話実行では編集しない。
@@ -52,7 +52,7 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | 1 | **Baseline + diff** — anchor を読み、それ以降の変更集合（merge-base diff + 未コミット + 未追跡）を `diffGlobs` で絞って算出。anchor が無ければ full モード。 | `compute-baseline.sh` |
 | 2 | **Impact resolution** — 変更ファイル → 影響ドキュメント（明示 `impactMap` ∪ heuristic）、`ssotSources` の再検証対象、`truncated` フラグを解決。 | `resolve-impact.py` |
 | 3 | **Change-impact verification** — 影響ドキュメント 1 件ごとに verifier が *「このドキュメントは変更後のソースとまだ整合しているか？」* を敵対的に検証（PASS/WARN/FAIL）。 | 既定は Workflow fan-out、opt-in で `codex-dispatch.py` backend |
-| 4 | **既存レイヤ + reviews** — プロジェクト固有のドキュメントチェック（または組込み generic fallback）、boundary コマンド、続いて `/security-review` を実行し、`/code-review` はモデルから起動できないためユーザー実行を提案。 | 委譲コマンド / `generic-layers.py` |
+| 4 | **既存レイヤ + reviews** — プロジェクト固有のドキュメントチェック（または組込み generic fallback）、boundary コマンド、続いて `/security-review` を実行し、監査自身がまだ起動しない `/code-review` は対話実行で一度だけ提案（#66）。 | 委譲コマンド / `generic-layers.py` |
 | 5 | **Gate + report + anchor** — 単一 verdict に集約し、run lock を保持したままレポートを書き、（CONSISTENT のときのみ）anchor を更新。 | `write-template.py` + `decide-verdict.py` |
 
 頭に入れておくべき性質:
@@ -76,7 +76,7 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | 監査ルートが **git リポジトリ** であること | エンジンは git で diff を取る | はい（subdir は §10 参照） |
 | [Python 3](https://www.python.org/)（標準ライブラリのみ） | エンジンのスクリプト。`pip install` 不要 | はい |
 | [`git`](https://git-scm.com/) | diff/anchor | はい |
-| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code 組込みの review スキル（Phase 4）。`/security-review` は監査で実行し、`/code-review` はユーザー実行のみ | 任意 — `/security-review` は利用可能なら実行、`/code-review` はユーザーに提案（モデルからは起動不可） |
+| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code 組込みの review スキル（Phase 4）。`/security-review` は監査で実行し、`/code-review` はユーザーに提案（監査自身はまだ起動しない。#66） | 任意 — `/security-review` は利用可能なら実行、`/code-review` は自律実行では想定どおり省略し、対話実行では一度だけ提案 |
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 で repo 全体を索引 + Phase 3 でチャンク読取り（大きい doc で ~90%+ 削減、upstream ベンチ 97–99%） | 任意 — 在れば自動使用（conditional-force）、非搭載で grep |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 の git diff と Phase 4 の `/code-review`・`/security-review` 出力をサンドボックスで処理（要約だけが context に入る） | 任意 — `ctx_*` ツールが在れば自動使用（conditional-force）、無ければ全文読取り |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: doc-impact-verifier がドキュメントの外部 URL 依存の主張を read-only・GET-only の fetch で照合できるようにする（静的 HTML のみ — JS レンダリングの SPA は非対応） | 任意 — `webExtract` キーで有効化し、キーが存在して無効化されておらず tool が導入済みの場合のみ使用。その他では外部 URL の主張は未検証のまま |
@@ -92,7 +92,7 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 
 `context-mode` は mdq の競合ではなく**相補物**: **mdq は Markdown の*読み取り*を、context-mode は*大きな機械出力の処理*を安くする。** `ctx_*` ツールが在るとき、audit は Phase 1 の git diff と Phase 4 の `/security-review` の出力を context-mode のサンドボックスで処理し、要約だけを取り出す — 生バイト列は context に入らない。同じく conditional-force（在れば自動使用、導入済みでも `"contextMode": {"enabled": false}` で opt-out）で、無ければ silent に degrade する。context-mode は場所非依存のグローバルプラグインなので、エンジン側に `bin`/`roots` は不要。各 audit は mdq 行の直後に非ブロッキングの **context-mode 状態行**を出力する: 未導入なら 💡、稼働なら ✓、導入済みだが不健全なら ⚠（verdict は変えない）。
 
-自律実行では `/code-review` はモデルから起動できないため、ユーザーが実行する層として扱う。対話実行では一度だけ実行を確認し、完了後に監査を続行できる。
+自律実行では監査自身が `/code-review` を起動しないため想定どおり省略する（自律起動は #66 で追跡）。対話実行では一度だけ実行を確認し、完了後に監査を続行できる。
 
 `ax` は mdq/context-mode の組とは無関係: read-only の Web/API 抽出 CLI で、docaudit での役割は
 **Phase 3 の `doc-impact-verifier` がドキュメントの外部 URL 依存の主張（upstream ドキュメント・
@@ -144,8 +144,7 @@ fail-closed で終了する。
 `filePath` で後フィルタする、または `codegraph node <symbol> -f <changed-file>` — `-f` で直接
 曖昧性を解消するテキスト出力）— import ベースで本 repo のような subprocess 起動テストスタイルの
 repo では空を返すことが確認済みの `codegraph affected` は絶対に使わない。`symbolGraph` キーが
-存在し、無効化されておらず、tool が導入済みの場合に限り、Phase-0 probe が `.codegraph/` を最新化する（初回は `init`、以降は `sync` — 既存の
-`.codegraph/` への無条件 `init` は拒否されるため）。
+存在し、無効化されておらず、tool が導入済みの場合に限り、Phase-0 probe は `CODEGRAPH_DIR` を尊重し、通常ファイルの `<dir>/codegraph.db` があれば `sync`、なければ `init` を選び、索引ディレクトリまたは database が symlink／非通常ファイルなら実行せず `index-failed` を報告する。`init` の冪等性は版依存のため、probe はそれに依存しない。
 
 `graphify` と CocoIndex はどちらも Phase 2 専用で、**同じ**統合点 — 既存の token heuristic と
 並ぶ `mapGapCandidates` — に、1本の共有スクリプト（`impact-supplement.py`）を通じてそれぞれ
@@ -211,7 +210,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.15.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.15.1  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -257,6 +256,10 @@ resume 時、webExtract と codexReview の運用状態は key-gated な probe �
 
 indexing と contextMode は従来どおり既定有効（トークン消費を減らす装置としての意図的設計）。enabled:false と invalid-config の意味論は 4 seam すべてで不変、bin 検査は bin を持つ 3 seam（indexing/webExtract/codexReview）で不変（contextMode に bin は無い）
 
+**v0.15.1 の挙動変更:** symbolGraph probe は `CODEGRAPH_DIR` を尊重し、`<dir>/codegraph.db` の状態から `init` または `sync` を選ぶため、database を失った索引ディレクトリだけが残っても次回 run で自己回復し、symlink または通常ファイル以外の索引ディレクトリ／database は触らず `index-failed` として、従来 `sync` まで進んだ有効な symlink 構成も codegraph が link 先を上書きし得るため本版から意図的に非対応とし、なお `CODEGRAPH_DIR` で改名した索引ディレクトリは `tree-digest.py` の `.codegraph` 固定の既知 root に含まれず、`digestExclude` でも除外できない（既存の制限であり、本版では未対応）。
+
+`/code-review` の記述を、Claude が自律起動できるという上流の現状に合わせて是正したが、監査の挙動は不変で、自律起動は #66 で追跡する。
+
 ---
 
 ## 4. プロジェクトをオンボードする
@@ -285,8 +288,8 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、または 0.13.2 テンプレートは、
-`/docaudit:init --harness --refresh` で 0.15.0 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、または 0.15.0 テンプレートは、
+`/docaudit:init --harness --refresh` で 0.15.1 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、

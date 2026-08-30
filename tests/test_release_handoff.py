@@ -1,4 +1,4 @@
-"""Branch, publication, and archive-boundary tests for the v0.15.0 handoff."""
+"""Branch, publication, and archive-boundary tests for the v0.15.1 handoff."""
 
 import io
 import json
@@ -16,21 +16,23 @@ HANDOFF = os.path.join(
     ROOT,
     "tasks",
     "route",
-    "2026-08-29-issue-56-stage2-v0.15.0",
+    "2026-08-30-issue-65-v0.15.1",
     "release-handoff.sh",
 )
 APPROVED = "a" * 40
 WRONG = "c" * 40
-TAG = "docaudit--v0.15.0"
-TITLE = "docaudit v0.15.0 — key-gated webExtract and codexReview"
-ISSUES = {"56"}
-PRECLOSED = {"56"}
+TAG = "docaudit--v0.15.1"
+TITLE = "docaudit v0.15.1 — self-healing codegraph probe"
+ISSUES = {"65"}
+PRECLOSED = {"65"}
 REQUIRED_BODY = (
     APPROVED,
-    "Closes #56.",
+    "Closes #65.",
+    "#66 wording corrected; behavior unchanged",
     "#59 remains open for the mechanical cross-version resume prohibition.",
     "#63 remains open for the all-seam sealed-config / TOCTOU design.",
-    "#56", "#59", "#63", "not-configured", "webExtract", "codexReview",
+    "#66 remains open for autonomous /code-review invocation.",
+    "#59", "#63", "#66", "codegraph.db", "CODEGRAPH_DIR",
 )
 
 
@@ -218,7 +220,7 @@ class TestReleaseHandoff(unittest.TestCase):
             "local_tags": {},
             "remote_tags": {},
             "releases": {},
-            "issues": {issue: "OPEN" for issue in ISSUES | {"59", "63"}},
+            "issues": {issue: "OPEN" for issue in ISSUES | {"59", "63", "66"}},
             "closed": [],
         }
         self.save_state()
@@ -355,6 +357,17 @@ class TestReleaseHandoff(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assert_no_release_mutations()
 
+    def test_destination_equal_to_root_stops_before_publication(self):
+        os.makedirs(self.skills_root)
+        proc = self.run_handoff(
+            APPROVED, "42", destination=self.skills_root,
+            skills_root=self.skills_root,
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("not the root itself", proc.stderr)
+        self.assert_no_release_mutations()
+        self.assertEqual(self.calls("rsync"), [])
+
     def test_unittest_failure_stops_before_tag(self):
         self.state["suite_fail"] = True
         self.save_state()
@@ -448,23 +461,23 @@ class TestReleaseHandoff(unittest.TestCase):
         self.assertEqual(len(self.calls("gh", ["issue", "close"])), len(ISSUES))
         self.assertEqual(self.calls("rsync"), [])
 
-    def test_close_calls_target_only_issue_56(self):
+    def test_close_calls_target_only_issue_65(self):
         proc = self.run_handoff(APPROVED, "42")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         closed = {call["args"][2]
                   for call in self.calls("gh", ["issue", "close"])}
-        self.assertEqual(closed, {"56"})
+        self.assertEqual(closed, {"65"})
 
     def test_issue_59_remains_open(self):
         proc = self.run_handoff(APPROVED, "42")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self.load_state()["issues"]["59"], "OPEN")
 
-    def test_release_notes_close_directive_and_issue_59_continuation(self):
+    def test_release_notes_close_directive_and_open_issue_continuation(self):
         proc = self.run_handoff(APPROVED, "42")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         body = self.load_state()["releases"][TAG]["body"]
-        self.assertEqual(set(re.findall(r"\bCloses #(\d+)\b", body)), {"56"})
+        self.assertEqual(set(re.findall(r"\bCloses #(\d+)\b", body)), {"65"})
         self.assertIn(
             "#59 remains open for the mechanical cross-version resume prohibition.",
             body,
@@ -494,6 +507,35 @@ class TestReleaseHandoff(unittest.TestCase):
         self.assertNotEqual(proc.returncode, 0)
         self.assertIn("tracking issue #59 must be OPEN", proc.stderr)
         self.assert_no_release_mutations()
+
+    def test_issue_66_open_allows_publication_and_remains_open(self):
+        proc = self.run_handoff(APPROVED, "42")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(len(self.calls("gh", ["release", "create"])), 1)
+        closed = {call["args"][2]
+                  for call in self.calls("gh", ["issue", "close"])}
+        self.assertIn("65", closed)
+        self.assertNotIn("66", closed)
+        self.assertEqual(self.load_state()["issues"]["66"], "OPEN")
+
+    def test_issue_66_not_open_stops_before_publication(self):
+        self.state["issues"]["66"] = "CLOSED"
+        self.save_state()
+        proc = self.run_handoff(APPROVED, "42")
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("tracking issue #66 must be OPEN", proc.stderr)
+        self.assert_no_release_mutations()
+
+    def test_no_v0150_residue_in_handoff(self):
+        with open(HANDOFF, encoding="utf-8") as handle:
+            body = handle.read()
+        counts = {term: body.count(term)
+                  for term in ("v0.15.0", "#56", "webExtract", "codexReview")}
+        print("handoff residue counts: " + " ".join(
+            f"{term}={count}" for term, count in counts.items()))
+        self.assertEqual(counts, {
+            "v0.15.0": 0, "#56": 0, "webExtract": 0, "codexReview": 0,
+        })
 
 
 if __name__ == "__main__":

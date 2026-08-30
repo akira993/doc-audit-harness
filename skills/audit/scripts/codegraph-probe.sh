@@ -9,11 +9,10 @@
 # corroboration is a bonus, never a requirement.
 #
 # NOTE: no `set -e` — failures are handled explicitly; we ALWAYS emit JSON + exit 0.
-# NOTE: init/sync branch (confirmed real-machine behavior, spec §5.1): a bare
-# `codegraph init .` against an already-initialized `.codegraph/` is REJECTED
-# ("Already initialized"). So this probe checks whether `.codegraph/` already exists
-# and calls `init` only the first time; every subsequent run calls `sync` (confirmed
-# idempotent: "Already up to date" when nothing changed).
+# NOTE: codegraph initialization is determined by the presence of `codegraph.db`.
+# `init` idempotency has changed between versions (1.5.0 accepts it; older versions
+# rejected it), so the probe does not depend on it. Symlinks and non-regular files
+# may be followed or overwritten by codegraph, so the probe does not touch them.
 set -uo pipefail
 
 CONFIG=""; REPO_ROOT="$(pwd)"
@@ -25,14 +24,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-read -r STATE BIN < <(python3 -c '
-import json, sys
+{ IFS= read -r -d '' STATE; IFS= read -r -d '' BIN; IFS= read -r -d '' DIRNAME; IFS= read -r -d '' DIRNAME_ESC; } < <(python3 -c '
+import json, os, re, sys
 default = "codegraph"
+trim_chars = "\t\n\v\f\r \u00a0\u1680" + "".join(chr(c) for c in range(0x2000, 0x200b)) + "\u2028\u2029\u202f\u205f\u3000\ufeff"
+raw_dir = os.environb.get(b"CODEGRAPH_DIR", b"").decode("utf-8", errors="replace")
+dirname = re.sub("^[" + re.escape(trim_chars) + "]+|[" + re.escape(trim_chars) + "]+$", "", raw_dir)
+if not dirname or dirname == "." or ".." in dirname or "/" in dirname or "\\" in dirname or os.path.isabs(dirname):
+    dirname = ".codegraph"
+def output(state, bin_name, dir_name=dirname):
+    fields = (state, bin_name, dir_name, ascii(dir_name))
+    sys.stdout.buffer.write(b"".join(value.encode("utf-8") + b"\0" for value in fields))
 try:
     if not sys.argv[1]: raise ValueError()
     with open(sys.argv[1], encoding="utf-8") as f: config = json.load(f)
     if not isinstance(config, dict): raise ValueError()
-    if "symbolGraph" not in config: print("not-configured", default); raise SystemExit
+    if "symbolGraph" not in config: output("not-configured", default, ".codegraph"); raise SystemExit
     seam = config["symbolGraph"]
     if not isinstance(seam, dict): raise ValueError()
     enabled = seam.get("enabled", True)
@@ -42,11 +49,11 @@ try:
     if valid:
         try: bin_name.encode("utf-8")
         except UnicodeEncodeError: valid = False
-    if not enabled: sys.stdout.buffer.write(("disabled-by-config " + (bin_name if valid else default) + "\n").encode("utf-8")); raise SystemExit
+    if not enabled: output("disabled-by-config", bin_name if valid else default, ".codegraph"); raise SystemExit
     if not valid: raise ValueError()
-    sys.stdout.buffer.write(("enabled " + bin_name + "\n").encode("utf-8"))
+    output("enabled", bin_name)
 except Exception:
-    sys.stdout.buffer.write(("invalid-config " + default + "\n").encode("utf-8"))
+    output("invalid-config", default, ".codegraph")
 ' "$CONFIG")
 
 emit() { python3 -c 'import json,sys
@@ -66,13 +73,34 @@ fi
 ERRF="$(mktemp "${TMPDIR:-/tmp}/codegraph_probe_err.XXXXXX")"
 trap 'rm -f "$ERRF"' EXIT
 
-if [[ -d "$REPO_ROOT/.codegraph" ]]; then
+DIR="$REPO_ROOT/$DIRNAME"
+DB="$DIR/codegraph.db"
+
+if [[ -L "$DIR" ]]; then
+  echo "codegraph dir $DIRNAME_ESC is a symlink; not touching it" >&2
+  emit false "$BIN" index-failed
+  exit 0
+elif [[ -e "$DIR" && ! -d "$DIR" ]]; then
+  echo "codegraph dir $DIRNAME_ESC exists but is not a directory" >&2
+  emit false "$BIN" index-failed
+  exit 0
+elif [[ ! -e "$DIR" ]]; then
+  CMD=(init .)
+elif [[ -L "$DB" ]]; then
+  echo "codegraph.db is a symlink; not touching it" >&2
+  emit false "$BIN" index-failed
+  exit 0
+elif [[ ! -e "$DB" ]]; then
+  CMD=(init .)
+elif [[ -f "$DB" ]]; then
   CMD=(sync .)
 else
-  CMD=(init .)
+  echo "codegraph.db exists but is not a regular file" >&2
+  emit false "$BIN" index-failed
+  exit 0
 fi
 
-if ( cd "$REPO_ROOT" && "$BIN" "${CMD[@]}" ) >/dev/null 2>"$ERRF"; then
+if ( cd "$REPO_ROOT" && CODEGRAPH_DIR="$DIRNAME" "$BIN" "${CMD[@]}" </dev/null ) >/dev/null 2>"$ERRF"; then
   emit true "$BIN" ok
   exit 0
 else

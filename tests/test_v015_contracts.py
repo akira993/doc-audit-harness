@@ -194,6 +194,36 @@ class TestV015Contracts(unittest.TestCase):
             self.assertEqual(units[start:start + 4],
                              [heading + " " + sentences[0], *sentences[1:]], path)
 
+    def test_v0151_behavior_change_paragraphs_are_exact(self):
+        expected = {
+            "docs/ADOPTION.md": (
+                "**v0.15.1 behavior changes:** the symbolGraph probe chooses `init` or `sync` from the state of `<dir>/codegraph.db`, honoring `CODEGRAPH_DIR`, so a leftover index directory without the database self-recovers on the next run; symlinked or non-regular index directories or databases are left untouched and report `index-failed`—valid symlink configurations that previously reached `sync` are intentionally unsupported because codegraph may overwrite the link target—and a renamed index directory selected by `CODEGRAPH_DIR` remains outside `tree-digest.py`'s fixed `.codegraph` known root and cannot be excluded with `digestExclude` (an existing limitation not addressed in this release).",
+                "The `/code-review` wording now reflects the upstream capability for Claude to invoke it autonomously; audit behavior is unchanged, and autonomous invocation remains tracked in #66.",
+            ),
+            "docs/ADOPTION.ja.md": (
+                "**v0.15.1 の挙動変更:** symbolGraph probe は `CODEGRAPH_DIR` を尊重し、`<dir>/codegraph.db` の状態から `init` または `sync` を選ぶため、database を失った索引ディレクトリだけが残っても次回 run で自己回復し、symlink または通常ファイル以外の索引ディレクトリ／database は触らず `index-failed` として、従来 `sync` まで進んだ有効な symlink 構成も codegraph が link 先を上書きし得るため本版から意図的に非対応とし、なお `CODEGRAPH_DIR` で改名した索引ディレクトリは `tree-digest.py` の `.codegraph` 固定の既知 root に含まれず、`digestExclude` でも除外できない（既存の制限であり、本版では未対応）。",
+                "`/code-review` の記述を、Claude が自律起動できるという上流の現状に合わせて是正したが、監査の挙動は不変で、自律起動は #66 で追跡する。",
+            ),
+        }
+        for path, paragraphs in expected.items():
+            units = [normalize(unit) for unit in markdown_units(read(path))]
+            start = next(index for index, unit in enumerate(units)
+                         if unit.startswith(paragraphs[0].split(" ", 1)[0]))
+            self.assertEqual(units[start:start + 2], list(paragraphs), path)
+
+    def test_code_review_behavior_is_unchanged_by_wording_update(self):
+        skill = normalize(read("skills/audit/SKILL.md"))
+        contracts = (
+            "If completion cannot be confirmed, do not invent findings and use `CODE_REVIEW_STATE=not-model-invocable`.",
+            "If execution reports the specific `disable-model-invocation` block, bind `CODE_REVIEW_STATE=not-model-invocable` without WARN.",
+            "💡 code-review: not run — the audit does not start /code-review itself yet (tracked in #66); run it when offered in an interactive audit, or before the audit, if you want this layer included. (expected)",
+            "In a non-interactive session, do not offer the question and use that expected state directly.",
+            "before the gate and only once, use AskUserQuestion to offer running the configured `/code-review` command.",
+        )
+        for contract in contracts:
+            with self.subTest(contract=contract):
+                self.assertGreaterEqual(skill.count(normalize(contract)), 1)
+
     def test_minimum_unit_scanner_preserves_enabled_by_default_seams(self):
         old = "conditional" + "-force"
         fixture = (
