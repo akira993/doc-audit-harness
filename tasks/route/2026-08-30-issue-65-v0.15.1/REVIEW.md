@@ -168,3 +168,8 @@ rev.6→rev.7 の差分 70 行を全行読解し、B-1〜B-4・S-1/S-2 の反映
 - 持ち越し: (1) dir-framework `docs/runbooks/initial-setup.md:50` の「init は拒否される」回避手順は stale（別途）、(2) dir-framework の `harness.engineVersion` を 0.15.1 へ（release 後）、(3) 解決済み DIRNAME の Workflow sealed 引数化は #63 route、(4) #63+#59 合同 route・#66 方式 B route は `00-issue-review.md` の決定に従い次に着手。
 
 - PR: https://github.com/akira993/doc-audit-harness/pull/67（2026-08-30、head `a6d8e8e`、本文に closing keyword なし。マージはユーザー）
+
+## route-close 追記（handoff 完了・2026-08-30）
+- PR #67 マージ commit: main `afe2e3f`（ユーザーがマージ）。
+- `echo y | release-handoff.sh afe2e3f… 67` exit 0: フルスイート Ran 655 OK → tag `docaudit--v0.15.1` = `afe2e3f`（local/remote 一致を boss が実測）→ GitHub Release https://github.com/akira993/doc-audit-harness/releases/tag/docaudit--v0.15.1 → #65 CLOSED（#59/#63/#66 は OPEN のまま）→ skills-dir 同期（`~/.claude/skills/docaudit/` plugin 0.15.1、`skills/` の diff なし、probe に `codegraph.db` 分岐あり）。
+- 残: dir-framework 側の `harness.engineVersion` 0.15.1 追随と `initial-setup.md:50` の stale 記述（別 route）。次: #63+#59 合同 route。
