@@ -33,8 +33,11 @@ class TestV013Contracts(unittest.TestCase):
         breaking = next(i for i, line in enumerate(lines) if "--break-lock" in line and "run only" in line)
         opener = next(i for i, line in enumerate(lines) if "open-run.py" in line and "[--accept-config]" in line)
         self.assertLess(breaking, check); self.assertLess(check, opener)
-        self.assertIn('--scope "$AUDIT_SCOPE_PATH"', lines[check])
-        self.assertTrue(any("auditScope" in line and "AUDIT_SCOPE_PATH" in line for line in lines))
+        self.assertNotIn('--scope ', lines[check])
+        self.assertIn('--check --json', lines[check])
+        self.assertTrue(any("scopePath" in line and "AUDIT_SCOPE_PATH" in line
+                            for line in lines[check:opener]))
+        self.assertTrue(any("scopePath" in line and "AUDIT_SCOPE_PATH" in line for line in lines))
         self.assertTrue(any("diff.missing" in line and "/docaudit:init --import-audit-scope" in line for line in lines))
         self.assertTrue(any("not-imported" in line and "continue" in line for line in lines))
 
@@ -76,7 +79,9 @@ class TestV013Contracts(unittest.TestCase):
         self.assertLess(plan, codex_exec)
 
         evidence = "".join(lines[phase4:phase5])
-        self.assertIn('"codexReview":{"state":"$CODEX_REVIEW_STATE"}', evidence)
+        self.assertIn('"codexReview":{"state":"$CODEX_REVIEW_STATE",'
+                      '"promptVariant":"$PROMPT_VARIANT_OR_NULL",'
+                      '"carryForwardSha":"$CARRY_FORWARD_SHA"}', evidence)
         self.assertNotIn('"codexReview":{"required"', evidence)
 
         statuses = "".join(lines[phase5:])
@@ -198,7 +203,7 @@ class TestV013Contracts(unittest.TestCase):
         self.assertEqual(
             {plugin_version, latest_sha_version, adoption_version,
              adoption_ja_version, stamp_version},
-            {"0.15.1"})
+            {"0.16.0"})
 
     def test_j_only_allowlisted_0_12_0_references_remain(self):
         old_version = "0." "12.0"
@@ -207,12 +212,12 @@ class TestV013Contracts(unittest.TestCase):
             "docs/ADOPTION.md": [
                 rf"Separately, v{old} can opt Phase 3 into .*",
                 rf"\*\*v{old} behavior changes:\*\*.*",
-                rf"Existing unmodified stamped 0\.10\.0, 0\.10\.1, 0\.11\.0, 0\.12\.0, 0\.13\.0, 0\.13\.1, 0\.13\.2, 0\.14\.0, or 0\.15\.0 templates can be updated directly to 0\.15\.1 with",
+                rf"Existing unmodified stamped 0\.10\.0, 0\.10\.1, 0\.11\.0, 0\.12\.0, 0\.13\.0, 0\.13\.1, 0\.13\.2, 0\.14\.0, 0\.15\.0, or 0\.15\.1 templates can be updated directly to 0\.16\.0 with",
             ],
             "docs/ADOPTION.ja.md": [
                 rf"これとは別に、v{old} では Phase 3 を .*",
                 rf"\*\*v{old} の挙動変更:\*\*.*",
-                rf"変更されていない stamp 付きの 0\.10\.0、0\.10\.1、0\.11\.0、0\.12\.0、0\.13\.0、0\.13\.1、0\.13\.2、0\.14\.0、または 0\.15\.0 テンプレートは、",
+                rf"変更されていない stamp 付きの 0\.10\.0、0\.10\.1、0\.11\.0、0\.12\.0、0\.13\.0、0\.13\.1、0\.13\.2、0\.14\.0、0\.15\.0、または 0\.15\.1 テンプレートは、",
             ],
             "skills/audit/references/engine-shas.json": [
                 rf'\s*"{old}": \{{',

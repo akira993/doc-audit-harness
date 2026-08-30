@@ -11,6 +11,8 @@ import re
 import secrets
 import stat
 import sys
+import tempfile
+import time
 
 from docaudit_paths import validate_repo_path
 
@@ -56,35 +58,81 @@ def read_holder(fd):
     os.lseek(fd, 0, os.SEEK_SET)
     raw = os.read(fd, 65536)
     try:
-        return json.loads(raw.decode("utf-8"))
+        value = json.loads(raw.decode("utf-8"))
     except Exception:
-        return {"invalid": True}
+        return None
+    if not isinstance(value, dict):
+        return None
+    marker = value.get("historyQuarantineFailed")
+    if marker is not None and not isinstance(marker, bool):
+        return None
+    return value
 
 
-def previous_report_status(path):
+def read_last_run(path):
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return "absent", None
     except OSError:
-        return None
+        return "unreadable", None
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
-            return None
+            return "unreadable", None
         raw = os.read(fd, 65537)
         if len(raw) > 65536:
-            return None
+            return "unreadable", None
         value = json.loads(raw.decode("utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
-        return None
+        return "unreadable", None
     finally:
         os.close(fd)
+    if not isinstance(value, dict):
+        return "unreadable", None
+    for key in ("configAcceptanceRequired", "historyQuarantineFailed"):
+        if key in value and not isinstance(value[key], bool):
+            return "unreadable", None
+    return "valid", value
+
+
+def report_status(value):
     status = value.get("reportStatus") if isinstance(value, dict) else None
     if status in {"pending", "failed", "written-durability-unknown"}:
         return status
     return None
 
 
-def release(lock_path, runid, breaking=False):
+def atomic_state(path, value):
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=".docaudit-state.", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def merge_quarantine_marker(last_run_path):
+    state, value = read_last_run(last_run_path)
+    if state == "unreadable":
+        return False
+    merged = dict(value) if state == "valid" else {}
+    merged["historyQuarantineFailed"] = True
+    try:
+        atomic_state(last_run_path, merged)
+    except OSError:
+        return False
+    return True
+
+
+def release(lock_path, last_run_path, runid, breaking=False):
     try:
         fd = os.open(lock_path, os.O_RDWR | os.O_NOFOLLOW)
     except FileNotFoundError:
@@ -104,9 +152,15 @@ def release(lock_path, runid, breaking=False):
             return emit({"released": False, "reason": "lock-replaced"}, 4)
         holder = read_holder(fd)
         if before != after:
-            return emit({"released": False, "reason": "lock-replaced", "holder": holder}, 4)
+            return emit({"released": False, "reason": "lock-replaced",
+                         "holder": holder or {"invalid": True}}, 4)
+        if holder is None:
+            return emit({"released": False, "reason": "lock-invalid",
+                         "holder": {"invalid": True}}, 4)
         if not breaking and holder.get("runid") != runid:
             return emit({"released": False, "reason": "runid-mismatch", "holder": holder}, 4)
+        if holder.get("historyQuarantineFailed") is True:
+            merge_quarantine_marker(last_run_path)
         os.unlink(lock_path)
         return emit({"released": True, "broken": breaking, "holder": holder})
     finally:
@@ -122,6 +176,7 @@ def main():
     parser.add_argument("--release", action="store_true")
     parser.add_argument("--break-lock", action="store_true")
     parser.add_argument("--accept-config", action="store_true")
+    parser.add_argument("--expect-config-sha")
     args = parser.parse_args()
     if args.release and args.break_lock:
         parser.error("--release and --break-lock are mutually exclusive")
@@ -136,13 +191,18 @@ def main():
         print(f"open-run: {exc}", file=sys.stderr)
         return 2
     lock_path = os.path.join(run_base, "lock")
+    last_run_path = os.path.join(repo, ".claude", "state", "docaudit-last-run.json")
     if args.break_lock:
-        return release(lock_path, None, breaking=True)
+        return release(lock_path, last_run_path, None, breaking=True)
     if args.release:
         if not args.runid or not RUNID_RE.match(args.runid):
             print("open-run: --release requires a valid --runid", file=sys.stderr)
             return 2
-        return release(lock_path, args.runid)
+        return release(lock_path, last_run_path, args.runid)
+
+    if not args.expect_config_sha:
+        print("open-run: normal open requires --expect-config-sha", file=sys.stderr)
+        return 2
 
     runid = args.runid or (datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ-") + secrets.token_hex(4))
     if not RUNID_RE.match(runid):
@@ -154,30 +214,44 @@ def main():
         print(f"open-run: invalid config path: {exc}", file=sys.stderr)
         return 2
     try:
-        with open(config_path, "rb") as handle:
-            config_bytes = handle.read()
+        config_fd = os.open(config_path, os.O_RDONLY | os.O_NOFOLLOW)
+        try:
+            if not stat.S_ISREG(os.fstat(config_fd).st_mode):
+                raise OSError("config is not a regular file")
+            chunks = []
+            while True:
+                chunk = os.read(config_fd, 65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            config_bytes = b"".join(chunks)
+        finally:
+            os.close(config_fd)
     except OSError as exc:
         print(f"open-run: cannot read config: {exc}", file=sys.stderr)
         return 2
     config_sha = sha(config_bytes)
-    last_run_path = os.path.join(repo, ".claude", "state", "docaudit-last-run.json")
-    if os.path.isfile(last_run_path) and not args.accept_config:
-        try:
-            with open(last_run_path, encoding="utf-8") as handle:
-                last_run = json.load(handle)
-        except (OSError, json.JSONDecodeError):
-            last_run = {}
-        if (last_run.get("verdict") == "REFUSED"
-                and last_run.get("reason") == "config-changed"
-                and last_run.get("expectedConfigSha") != config_sha):
-            return emit({"opened": False, "reason": "config-change-unaccepted",
-                         "expectedConfigSha": last_run.get("expectedConfigSha")}, 6)
+    if config_sha != args.expect_config_sha:
+        print("config-changed-before-open", file=sys.stderr)
+        return 2
+    try:
+        config = json.loads(config_bytes.decode("utf-8"))
+        if not isinstance(config, dict):
+            raise ValueError("config top level must be an object")
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        print(f"open-run: invalid config: {exc}", file=sys.stderr)
+        return 2
     anchor_absolute = (args.anchor_path if os.path.isabs(args.anchor_path)
                        else os.path.join(repo, args.anchor_path))
     anchor_rel = os.path.relpath(os.path.abspath(anchor_absolute), repo).replace(os.sep, "/")
     try:
-        anchor = os.path.join(
-            repo, validate_repo_path(repo, anchor_rel, must_exist=False, regular_file=False))
+        anchor_rel = validate_repo_path(
+            repo, anchor_rel, must_exist=False, regular_file=False)
+        configured_anchor = validate_repo_path(
+            repo, config.get("anchorPath"), must_exist=False, regular_file=False)
+        if anchor_rel != configured_anchor:
+            raise ValueError("anchor-path-mismatch")
+        anchor = os.path.join(repo, anchor_rel)
         if os.path.lexists(anchor) and not os.path.isfile(anchor):
             raise ValueError("anchor must be a regular file when present")
     except ValueError as exc:
@@ -188,40 +262,95 @@ def main():
             anchor_sha = sha(handle.read())
     else:
         anchor_sha = "none"
+
+    if os.path.lexists(lock_path):
+        try:
+            existing_fd = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                existing = read_holder(existing_fd) or {"invalid": True}
+            finally:
+                os.close(existing_fd)
+        except OSError:
+            existing = {"invalid": True}
+        return emit({"locked": True, "holder": existing}, 4)
+
+    last_run_state, last_run = read_last_run(last_run_path)
+    if last_run_state == "unreadable" and not args.accept_config:
+        return emit({"opened": False, "reason": "last-run-unreadable"}, 6)
+    acceptance_required = False
+    if last_run_state == "valid":
+        if last_run.get("configAcceptanceRequired") is True:
+            acceptance_required = True
+        elif ("configAcceptanceRequired" not in last_run
+              and last_run.get("verdict") == "REFUSED"
+              and last_run.get("reason") == "config-changed"
+              and last_run.get("expectedConfigSha") != config_sha):
+            acceptance_required = True
+    if acceptance_required and not args.accept_config:
+        return emit({"opened": False, "reason": "config-change-unaccepted",
+                     "expectedConfigSha": last_run.get("expectedConfigSha")}, 6)
+
+    prior_status = report_status(last_run)
+    quarantine_pending = (
+        last_run_state == "valid"
+        and last_run.get("historyQuarantineFailed") is True
+    ) or last_run_state == "unreadable"
     holder = {"runid": runid, "startedAt": datetime.datetime.now(datetime.timezone.utc).isoformat()}
     raw = (json.dumps(holder, sort_keys=True) + "\n").encode("utf-8")
     try:
         fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     except FileExistsError:
-        try:
-            existing_fd = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW)
-            try:
-                existing = read_holder(existing_fd)
-            finally:
-                os.close(existing_fd)
-        except Exception:
-            existing = {"invalid": True}
-        return emit({"locked": True, "holder": existing}, 4)
+        return emit({"locked": True, "holder": {"invalid": True}}, 4)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         os.write(fd, raw)
         os.fsync(fd)
         inode = os.fstat(fd).st_ino
+
+        history_path = os.path.join(repo, ".claude", "state", "docaudit-history.json")
+        if quarantine_pending and os.path.lexists(history_path):
+            quarantine_path = history_path + f".tainted-{runid}-{int(time.time())}"
+            try:
+                os.replace(history_path, quarantine_path)
+            except OSError as exc:
+                raise RuntimeError("history-quarantine-pending") from exc
+            if os.path.lexists(history_path):
+                raise RuntimeError("history-quarantine-pending")
+
+        updated_last_run = None
+        if last_run_state == "unreadable":
+            updated_last_run = {
+                "configAcceptanceRequired": False,
+                "historyQuarantineFailed": False,
+            }
+        elif last_run_state == "valid" and (
+                args.accept_config or last_run.get("historyQuarantineFailed") is True):
+            updated_last_run = dict(last_run)
+            if args.accept_config:
+                updated_last_run["configAcceptanceRequired"] = False
+            if last_run.get("historyQuarantineFailed") is True:
+                updated_last_run["historyQuarantineFailed"] = False
+        if updated_last_run is not None:
+            atomic_state(last_run_path, updated_last_run)
+
         run_dir = os.path.join(run_base, runid)
         os.mkdir(run_dir, 0o700)
     except Exception as exc:
         try:
-            os.unlink(lock_path)
+            if os.fstat(fd).st_ino == os.lstat(lock_path).st_ino:
+                os.unlink(lock_path)
         except OSError:
             pass
-        print(f"open-run: {exc}", file=sys.stderr)
+        if isinstance(exc, RuntimeError) and str(exc) == "history-quarantine-pending":
+            print("history-quarantine-pending", file=sys.stderr)
+        else:
+            print(f"open-run: {exc}", file=sys.stderr)
         return 2
     finally:
         os.close(fd)
     result = {"runid": runid, "runDir": run_dir, "anchor": anchor_sha,
               "config": config_sha, "lockIno": inode,
               "preflight": "none", "phase4": "none"}
-    prior_status = previous_report_status(last_run_path)
     if prior_status is not None:
         result["previousReportStatus"] = prior_status
     return emit(result)

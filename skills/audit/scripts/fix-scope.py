@@ -9,6 +9,7 @@ import stat
 import sys
 
 from docaudit_paths import matches_glob, validate_repo_path
+from sealed_config import SealedConfigMismatch, load_sealed_config
 
 
 DENIED_PARTS = {"adr", "decisions", "logs"}
@@ -52,12 +53,15 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--config")
+    parser.add_argument("--expect-config-sha")
     parser.add_argument("--paths")
     parser.add_argument("--snapshot", action="store_true")
     parser.add_argument("--verify")
     parser.add_argument("--allowed")
     args = parser.parse_args()
     try:
+        if args.config and args.expect_config_sha is None:
+            raise ValueError("--config requires --expect-config-sha")
         root = os.path.realpath(args.repo_root)
         if args.snapshot:
             if not args.allowed:
@@ -80,8 +84,7 @@ def main():
             return 0 if not changed else 3
         if not args.config or not args.paths:
             raise ValueError("classification requires --config and --paths")
-        with open(args.config, encoding="utf-8") as handle:
-            config = json.load(handle)
+        _config_raw, config = load_sealed_config(args.config, args.expect_config_sha)
         raw = sys.stdin.read() if args.paths == "-" else open(args.paths, encoding="utf-8").read()
         allowed = []
         denied = []
@@ -109,6 +112,9 @@ def main():
                 denied.append({"path": original, "reason": reason})
         print(json.dumps({"allowed": sorted(set(allowed)), "denied": denied}, ensure_ascii=False, sort_keys=True))
         return 0
+    except SealedConfigMismatch as exc:
+        print(str(exc), file=sys.stderr)
+        return 7
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"fix-scope: {exc}", file=sys.stderr)
         return 2

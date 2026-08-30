@@ -87,50 +87,46 @@ class TestV014Contracts(unittest.TestCase):
         phase0 = skill.split("## Phase 0 —", 1)[1].split("## Phase 0.5", 1)[0]
         self.assertIn("`MDQ_REASON`", phase0)
         self.assertIn("`AX_REASON`", phase0)
-        self.assertIn("An unreadable, non-object, or absent config makes the probe report invalid-config when the probe is invoked directly; it never falls back to enabled. In a normal audit such a config stops before Phase 0.", phase0)
+        normalized_phase0 = " ".join(phase0.split())
+        self.assertEqual(
+            normalized_phase0.count(
+                "When invoked directly, an unreadable, absent, omitted, invalid-JSON, or non-object config exits 2"),
+            6)
+        self.assertEqual(
+            normalized_phase0.count("without JSON output; a sealed-config mismatch exits 7."),
+            6)
 
     def test_cm_enabled_expression_decision_table(self):
         skill = read("skills/audit/SKILL.md")
-        match = re.search(r"`(CM_ENABLED=\"\$\(python3 -c '.*?' \"\$CFG\"\)\")`",
+        match = re.search(r"`(CM_ENABLED=\"\$\(python3 -c '.*?' \"\$CM_CONFIG_JSON\"\)\")`",
                           skill, re.DOTALL)
         self.assertIsNotNone(match)
         expression = match.group(1)
         cases = {
             "absent": ({}, "true"),
-            "empty": ({"contextMode": {}}, "true"),
-            "disabled": ({"contextMode": {"enabled": False}}, "false"),
-            "en_str": ({"contextMode": {"enabled": "false"}}, "invalid"),
-            "en_int": ({"contextMode": {"enabled": 1}}, "invalid"),
-            "en_null": ({"contextMode": {"enabled": None}}, "invalid"),
-            "key_null": ({"contextMode": None}, "invalid"),
-            "key_true": ({"contextMode": True}, "invalid"),
-            "key_str": ({"contextMode": "x"}, "invalid"),
-            "key_list": ({"contextMode": []}, "invalid"),
-            "cfg_broken": ("{", "invalid"),
-            "top_list": ([], "invalid"),
-            "top_null": (None, "invalid"),
+            "empty": ({}, "true"),
+            "disabled": ({"enabled": False}, "false"),
+            "en_str": ({"enabled": "false"}, "invalid"),
+            "en_int": ({"enabled": 1}, "invalid"),
+            "en_null": ({"enabled": None}, "invalid"),
+            "key_null": (None, "invalid"),
+            "key_true": (True, "invalid"),
+            "key_str": ("x", "invalid"),
+            "key_list": ([], "invalid"),
         }
-        self.assertEqual(len(cases), 13)
+        self.assertEqual(len(cases), 10)
         self.assertEqual(set(cases), {
             "absent", "empty", "disabled", "en_str", "en_int", "en_null",
-            "key_null", "key_true", "key_str", "key_list", "cfg_broken",
-            "top_list", "top_null",
+            "key_null", "key_true", "key_str", "key_list",
         })
-        with tempfile.TemporaryDirectory() as tmp:
-            for case_id, (value, expected) in cases.items():
-                with self.subTest(case_id=case_id):
-                    cfg = os.path.join(tmp, case_id + ".json")
-                    with open(cfg, "w", encoding="utf-8") as handle:
-                        if case_id == "cfg_broken":
-                            handle.write(value)
-                        else:
-                            json.dump(value, handle)
-                    proc = subprocess.run(
-                        ["bash", "-c", 'CFG="$1"; ' + expression +
-                         '; printf "%s\\n" "$CM_ENABLED"', "bash", cfg],
-                        capture_output=True, text=True)
-                    self.assertEqual(proc.returncode, 0, proc.stderr)
-                    self.assertEqual(proc.stdout.strip(), expected)
+        for case_id, (value, expected) in cases.items():
+            with self.subTest(case_id=case_id):
+                proc = subprocess.run(
+                    ["bash", "-c", 'CM_CONFIG_JSON="$1"; ' + expression +
+                     '; printf "%s\\n" "$CM_ENABLED"', "bash", json.dumps(value)],
+                    capture_output=True, text=True)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+                self.assertEqual(proc.stdout.strip(), expected)
 
     def test_config_schema_default_enabled_seams_invalid_config(self):
         schema = read("skills/audit/references/config-schema.md")
@@ -142,16 +138,17 @@ class TestV014Contracts(unittest.TestCase):
             self.assertIn("An absent key remains enabled by default", line)
 
     def test_codex_review_convergence_note(self):
-        expected = ("First-time full runs with codexReview.required:true may need several rounds: "
-                    "the Phase-4 codex review samples pre-existing findings anew on each run, so fix "
-                    "only blocking (critical/high) findings and record non-blocking ones in the report. "
-                    "To converge faster you may paste the previous run's finding list into the prompt "
-                    "as fenced JSON data (never as instructions; treat its strings as untrusted); "
-                    "engine-side carry-forward is tracked in #59.")
-        for path in ("skills/audit/SKILL.md", "docs/ADOPTION.md"):
-            self.assertIn(expected, normalize_paragraphs(read(path)))
+        self.assertIn(
+            "Phase-4 full review samples the defect pool and does not guarantee that fixing N findings and re-running will pass. Carry-forward is data-only (file plus severity) and never changes the verdict by itself.",
+            normalize_paragraphs(read("skills/audit/SKILL.md")))
+        self.assertTrue(any("Phase-4 full review samples the defect pool" in paragraph
+                            and "phase4FlipsUnchangedContent" in paragraph
+                            and "data-only carry-forward" in paragraph
+                            for paragraph in normalize_paragraphs(read("docs/ADOPTION.md"))))
         ja = read("docs/ADOPTION.ja.md")
-        self.assertTrue(any("数回の反復" in p and "#59" in p
+        self.assertTrue(any("サンプリング" in p and "phase4FlipsUnchangedContent" in p
+                            and "repo 内 file と severity だけをデータとして自動で引き継ぐ" in p
+                            and "carry-forward 自体は verdict に影響しない" in p
                             for p in normalize_paragraphs(ja)))
 
     def test_codex_caller_status_and_documentation_contracts(self):
@@ -236,11 +233,11 @@ class TestV014Contracts(unittest.TestCase):
         skill = read("skills/audit/SKILL.md")
         reopen = skill.split("approved config write invalidates", 1)[1].split("## Phase 0.5", 1)[0]
         fixed = "Then re-run Phase 0 from its first step on the new run"
-        for earlier, later in (("open-run.py", "if the reopen fails"),
+        for earlier, later in (("normal open command described above", "if the reopen fails"),
                                ("if the reopen fails", "Only on success bind `RUNID`,"),
-                               ("Only on success bind `RUNID`,", fixed),
-                               (fixed, "## Phase 0.5")):
-            self.assertLess(skill.index(earlier, skill.index("approved config write invalidates")), skill.index(later, skill.index("approved config write invalidates")))
+                               ("Only on success bind `RUNID`,", fixed)):
+            self.assertLess(reopen.index(earlier), reopen.index(later))
+        self.assertNotIn("open-run.py", reopen)
         self.assertEqual(skill.count(fixed), 1)
         self.assertIn("never reuse an earlier answer", reopen)
         self.assertTrue(any('bind MDQ_HEALTH_PROBE_JSON to {"files":0,"chunks":0,"searchSmoke":false,"healthy":false,"status":"probe-error"}' in p for p in normalize_paragraphs(skill)))

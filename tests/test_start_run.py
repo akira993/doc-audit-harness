@@ -17,7 +17,8 @@ class TestStartRun(unittest.TestCase):
             "--repo-root", fx.repo, "--config", fx.config_path,
             "--history", fx.history, "--impact-json", impact_path,
             "--baseline-sha", fx.head, "--mode", "incremental",
-            "--contract-version", "0.10.0", "--evidence", json.dumps(fx.evidence))
+            "--contract-version", "0.10.0", "--evidence", json.dumps(fx.evidence),
+            "--expect-config-sha", fx.evidence["config"])
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         fx.evidence = json.loads(proc.stdout)
         return impact_path
@@ -28,7 +29,8 @@ class TestStartRun(unittest.TestCase):
             "--repo-root", fx.repo, "--impact-json", impact_path,
             "--dispatch-json", os.path.join(fx.run_dir, "dispatch.json"),
             "--run-class", "standard", "--mode", "incremental",
-            "--config", fx.config_path, "--evidence", json.dumps(fx.evidence))
+            "--config", fx.config_path, "--expect-config-sha", fx.evidence["config"],
+            "--evidence", json.dumps(fx.evidence))
 
     def configure_scope(self, fx, metadata=None):
         scope_rel = ".claude/audit-scope.json"
@@ -382,14 +384,16 @@ class TestStartRun(unittest.TestCase):
                        "--repo-root", fx.repo, "--config", fx.config_path,
                        "--history", fx.history, "--impact-json", impact_path,
                        "--baseline-sha", fx.head, "--mode", "incremental",
-                       "--contract-version", "0.10.0", "--evidence", json.dumps(fx.evidence))
+                       "--contract-version", "0.10.0", "--evidence", json.dumps(fx.evidence),
+                       "--expect-config-sha", fx.evidence["config"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         fx.evidence = json.loads(proc.stdout)
         proc = fx.call("start-run.py", "--run-dir", fx.run_dir, "--runid", fx.runid,
                        "--repo-root", fx.repo, "--impact-json", impact_path,
                        "--dispatch-json", os.path.join(fx.run_dir, "dispatch.json"),
                        "--run-class", "standard", "--mode", "incremental",
-                       "--config", fx.config_path, "--evidence", json.dumps(fx.evidence))
+                       "--config", fx.config_path, "--expect-config-sha", fx.evidence["config"],
+                       "--evidence", json.dumps(fx.evidence))
         self.assertEqual(proc.returncode, 0, proc.stderr)
         fx.evidence = json.loads(proc.stdout)
         write(os.path.join(fx.repo, "new.py"), "new\n")

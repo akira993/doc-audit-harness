@@ -169,7 +169,7 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         self.assertIn(".claude/skills/doc-lint/SKILL.md", out["created"])
         self.assertIn(f"@{out['stampVersion']} ", read(path))
 
-    def test_refresh_updates_all_unmodified_0_15_0_templates_to_0_15_1(self):
+    def test_refresh_updates_unmodified_0_15_0_text_templates_and_skips_changed_engine(self):
         spec = importlib.util.spec_from_file_location("scaffold_under_test", SCRIPT)
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         sources = module._harness_sources()
@@ -189,11 +189,14 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         proc = run(self.repo, "--harness", "--refresh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["stampVersion"], "0.15.1")
-        self.assertEqual(set(paths.values()) & set(out["created"]), set(paths.values()))
+        self.assertEqual(out["stampVersion"], "0.16.0")
+        text_paths = {paths["check-docs"], paths["doc-lint"]}
+        self.assertEqual(text_paths & set(out["created"]), text_paths)
+        self.assertIn(paths["check-docs-engine"], out["skipped"])
         for name, relative in paths.items():
             refreshed = read(os.path.join(self.repo, relative))
-            self.assertIn("@0.15.1 ", refreshed)
+            expected_version = "0.15.0" if name == "check-docs-engine" else "0.16.0"
+            self.assertIn(f"@{expected_version} ", refreshed)
             self.assertEqual(module._normalized_sha(refreshed), before[name])
 
     def test_refresh_preserves_modified_historical_doc_lint(self):
@@ -238,11 +241,11 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         proc = run(self.repo, "--harness", "--refresh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["stampVersion"], "0.15.1")
+        self.assertEqual(out["stampVersion"], "0.16.0")
         self.assertIn("scripts/check-docs.py", out["created"])
         refreshed = read(path)
-        current = json.loads(read(SHAS))["0.15.1"]["check-docs-engine"]
-        self.assertIn(f"# docaudit-template: check-docs-engine@0.15.1 sha256:{current}\n",
+        current = json.loads(read(SHAS))["0.16.0"]["check-docs-engine"]
+        self.assertIn(f"# docaudit-template: check-docs-engine@0.16.0 sha256:{current}\n",
                       refreshed)
         self.assertEqual(module._normalized_sha(refreshed), current)
 
@@ -266,11 +269,11 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         proc = run(self.repo, "--harness", "--refresh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["stampVersion"], "0.15.1")
+        self.assertEqual(out["stampVersion"], "0.16.0")
         self.assertIn("scripts/check-docs.py", out["created"])
         refreshed = read(path)
-        current = json.loads(read(SHAS))["0.15.1"]["check-docs-engine"]
-        self.assertIn(f"# docaudit-template: check-docs-engine@0.15.1 sha256:{current}\n",
+        current = json.loads(read(SHAS))["0.16.0"]["check-docs-engine"]
+        self.assertIn(f"# docaudit-template: check-docs-engine@0.16.0 sha256:{current}\n",
                       refreshed)
         self.assertEqual(module._normalized_sha(refreshed), current)
 
@@ -336,7 +339,7 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         version = json.loads(read(PLUGIN))["version"]
-        self.assertEqual(version, "0.15.1")
+        self.assertEqual(version, "0.16.0")
         shipped = json.loads(read(SHAS))[version]
         actual = {name: module._normalized_sha(text)
                   for name, text in module._harness_sources().items()}

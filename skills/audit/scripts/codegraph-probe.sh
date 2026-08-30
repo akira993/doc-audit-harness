@@ -15,16 +15,27 @@
 # may be followed or overwritten by codegraph, so the probe does not touch them.
 set -uo pipefail
 
-CONFIG=""; REPO_ROOT="$(pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG=""; EXPECT_CONFIG_SHA=""; REPO_ROOT="$(pwd)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config) CONFIG="$2"; shift 2;;
+    --expect-config-sha) EXPECT_CONFIG_SHA="$2"; shift 2;;
     --repo-root) REPO_ROOT="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
 
-{ IFS= read -r -d '' STATE; IFS= read -r -d '' BIN; IFS= read -r -d '' DIRNAME; IFS= read -r -d '' DIRNAME_ESC; } < <(python3 -c '
+[[ -n "$CONFIG" ]] || { echo "error: --config required" >&2; exit 2; }
+[[ -n "$EXPECT_CONFIG_SHA" ]] || { echo "error: --expect-config-sha required" >&2; exit 2; }
+CONFIG_JSON="$(python3 "$SCRIPT_DIR/sealed_config.py" --config "$CONFIG" --expect-sha "$EXPECT_CONFIG_SHA" --print)" || { rc=$?; exit "$rc"; }
+
+if ! PARSED_CONFIG="$(mktemp "${TMPDIR:-/tmp}/codegraph_probe_config.XXXXXX")"; then
+  echo "error: failed to create temporary config parse file for codegraph probe" >&2
+  exit 2
+fi
+trap 'rm -f "$PARSED_CONFIG"' EXIT
+if ! printf '%s' "$CONFIG_JSON" | python3 -c '
 import json, os, re, sys
 default = "codegraph"
 trim_chars = "\t\n\v\f\r \u00a0\u1680" + "".join(chr(c) for c in range(0x2000, 0x200b)) + "\u2028\u2029\u202f\u205f\u3000\ufeff"
@@ -36,8 +47,7 @@ def output(state, bin_name, dir_name=dirname):
     fields = (state, bin_name, dir_name, ascii(dir_name))
     sys.stdout.buffer.write(b"".join(value.encode("utf-8") + b"\0" for value in fields))
 try:
-    if not sys.argv[1]: raise ValueError()
-    with open(sys.argv[1], encoding="utf-8") as f: config = json.load(f)
+    config = json.load(sys.stdin)
     if not isinstance(config, dict): raise ValueError()
     if "symbolGraph" not in config: output("not-configured", default, ".codegraph"); raise SystemExit
     seam = config["symbolGraph"]
@@ -54,7 +64,13 @@ try:
     output("enabled", bin_name)
 except Exception:
     output("invalid-config", default, ".codegraph")
-' "$CONFIG")
+' > "$PARSED_CONFIG"; then
+  echo "error: failed to parse sealed config for codegraph probe" >&2
+  exit 2
+fi
+{ IFS= read -r -d '' STATE; IFS= read -r -d '' BIN; IFS= read -r -d '' DIRNAME; IFS= read -r -d '' DIRNAME_ESC; } < "$PARSED_CONFIG"
+rm -f "$PARSED_CONFIG"
+trap - EXIT
 
 emit() { python3 -c 'import json,sys
 line=json.dumps({"symbolGraphAvailable":sys.argv[1] == "true", "symbolGraphBin":sys.argv[2], "reason":sys.argv[3]}, separators=(",", ":"))+"\n"

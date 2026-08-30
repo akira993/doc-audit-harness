@@ -4,6 +4,8 @@
 import hashlib
 import json
 import os
+import re
+import unicodedata
 
 
 VALID_VERDICTS = {"PASS", "WARN", "FAIL"}
@@ -19,6 +21,23 @@ HISTORY_FIELDS = {
     "verdict": str,
     "ts": str,
 }
+PHASE4_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
+PHASE4_RUN_FIELDS = {
+    "runid": str,
+    "ts": str,
+    "worktreeDigest": str,
+    "contractVersion": str,
+    "configSha": str,
+    "carryForwardSha": str,
+    "unresolvedFileCount": int,
+    "truncated": bool,
+    "findings": list,
+}
+PHASE4_RUN_LIMIT = 6
+PHASE4_FINDING_LIMIT = 500
+PHASE4_FILE_BYTES = 512
+PHASE4_RECORD_BYTES = 512 * 1024
+PHASE4_RUNS_BYTES = 1024 * 1024
 
 
 def sha256_bytes(data):
@@ -65,6 +84,80 @@ def parse_history(data):
             raise ValueError("history contains duplicate (runid,path)")
         seen.add(key)
     return entries
+
+
+def _canonical_size(value):
+    return len(json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+    ).encode("utf-8"))
+
+
+def _validate_phase4_path(path):
+    if not isinstance(path, str) or not path:
+        raise ValueError("finding file must be a non-empty string")
+    if (path.startswith(("./", "/", "//"))
+            or re.match(r"^[A-Za-z]:", path)
+            or "\\" in path or '"' in path
+            or any(unicodedata.category(char) == "Cc" for char in path)):
+        raise ValueError("finding file is not a canonical repository path")
+    if any(part in ("", ".", "..") for part in path.split("/")):
+        raise ValueError("finding file is not a canonical repository path")
+    if _canonical_size(path) > PHASE4_FILE_BYTES:
+        raise ValueError("finding file exceeds 512 serialized bytes")
+
+
+def _validate_phase4_runs(phase4_runs):
+    if not isinstance(phase4_runs, list):
+        raise ValueError("phase4Runs must be a list")
+    if len(phase4_runs) > PHASE4_RUN_LIMIT:
+        raise ValueError("phase4Runs exceeds 6 records")
+    if _canonical_size(phase4_runs) > PHASE4_RUNS_BYTES:
+        raise ValueError("phase4Runs exceeds 1 MiB")
+    for record_index, record in enumerate(phase4_runs):
+        if not isinstance(record, dict):
+            raise ValueError(f"phase4Runs record {record_index} is not an object")
+        for field, expected_type in PHASE4_RUN_FIELDS.items():
+            value = record.get(field)
+            if expected_type is int:
+                valid = isinstance(value, int) and not isinstance(value, bool)
+            else:
+                valid = isinstance(value, expected_type)
+            if not valid:
+                raise ValueError(
+                    f"phase4Runs record {record_index} has invalid {field}")
+        if _canonical_size(record) > PHASE4_RECORD_BYTES:
+            raise ValueError(
+                f"phase4Runs record {record_index} exceeds 512 KiB")
+        findings = record["findings"]
+        if len(findings) > PHASE4_FINDING_LIMIT:
+            raise ValueError(
+                f"phase4Runs record {record_index} exceeds 500 findings")
+        for finding_index, finding in enumerate(findings):
+            if not isinstance(finding, dict):
+                raise ValueError(
+                    f"phase4Runs record {record_index} finding {finding_index} is not an object")
+            _validate_phase4_path(finding.get("file"))
+            if finding.get("severity") not in PHASE4_SEVERITIES:
+                raise ValueError(
+                    f"phase4Runs record {record_index} finding {finding_index} has invalid severity")
+
+
+def parse_history_document(data):
+    """Return ``(entries, phase4_runs, warnings)`` for every valid history.
+
+    Invalid deterministic entries remain a corrupt-history error.  Invalid
+    Phase-4 sampling records degrade independently so deterministic cache data
+    remains usable.
+    """
+    entries = parse_history(data)
+    if isinstance(data, list) or "phase4Runs" not in data:
+        return entries, [], []
+    phase4_runs = data["phase4Runs"]
+    try:
+        _validate_phase4_runs(phase4_runs)
+    except ValueError as exc:
+        return entries, [], [f"phase4Runs ignored: {exc}"]
+    return entries, phase4_runs, []
 
 
 def cache_qualification(entries, path, current_content_sha, change_set_sha,

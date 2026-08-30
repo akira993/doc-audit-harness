@@ -144,7 +144,8 @@ The gate always returns `siblingScan` for CONSISTENT and NEEDS_FIX. It has `phra
 During a run, history, anchor, lock, and config changes cause a fail-safe
 `REFUSED`. If the current run still owns the lock, corrupt history is renamed to
 `*.tainted-<runid>`, a changed anchor is removed, and a changed config is recorded
-in last-run state; the next open exits 6 until `--accept-config` explicitly
+in last-run state with `configAcceptanceRequired:true`; every plugin-engine reader uses
+`--expect-config-sha` and reports `sealed-config-mismatch` on an exit-7 mismatch. The next open exits 6 until `--accept-config` explicitly
 acknowledges the change. A lock owned by a later run is never changed. Persistent
 verifier processes that survive beyond a run, orchestrator compromise, and
 transcript alteration remain outside the threat boundary, as does a verifier
@@ -169,6 +170,8 @@ The gate repeats the qualification using the backend sealed in the manifest.
 Only `decide-verdict.py` writes `.claude/state/docaudit-history.json`; absent history is a cold
 start, corrupt history disables cache and is quarantined by the gate, and full mode disables
 cache.
+
+The v0.16.0 history document is `{"entries":[...],"phase4Runs":[...]}`. The shared parser always returns `(entries, phase4Runs, warnings)`: old top-level entry arrays and objects without `phase4Runs` remain valid, invalid `entries` make the document corrupt, and an invalid `phase4Runs` degrades only that array to empty with a warning. A Phase-4 record contains `runid`, `ts`, `worktreeDigest`, `contractVersion`, `configSha`, `carryForwardSha`, `unresolvedFileCount`, `truncated`, and canonical `{file,severity}` findings. It stores at most 500 findings, keeps the newest five records plus at most one latest different-worktree carry-forward source, and reports `phase4FlipsUnchangedContent` by comparing blocking paths only when worktreeDigest, contractVersion, configSha, and carryForwardSha all match. Carry-forward uses at most 50 currently valid non-symlink repository files and includes only `file` plus `severity`; it never changes the verdict by itself.
 
 `classify-run.py` deterministically selects `light` or `standard`. Full mode, disabled light
 routing, threshold overflow, a non-CONSISTENT previous run, or a changed path containing a

@@ -27,7 +27,8 @@ class TestPlanDispatchImpactBinding(unittest.TestCase):
             "plan-dispatch.py", "--run-dir", fx.run_dir, "--runid", fx.runid,
             "--repo-root", fx.repo, "--config", fx.config_path, "--history", fx.history,
             "--impact-json", impact_path, "--baseline-sha", fx.head, "--mode", "incremental",
-            "--contract-version", "0.10.0", "--evidence", json.dumps(fx.evidence))
+            "--contract-version", "0.10.0", "--evidence", json.dumps(fx.evidence),
+            "--expect-config-sha", fx.evidence["config"])
         return fx, proc, impact_raw
 
     def test_matching_history_sha_is_accepted(self):
@@ -37,11 +38,11 @@ class TestPlanDispatchImpactBinding(unittest.TestCase):
         with open(os.path.join(fx.run_dir, "dispatch.json"), encoding="utf-8") as handle:
             self.assertEqual(json.load(handle)["historyStatus"], "ok")
 
-    def test_changed_history_exits_three(self):
+    def test_changed_history_exits_seven(self):
         old = b'{"entries":[]}\n'
         _fx, proc, _ = self.run_plan(b'{"entries":[]} \n', sha(old))
-        self.assertEqual(proc.returncode, 3)
-        self.assertIn("history changed between resolve and dispatch", proc.stderr)
+        self.assertEqual(proc.returncode, 7)
+        self.assertIn("sealed-history-mismatch", proc.stderr)
 
     def test_null_sha_and_absent_history_are_accepted(self):
         fx, proc, _ = self.run_plan(None, None)
@@ -58,6 +59,16 @@ class TestPlanDispatchImpactBinding(unittest.TestCase):
             dispatch = json.load(handle)
         self.assertEqual(dispatch["historyStatus"], "corrupt")
         self.assertEqual(evidence["historyStatus"], "corrupt")
+
+    def test_invalid_phase4_runs_degrades_without_disabling_history(self):
+        raw = b'{"entries":[],"phase4Runs":"bad"}\n'
+        fx, proc, _ = self.run_plan(raw, sha(raw))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        with open(os.path.join(fx.run_dir, "dispatch.json"), encoding="utf-8") as handle:
+            dispatch = json.load(handle)
+        self.assertEqual(dispatch["historyStatus"], "ok")
+        self.assertTrue(any("phase4Runs ignored" in item
+                            for item in dispatch["warnings"]))
 
     def test_dispatch_records_impact_sha_without_changing_evidence_keys(self):
         fx, proc, impact_raw = self.run_plan(None, "omit")

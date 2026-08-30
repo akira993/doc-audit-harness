@@ -11,6 +11,7 @@ import subprocess
 import sys
 
 from docaudit_paths import matches_glob
+from sealed_config import SealedConfigMismatch, load_sealed_config
 
 
 PROBE_ROOTS = {".mdq", ".codegraph", "graphify-out", ".cocoindex_code"}
@@ -135,11 +136,14 @@ def main():
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--baseline-sha", required=True)
     parser.add_argument("--config", required=True)
+    parser.add_argument("--expect-config-sha", required=True)
     args = parser.parse_args()
     try:
-        with open(args.config, encoding="utf-8") as handle:
-            config = json.load(handle)
+        _config_raw, config = load_sealed_config(args.config, args.expect_config_sha)
         digest, changed, entries = calculate(os.path.realpath(args.repo_root), args.baseline_sha, config)
+    except SealedConfigMismatch as exc:
+        print(str(exc), file=sys.stderr)
+        return 7
     except (OSError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
         print(f"change-set-sha: {exc}", file=sys.stderr)
         return 2

@@ -7,6 +7,8 @@ import os
 import subprocess
 import sys
 
+from sealed_config import SealedConfigMismatch, load_sealed_config
+
 
 DEFAULT_TOKENS = ["auth", "security", "permission", "access-control", "iam", "crypto",
                   "billing", "session", "token", "oauth", "acl", "rbac", "secret", ".env"]
@@ -20,14 +22,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--config", required=True)
+    parser.add_argument("--expect-config-sha", required=True)
     parser.add_argument("--impact-json", required=True)
     parser.add_argument("--baseline-sha", required=True)
     parser.add_argument("--mode", required=True, choices=["incremental", "full"])
     parser.add_argument("--last-run")
     args = parser.parse_args()
     try:
-        with open(args.config, encoding="utf-8") as handle:
-            config = json.load(handle)
+        _config_raw, config = load_sealed_config(args.config, args.expect_config_sha)
         with open(args.impact_json, encoding="utf-8") as handle:
             impact = json.load(handle)
         light = config.get("models", {}).get("light", {})
@@ -43,8 +45,12 @@ def main():
             [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                           "change-set-sha.py"),
              "--repo-root", args.repo_root, "--baseline-sha", effective_baseline,
-             "--config", args.config], capture_output=True, text=True)
+             "--config", args.config, "--expect-config-sha", args.expect_config_sha],
+            capture_output=True, text=True)
         if change_proc.returncode:
+            if change_proc.returncode == 7:
+                print(change_proc.stderr.rstrip(), file=sys.stderr)
+                return 7
             raise ValueError(change_proc.stderr.strip() or "change-set-sha failed")
         change_data = json.loads(change_proc.stdout)
         changed = change_data["changedSet"]
@@ -99,6 +105,9 @@ def main():
                   "changedCount": len(changed), "impactedCount": impacted_count,
                   "diffLines": diff_lines, "diffBytes": diff_bytes,
                   "sensitivePaths": sensitive, "reasons": reasons}
+    except SealedConfigMismatch as exc:
+        print(str(exc), file=sys.stderr)
+        return 7
     except (OSError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
         print(f"classify-run: {exc}", file=sys.stderr)
         return 2

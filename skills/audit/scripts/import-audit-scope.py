@@ -284,7 +284,7 @@ def equivalence(converted_rules, paths, errors):
 
 
 def result(state, rules, translated, skipped, errors, checked,
-           config_raw, scope_raw, missing=(), extra=()):
+           config_raw, scope_raw, missing=(), extra=(), scope_path=None):
     return {
         "state": state,
         "rules": len(rules),
@@ -293,6 +293,7 @@ def result(state, rules, translated, skipped, errors, checked,
         "errors": errors,
         "equivalenceChecked": checked,
         "configSha": digest(config_raw) if config_raw is not None else "none",
+        "scopePath": scope_path,
         "scopeSha": digest(scope_raw) if scope_raw is not None else None,
         "diff": {"missing": list(missing), "extra": list(extra)},
     }
@@ -556,7 +557,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", default=os.getcwd())
     parser.add_argument("--config", default=".claude/doc-audit.json")
-    parser.add_argument("--scope", default=".claude/audit-scope.json")
+    parser.add_argument("--scope")
     parser.add_argument("--doc-glob", action="append", default=[])
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true")
@@ -572,37 +573,49 @@ def main():
     repo = os.path.realpath(args.repo_root)
     errors = []
     config_rel = safe_path(repo, repo_apparent, args.config, errors, "config")
-    scope_rel = safe_path(repo, repo_apparent, args.scope, errors, "scope")
     expected_arguments_valid(args, errors)
     config_path = os.path.join(repo, config_rel) if config_rel else ""
-    scope_path = os.path.join(repo, scope_rel) if scope_rel else ""
     config_raw = None
     if config_rel and os.path.isfile(config_path):
         config_raw = read_bytes(config_path)
     if config_rel and os.path.lexists(config_path) and not os.path.isfile(config_path):
         errors.append("config path is not a regular file")
+    config = config_object(config_raw, errors)
+    configured_scope = config.get("auditScope")
+    if args.scope is not None:
+        scope_argument = args.scope
+    elif (isinstance(configured_scope, dict)
+          and isinstance(configured_scope.get("path"), str)):
+        scope_argument = configured_scope["path"]
+    else:
+        scope_argument = ".claude/audit-scope.json"
+    scope_rel = safe_path(repo, repo_apparent, scope_argument, errors, "scope")
+    scope_path = os.path.join(repo, scope_rel) if scope_rel else ""
     if scope_rel and os.path.lexists(scope_path) and not os.path.isfile(scope_path):
         errors.append("scope path is not a regular file")
-    config = config_object(config_raw, errors)
     audit_scope = metadata(config, repo, errors)
     scope_exists = bool(scope_rel and os.path.isfile(scope_path))
     if not scope_exists and audit_scope is None and not errors:
-        output = result("absent", [], [], [], [], 0, config_raw, None)
+        output = result("absent", [], [], [], [], 0, config_raw, None,
+                        scope_path=scope_rel)
         emit(output, args.json)
         return 0
     if errors:
-        output = result("error", [], [], [], errors, 0, config_raw, None)
+        output = result("error", [], [], [], errors, 0, config_raw, None,
+                        scope_path=scope_rel)
         emit(output, args.json)
         return 1
     if not scope_exists:
-        output = result("drift", [], [], [], [], 0, config_raw, None)
+        output = result("drift", [], [], [], [], 0, config_raw, None,
+                        scope_path=scope_rel)
         emit(output, args.json)
         return 2
     scope_raw = read_bytes(scope_path)
     rules = scope_rules(scope_raw, errors)
     converted_rules = convert_rules(rules, errors)
     if errors:
-        output = result("error", rules, [], [], errors, 0, config_raw, scope_raw)
+        output = result("error", rules, [], [], errors, 0, config_raw, scope_raw,
+                        scope_path=scope_rel)
         emit(output, args.json)
         return 1
     default_globs = args.doc_glob or ["docs/**/*.md", "*.md"]
@@ -620,14 +633,14 @@ def main():
             converted_rules, repo, config, doc_globs, errors)
     if errors:
         output = result("error", rules, translated, skipped, errors, 0,
-                        config_raw, scope_raw)
+                        config_raw, scope_raw, scope_path=scope_rel)
         emit(output, args.json)
         return 1
     paths = git_paths(repo, errors)
     equivalence(converted_rules, paths, errors)
     if errors:
         output = result("error", rules, translated, skipped, errors, len(paths),
-                        config_raw, scope_raw)
+                        config_raw, scope_raw, scope_path=scope_rel)
         emit(output, args.json)
         return 1
     missing, extra = compare(config, translated)
@@ -639,7 +652,7 @@ def main():
             path_matches = audit_scope.get("path") == scope_rel
             state = "in-sync" if not missing and not extra and scope_matches and path_matches else "drift"
         output = result(state, rules, translated, skipped, [], len(paths),
-                        config_raw, scope_raw, missing, extra)
+                        config_raw, scope_raw, missing, extra, scope_path=scope_rel)
         emit(output, args.json)
         return 0 if state == "in-sync" else 2
     if config_raw is None and args.base_config is None:

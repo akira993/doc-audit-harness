@@ -19,22 +19,27 @@
 # gitignore / .git/info/exclude / pattern-wording differences, confirmed method).
 set -uo pipefail
 
-CONFIG=""; REPO_ROOT="$(pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG=""; EXPECT_CONFIG_SHA=""; REPO_ROOT="$(pwd)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config) CONFIG="$2"; shift 2;;
+    --expect-config-sha) EXPECT_CONFIG_SHA="$2"; shift 2;;
     --repo-root) REPO_ROOT="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
 
+[[ -n "$CONFIG" ]] || { echo "error: --config required" >&2; exit 2; }
+[[ -n "$EXPECT_CONFIG_SHA" ]] || { echo "error: --expect-config-sha required" >&2; exit 2; }
+CONFIG_JSON="$(python3 "$SCRIPT_DIR/sealed_config.py" --config "$CONFIG" --expect-sha "$EXPECT_CONFIG_SHA" --print)" || { rc=$?; exit "$rc"; }
+
 # A seam is key-gated: a missing or invalid config never falls back to enabled.
-read -r STATE BIN < <(python3 -c '
+if ! DECISION="$(printf '%s' "$CONFIG_JSON" | python3 -c '
 import json, sys
 default = "graphify"
 try:
-    if not sys.argv[1]: raise ValueError()
-    with open(sys.argv[1], encoding="utf-8") as f: config = json.load(f)
+    config = json.load(sys.stdin)
     if not isinstance(config, dict): raise ValueError()
     if "docGraph" not in config: print("not-configured", default); raise SystemExit
     seam = config["docGraph"]
@@ -51,7 +56,11 @@ try:
     sys.stdout.buffer.write(("enabled " + bin_name + "\n").encode("utf-8"))
 except Exception:
     sys.stdout.buffer.write(("invalid-config " + default + "\n").encode("utf-8"))
-' "$CONFIG")
+')"; then
+  echo "error: failed to parse sealed config for graphify probe" >&2
+  exit 2
+fi
+read -r STATE BIN <<< "$DECISION"
 
 emit() { python3 -c 'import json,sys
 line=json.dumps({"docGraphAvailable":sys.argv[1] == "true", "docGraphBin":sys.argv[2], "reason":sys.argv[3], "gitignoreOk":sys.argv[4] == "true"}, separators=(",", ":"))+"\n"

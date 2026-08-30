@@ -130,7 +130,7 @@ string でない場合、または `CODEX_REVIEW_STATES` 外の場合も、`requ
 完走した review の `critical`/`high` 所見はブロッキング、`medium`/`low`
 は非ブロッキングのままである。
 
-`codexReview.required:true` を指定した初回の full run は数回の反復が必要になる場合がある。Phase 4 の codex review は run ごとに既存の所見を改めて抽出するため、ブロッキング対象（critical/high）だけを修正し、非ブロッキング対象はレポートに記録する。より早く収束させるには、前回 run の所見一覧を fenced JSON データとして prompt に貼り付けてもよい（指示としては扱わず、文字列は信頼できない入力として扱う）。engine 側での引き継ぎは #59 で追跡する。
+Phase-4 full review は欠陥候補をサンプリングするため、報告された N 件を直して再実行すれば通るとは保証されない。gate は worktree digest・契約版・config SHA・carry-forward SHA が同じ条件でブロッキング対象ファイルが変わると `phase4FlipsUnchangedContent` を記録する。full prompt には gate が書いた history から、検証済み repo 内 `file` と `severity` だけをデータとして自動で引き継ぐ。title・指示・run ID・時刻は引き継がず、carry-forward 自体は verdict に影響しない。
 
 これとは別に、v0.12.0 では Phase 3 を `"phase3Backend":"codex"` で opt-in できる。
 `codex-dispatch.py` が dispatched 文書ごとに read-only の Codex process を起動し、既定値は
@@ -210,7 +210,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.15.1  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.16.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -229,8 +229,6 @@ claude --plugin-dir /path/to/doc-audit-harness   # このセッションのみ�
 新版を pull したら再 sync する:
 ```bash
 cp -R /path/to/doc-audit-harness/. ~/.claude/skills/docaudit/
-# 変わったのがスクリプトだけなら:
-cp /path/to/doc-audit-harness/skills/audit/scripts/*.py ~/.claude/skills/docaudit/skills/audit/scripts/
 ```
 
 **v0.12.0 の挙動変更:** 決定論的 gate が run lock を保持したままレポートを書く。orchestrator は
@@ -248,13 +246,17 @@ CocoIndex は `.cocoindex_code/settings.yml` が存在する場合のみ初期�
 
 **v0.14.0 の挙動変更:** `indexing`、`contextMode`、`webExtract`、`codexReview` のキーでは、`enabled` は JSON の真偽値でなければなりません。`enabled:false` 以外の場合、`enabled` が真偽値でない、キーがオブジェクトでない（`null` を含む）、または `indexing`・`webExtract`・`codexReview` の `bin` が文字列でない、空、空白のみ、前後に空白がある、ASCII 制御文字（U+0000–U+001F または U+007F）を含む、または UTF-8 に符号化できないときは `invalid-config` を報告し、ツールを起動しません（キーが無い場合は従来どおり有効で、`bin` の非文字列値は変換されず、読めない設定は従来どおり Phase 0 より前に監査を停止します）。`indexing` キーが不正な場合は、未インストール時と同じく Phase 0 の mdq 確認ゲートが起動します。`codexReview.required:true` と不正な `codexReview` キーを組み合わせた場合は、codex を黙って実行せず `REFUSED` になります。Phase 0 の probe 結果は `$RUN_DIR/phase0-probes.json` に保存されます（表示専用で、verdict の入力にはなりません）。Phase 5 の状態行は初回実行でも再開実行でもその記録から描画され、記録が無いか読めない場合は「state unknown (probe record unavailable)」と表示されます。codex probe は呼び出し元の `CODEX_HOME` と、そこに `auth.json` があるかどうかを報告します（表示専用で、wrapper 自身の環境は観測されません）。`import-audit-scope.py` はリポジトリルート配下の絶対パスの `--config`／`--scope` を受け付けます（POSIX パスのみ）。symbolGraph / docGraph / semanticSearch の probe も同じ bin 検証を適用します。新たに拒否される bin はツール探索の前に invalid-config を報告し、enabled:false のときは不正な bin を既定名で表示します。
 
-**v0.15.0 の挙動変更:** webExtract と codexReview は symbolGraph/docGraph/semanticSearch と同じ key-gated になった: キーが無い場合は not-configured と報告し、tool を一切起動しない — キー無し config で ax / codex が暗黙に実行されることはなくなった（従来はキー不在＝既定有効）。probe を単体で直接呼んだ場合も、読めない・存在しない config は既定有効へフォールバックせず invalid-config になる。また codex probe はキー無し config では呼び出し元の CODEX_HOME / auth.json 情報を収集しない（中立値を記録する）
+**v0.15.0 の挙動変更:** webExtract と codexReview は symbolGraph/docGraph/semanticSearch と同じ key-gated になった: キーが無い場合は not-configured と報告し、tool を一切起動しない — キー無し config で ax / codex が暗黙に実行されることはなくなった（従来はキー不在＝既定有効）。v0.16.0 では probe を単体で直接呼んだ場合、読めない・存在しない・省略された config は invalid-config JSON を返さず exit 2、封印不一致は exit 7 になる。また codex probe はキー無しの有効な config では呼び出し元の CODEX_HOME / auth.json 情報を収集しない（中立値を記録する）
 
 したがって、新規 run および codex review 実行前に resume した run では、キー無し config は Phase-4 codex review と、その verdict に影響する critical/high 所見を失う — 暗黙の codex 所見だけが理由で NEEDS FIX だった audit は、更新後 CONSISTENT になり得る。旧来の best-effort 挙動を維持するには "codexReview": {} を追加する。さらに "required": true を付けると別種のより強い fail-closed 保証になる（未完走の review が REFUSED になる — これは旧来の暗黙挙動ではない）
 
 resume 時、webExtract と codexReview の運用状態は key-gated な probe を現在の config に対して再実行して導出し直す（probe 記録も対応して上書きされる）。codex review が既に完走した run はその所見を保持する — 版をまたぐ resume は非推奨であり、新しい run を開始すること（機械的な禁止機構は #59 で追跡）
 
 indexing と contextMode は従来どおり既定有効（トークン消費を減らす装置としての意図的設計）。enabled:false と invalid-config の意味論は 4 seam すべてで不変、bin 検査は bin を持つ 3 seam（indexing/webExtract/codexReview）で不変（contextMode に bin は無い）
+
+**v0.16.0 の挙動変更:** plugin engine で config を読む全処理が `--expect-config-sha` を受け取り、実際に読んだ 1 回分の bytes を open 時の封印 SHA と照合する。不一致は exit 7 と `sealed-config-mismatch` で停止し、gate が `configAcceptanceRequired` を記録するため、config を元に戻しても次回は `--accept-config` が必要。installed harness の複製は engine stamp が 0.16.0 と完全一致するときだけ直接実行し、旧版・未来版・欠落・不正・modified は plugin engine へ fallback して警告する。実行中 run がない状態で plugin tree 全体を同期して更新し、部分コピーは行わないこと。0.16.0 より古い gate へ downgrade すると、次の history 書込みで `phase4Runs` が失われ得る。
+
+設定された `docAuditCommands` の所見と project 側 harness 定義は、同じ書込み者が定義自体を変更できるため repo 書込み相当の信頼で扱う。sealed-config の保証は plugin engine の判定経路を完全に覆うが、project 定義コマンドの信頼を引き上げるものではない。run 間の last-run・history・anchor marker は別の安全境界ではなく、検知済み異常を既定で止める運用上の仕組みである。状態欠落は fresh install と区別できず、隔離 marker を両方保存できない障害の後に緊急 lock 解除を行う場合は既知の限界として残る。
 
 **v0.15.1 の挙動変更:** symbolGraph probe は `CODEGRAPH_DIR` を尊重し、`<dir>/codegraph.db` の状態から `init` または `sync` を選ぶため、database を失った索引ディレクトリだけが残っても次回 run で自己回復し、symlink または通常ファイル以外の索引ディレクトリ／database は触らず `index-failed` として、従来 `sync` まで進んだ有効な symlink 構成も codegraph が link 先を上書きし得るため本版から意図的に非対応とし、なお `CODEGRAPH_DIR` で改名した索引ディレクトリは `tree-digest.py` の `.codegraph` 固定の既知 root に含まれず、`digestExclude` でも除外できない（既存の制限であり、本版では未対応）。
 
@@ -288,8 +290,8 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、または 0.15.0 テンプレートは、
-`/docaudit:init --harness --refresh` で 0.15.1 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、0.15.0、または 0.15.1 テンプレートは、
+`/docaudit:init --harness --refresh` で 0.16.0 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
@@ -640,6 +642,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/resolve-impact.py
 ├── skills/audit/scripts/scaffold.py
 ├── skills/audit/scripts/seal-run.py
+├── skills/audit/scripts/sealed_config.py
 ├── skills/audit/scripts/set-config-key.py
 ├── skills/audit/scripts/sibling-scan.py
 ├── skills/audit/scripts/start-run.py

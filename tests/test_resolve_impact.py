@@ -8,8 +8,10 @@ def run(changed, config, repo_root, mode="incremental", history=None, history_pa
     """Invoke resolve-impact.py; return parsed JSON stdout."""
     cfg = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
     json.dump(config, cfg); cfg.close()
+    with open(cfg.name, "rb") as handle:
+        config_sha = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
     command = [sys.executable, SCRIPT, "--config", cfg.name, "--repo-root", repo_root,
-               "--changed", "-", "--mode", mode]
+               "--expect-config-sha", config_sha, "--changed", "-", "--mode", mode]
     history_file = None
     if history is not None:
         history_file = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
@@ -263,6 +265,18 @@ class TestResolveImpact(unittest.TestCase):
         self.assertRegex(out["historySha"], r"^sha256:[0-9a-f]{64}$")
         self.assertEqual(out["counts"]["regression"], 1)
         self.assertEqual(out["mapGapCandidates"], [])
+
+    def test_invalid_phase4_runs_keeps_regression_entries(self):
+        history = {
+            "entries": [self.history_entry("docs/other.md")],
+            "phase4Runs": "bad",
+        }
+        out = run([], self.base_config(regressionRecheck={"enabled": True}),
+                  self.repo, history=history)
+        self.assertIn({"path": "docs/other.md", "provenance": "regression"},
+                      out["impacted"])
+        self.assertTrue(any("phase4Runs ignored" in item
+                            for item in out["warnings"]))
 
     def test_saturation_and_doc_path_token_opt_out(self):
         with open(os.path.join(self.repo, "docs/other.md"), "w", encoding="utf-8") as handle:

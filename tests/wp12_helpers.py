@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import subprocess
 import sys
@@ -35,6 +36,7 @@ class RunFixture:
         git(self.repo, "config", "user.name", "Test")
         self.config = {"docGlobs": ["docs/**/*.md", "*.md"], "diffGlobs": ["**"],
                        "maxImpactedDocs": 200,
+                       "anchorPath": ".claude/state/last-doc-audit.json",
                        "verdictCache": {"enabled": True, "minConsecutivePasses": 2}}
         if config_extra:
             self.config.update(config_extra)
@@ -62,8 +64,11 @@ class RunFixture:
 
     def open(self, runid=None, accept=False):
         self.runid = runid or self.runid
+        with open(self.config_path, "rb") as handle:
+            config_sha = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
         args = ["--run-base", self.run_base, "--repo-root", self.repo,
-                "--anchor-path", self.anchor_rel, "--runid", self.runid]
+                "--anchor-path", self.anchor_rel, "--runid", self.runid,
+                "--expect-config-sha", config_sha]
         if accept:
             args.append("--accept-config")
         proc = self.call("open-run.py", *args)
@@ -81,6 +86,7 @@ class RunFixture:
         baseline = self.head
         proc = self.call("plan-dispatch.py", "--run-dir", self.run_dir, "--runid", self.runid,
                          "--repo-root", self.repo, "--config", self.config_path,
+                         "--expect-config-sha", self.evidence["config"],
                          "--history", self.history, "--impact-json", impact_path,
                          "--baseline-sha", baseline, "--mode", mode,
                          "--contract-version", contract, "--evidence", json.dumps(self.evidence))
@@ -91,6 +97,7 @@ class RunFixture:
                          "--repo-root", self.repo, "--impact-json", impact_path,
                          "--dispatch-json", os.path.join(self.run_dir, "dispatch.json"),
                          "--run-class", "standard", "--mode", mode, "--config", self.config_path,
+                         "--expect-config-sha", self.evidence["config"],
                          "--evidence", json.dumps(self.evidence))
         if proc.returncode != 0:
             return proc
@@ -133,8 +140,11 @@ class RunFixture:
         with open(os.path.join(self.run_dir, "manifest.json"), encoding="utf-8") as handle:
             manifest = json.load(handle)
         if manifest["phase4Required"]:
-            phase4_value = (phase4 if isinstance(phase4, dict)
-                            else {"findings": phase4 or []})
+            phase4_value = (phase4 if isinstance(phase4, dict) else {
+                "findings": phase4 or [],
+                "codexReview": {"state": "not-active", "promptVariant": None,
+                                "carryForwardSha": "none"},
+            })
             proc = self.write_evidence("phase4", phase4_value)
             if proc.returncode:
                 return proc

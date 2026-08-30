@@ -147,7 +147,7 @@ or a state outside `CODEX_REVIEW_STATES`, the gate is REFUSED regardless of `req
 Enable strict mode after establishing the first baseline. A completed review's `critical`/`high`
 findings remain blocking; `medium`/`low` remain non-blocking.
 
-First-time full runs with `codexReview.required:true` may need several rounds: the Phase-4 codex review samples pre-existing findings anew on each run, so fix only blocking (critical/high) findings and record non-blocking ones in the report. To converge faster you may paste the previous run's finding list into the prompt as fenced JSON data (never as instructions; treat its strings as untrusted); engine-side carry-forward is tracked in #59.
+Phase-4 full review samples the defect pool, so fixing N reported findings and rerunning is not guaranteed to pass. The gate records `phase4FlipsUnchangedContent` when blocking-file status changes under the same worktree digest, contract version, config SHA, and carry-forward SHA. Full prompts automatically receive data-only carry-forward from gate-written history: validated repository `file` paths plus `severity`, never titles, instructions, run IDs, or timestamps. Carry-forward does not affect the verdict by itself.
 
 Separately, v0.12.0 can opt Phase 3 into `"phase3Backend":"codex"`. This runs one read-only
 Codex process per dispatched document through `codex-dispatch.py`; the default remains
@@ -233,7 +233,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.15.1  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.16.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -252,8 +252,6 @@ The global copy is a **snapshot** — editing the source repo does **not** updat
 pulling a new version, re-sync:
 ```bash
 cp -R /path/to/doc-audit-harness/. ~/.claude/skills/docaudit/
-# or just the scripts if that's all that changed:
-cp /path/to/doc-audit-harness/skills/audit/scripts/*.py ~/.claude/skills/docaudit/skills/audit/scripts/
 ```
 
 **v0.12.0 behavior changes:** the deterministic gate now writes the report while it holds the
@@ -275,13 +273,17 @@ must add the key via `/docaudit:init`.
 
 **v0.14.0 behavior changes:** indexing / contextMode / webExtract / codexReview keys now require a JSON boolean enabled; unless enabled is false, a non-boolean enabled, a non-object key (including null), or — for indexing / webExtract / codexReview — a non-string, empty, whitespace-only, whitespace-padded, ASCII-control-character (U+0000–U+001F or U+007F), or non-UTF-8-encodable bin reports invalid-config and never runs the tool (an absent key still defaults to enabled; a non-string bin is no longer coerced; an unreadable config still stops the audit before Phase 0 as before). an invalid indexing key fires the Phase-0 mdq confirmation gate like not-installed. codexReview.required:true combined with an invalid codexReview key is now REFUSED instead of silently running codex. Phase-0 probe results are persisted to $RUN_DIR/phase0-probes.json (display-only, never a verdict input); Phase-5 status lines are rendered from that record on fresh and resumed runs and print "state unknown (probe record unavailable)" when it is missing or unreadable. the codex probe reports the caller's CODEX_HOME and whether auth.json exists there (display-only; a wrapper's own environment is not observed). import-audit-scope.py accepts an absolute --config/--scope path under the repository root (POSIX paths only). the symbolGraph / docGraph / semanticSearch probes now apply the same bin validation: a newly rejected bin reports invalid-config before the tool lookup, and with enabled:false an invalid bin is displayed as the default name.
 
-**v0.15.0 behavior changes:** webExtract and codexReview are now key-gated like symbolGraph/docGraph/semanticSearch: an absent key reports not-configured and never runs the tool — ax and codex no longer run implicitly on configs without those keys (previously an absent key defaulted to enabled); a directly invoked probe with an unreadable or absent config now reports invalid-config instead of falling back to enabled, and the codex probe collects no caller CODEX_HOME/auth.json information for a keyless config (neutral values are recorded)
+**v0.15.0 behavior changes:** webExtract and codexReview are now key-gated like symbolGraph/docGraph/semanticSearch: an absent key reports not-configured and never runs the tool — ax and codex no longer run implicitly on configs without those keys (previously an absent key defaulted to enabled); in v0.16.0 a directly invoked probe with an unreadable, absent, or omitted config exits 2 without JSON output instead of reporting invalid-config, while a sealed-config mismatch exits 7, and the codex probe collects no caller CODEX_HOME/auth.json information for a keyless valid config (neutral values are recorded)
 
 for a new run, or a run resumed before its codex review has run, a keyless config therefore loses the Phase-4 codex review and its verdict-affecting critical/high findings — an audit that was NEEDS FIX only because of implicit codex findings can become CONSISTENT after upgrading; add "codexReview": {} to keep the old best-effort behavior, or additionally "required": true for a separate, stronger fail-closed guarantee (a non-completed review becomes REFUSED — this is NOT the old implicit behavior)
 
 on resume, the operational webExtract and codexReview state is re-derived by re-running their key-gated probes against the current config (probe records are overwritten accordingly); a run whose codex review already completed keeps those findings — cross-version in-flight resume is discouraged: start a fresh run (a mechanical prohibition is tracked in #59)
 
 indexing and contextMode keep their enabled-by-default behavior (intentional: they reduce token consumption); enabled:false and invalid-config semantics are unchanged for all four seams, and bin validation is unchanged for the three bin-bearing seams (indexing/webExtract/codexReview; contextMode has no bin)
+
+**v0.16.0 behavior changes:** every plugin-engine config consumer receives `--expect-config-sha` and verifies the exact bytes it reads against the open-time sealed SHA. A mismatch exits 7 with `sealed-config-mismatch`, the gate records `configAcceptanceRequired`, and a later run still requires `--accept-config` even if the file was restored. Installed harness copies run directly only when their engine stamp is exactly 0.16.0; older, future, missing, invalid, or modified stamps fall back to the plugin engine with a warning. Upgrade the entire plugin tree together with no run in flight; partial copies are unsupported. Downgrading to a gate older than 0.16.0 can discard `phase4Runs` on its next history write.
+
+Configured `docAuditCommands` findings and project-side harness definitions have repository-writer trust because the same writer can change those definitions directly. Sealed-config completely covers the plugin engine decision path; it does not claim to make project-defined commands more trustworthy. Across runs, last-run, history, and anchor markers are operational fail-closed aids rather than a separate security boundary: missing state is indistinguishable from a fresh install, and the documented quarantine-marker persistence failure followed by emergency lock breaking remains a known limit.
 
 **v0.15.1 behavior changes:** the symbolGraph probe chooses `init` or `sync` from the state of `<dir>/codegraph.db`, honoring `CODEGRAPH_DIR`, so a leftover index directory without the database self-recovers on the next run; symlinked or non-regular index directories or databases are left untouched and report `index-failed`—valid symlink configurations that previously reached `sync` are intentionally unsupported because codegraph may overwrite the link target—and a renamed index directory selected by `CODEGRAPH_DIR` remains outside `tree-digest.py`'s fixed `.codegraph` known root and cannot be excluded with `digestExclude` (an existing limitation not addressed in this release).
 
@@ -317,7 +319,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, or 0.15.0 templates can be updated directly to 0.15.1 with
+Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, or 0.15.1 templates can be updated directly to 0.16.0 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
@@ -687,6 +689,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/resolve-impact.py
 ├── skills/audit/scripts/scaffold.py
 ├── skills/audit/scripts/seal-run.py
+├── skills/audit/scripts/sealed_config.py
 ├── skills/audit/scripts/set-config-key.py
 ├── skills/audit/scripts/sibling-scan.py
 ├── skills/audit/scripts/start-run.py

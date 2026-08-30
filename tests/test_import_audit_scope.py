@@ -173,6 +173,7 @@ class ImportAuditScopeTests(unittest.TestCase):
         proc = self.invoke(root, "--json", env=env)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(self.output(proc)["state"], "absent")
+        self.assertEqual(self.output(proc)["scopePath"], ".claude/audit-scope.json")
         self.assertFalse(os.path.exists(marker))
 
     def test_ii_tracked_and_untracked_crlf_names_are_rejected_and_count_is_reported(self):
@@ -685,6 +686,9 @@ class ImportAuditScopeTests(unittest.TestCase):
         self.assertEqual(final["auditScope"]["path"], custom)
         proc = self.invoke(root, "--scope", custom, "--json")
         self.assertEqual((proc.returncode, self.output(proc)["state"]), (0, "in-sync"))
+        derived = self.invoke(root, "--json")
+        self.assertEqual((derived.returncode, self.output(derived)["state"]), (0, "in-sync"))
+        self.assertEqual(self.output(derived)["scopePath"], custom)
 
     # PLAN §1.6 (viii)
     def test_viii_generated_source_is_accepted_by_resolve_impact(self):
@@ -692,7 +696,8 @@ class ImportAuditScopeTests(unittest.TestCase):
         self.import_existing(root)
         proc = subprocess.run(
             [sys.executable, RESOLVE_IMPACT, "--repo-root", root,
-             "--config", self.config_path(root), "--changed", "-", "--mode", "incremental"],
+             "--config", self.config_path(root), "--expect-config-sha",
+             sha(read(self.config_path(root))), "--changed", "-", "--mode", "incremental"],
             input="src/x.py\n", text=True, capture_output=True,
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
