@@ -277,9 +277,9 @@ symbols, the symbol-level counterpart of ax's external-URL seam. Only when the k
 `enabled` is not false, and `codegraph` is on `PATH` (or `bin` points at a vendored binary) does
 Phase 0 keep the index fresh. The `bin` override
 affects this probe only: Workflow receives the availability boolean and Phase 3's template invokes
-fixed `codegraph`. `.codegraph/` absent
-→ `codegraph init .` (first run only — a bare `init` against an existing `.codegraph/` is
-rejected, confirmed); `.codegraph/` present → `codegraph sync .` (confirmed idempotent). codegraph
+fixed `codegraph`. A regular `<dir>/codegraph.db` (`CODEGRAPH_DIR` honored) → `codegraph sync .`;
+an absent database → `codegraph init .`; a symlink or non-regular database/directory → no
+execution and `index-failed`; the probe does not rely on version-dependent `init` idempotency. codegraph
 self-generates `.codegraph/.gitignore`, so the probe never touches `.gitignore` itself. Phase 3
 then passes the verifier a conditional instruction to use `codegraph impact <symbol> --json`
 (post-filtered by `filePath` — its `affected[]` has no path-scoping flag, confirmed) or
