@@ -204,4 +204,4 @@ worker: R3-1（7 本の shell を stdin 渡し＋parse 失敗は exit 2、codegr
 | SSoT 更新 | **0 ファイル**（`AGENTS.md`／`PROJECT.md`／`CLAUDE.md` は本 repo に存在しない。durable な規約は SKILL.md Guardrails と ADOPTION に記載済み） |
 | 検査系成果物の実数 | CT-1: `call sites 22／exempt 3／getters 13／scripts 21／observers 19`（PLAN §9.5 と一致）／CT-2: `対象 21 本を検査`／フルスイート `Ran 716 tests / OK`（基線 655） |
 | 残る手順（ユーザー依頼） | PR #68 のマージ（self-merge は不可）→ boss が handoff: tag `docaudit--v0.16.0`、GitHub Release、`~/.claude/skills/docaudit/` 全 tree 同期、#63／#59 close。follow-up: dir-framework の `harness.engineVersion`（現 0.15.0）更新と harness refresh、#66 方式 B の別 route |
-| 教訓 | 長時間 codex は `nohup … &` で切り離す（Bash 10 分で kill）／worker は PLAN 内矛盾で正しく停止する（3 回）／`codex exec review --uncommitted` が boss 精読の見逃し 2 件（ARG_MAX・signature 窓）を拾った |
+| 教訓 | 長時間 codex は `nohup … &` で切り離す（Bash 10 分で kill）／worker は PLAN 内矛盾で正しく停止する（3 回）／`codex exec review --uncommitted` が boss 精読の見逃し 2 件（ARG_MAX・signature 窓）を拾った／**不備**: codex worker 向けプロンプト（08〜14）に、グローバル CLAUDE.md が全委譲に要求する凝縮版行動規範（プロンプト注入・設定書き込み拒否の規律を含む）を貼付していなかった（Opus/change-reviewer 向けには貼付済み）。実害は無かったが、本 route のプロンプトを次回のテンプレートにする際は必ず末尾に付けること |
