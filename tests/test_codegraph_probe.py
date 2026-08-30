@@ -1,4 +1,4 @@
-import json, os, stat, subprocess, tempfile, unittest
+import hashlib, json, os, stat, subprocess, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "codegraph-probe.sh")
@@ -53,11 +53,13 @@ def assert_call(testcase, log_path, repo, argv, dirname=".codegraph"):
 def run_script(repo, config, extra_env=None):
     cfg = os.path.join(repo, ".claude", "doc-audit.json")
     write(cfg, json.dumps(config))
+    with open(cfg, "rb") as handle:
+        expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
     env = dict(os.environ)
     env.pop("CODEGRAPH_DIR", None)
     if extra_env:
         env.update(extra_env)
-    p = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", repo],
+    p = subprocess.run(["bash", SCRIPT, "--config", cfg, "--expect-config-sha", expected, "--repo-root", repo],
                        capture_output=True, text=True, env=env,
                        input="STDIN-SENTINEL\n", timeout=30)
     assert p.returncode == 0, p.stderr
@@ -67,11 +69,13 @@ def run_script(repo, config, extra_env=None):
 def run_process(repo, config, extra_env=None):
     cfg = os.path.join(repo, ".claude", "doc-audit.json")
     write(cfg, json.dumps(config))
+    with open(cfg, "rb") as handle:
+        expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
     env = dict(os.environ)
     env.pop("CODEGRAPH_DIR", None)
     if extra_env:
         env.update(extra_env)
-    p = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", repo],
+    p = subprocess.run(["bash", SCRIPT, "--config", cfg, "--expect-config-sha", expected, "--repo-root", repo],
                        capture_output=True, text=True, env=env,
                        input="STDIN-SENTINEL\n", timeout=30)
     assert p.returncode == 0, p.stderr
@@ -79,13 +83,23 @@ def run_process(repo, config, extra_env=None):
     return p, json.loads(p.stdout)
 
 
-def run_raw(repo, args, extra_env=None):
+def raw_process(repo, args, extra_env=None):
     env = dict(os.environ)
     env.pop("CODEGRAPH_DIR", None)
     if extra_env:
         env.update(extra_env)
-    p = subprocess.run(["bash", SCRIPT, *args], capture_output=True, text=True,
-                       env=env, input="STDIN-SENTINEL\n", timeout=30)
+    return subprocess.run(["bash", SCRIPT, *args], capture_output=True, text=True,
+                          env=env, input="STDIN-SENTINEL\n", timeout=30)
+
+
+def run_raw(repo, args, extra_env=None):
+    args = list(args)
+    if "--config" in args and "--expect-config-sha" not in args:
+        cfg = args[args.index("--config") + 1]
+        with open(cfg, "rb") as handle:
+            expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+        args.extend(["--expect-config-sha", expected])
+    p = raw_process(repo, args, extra_env)
     assert p.returncode == 0, p.stderr
     assert len(p.stdout.splitlines()) == 1, p.stdout
     return json.loads(p.stdout)
@@ -118,7 +132,9 @@ class TestCodegraphProbe(unittest.TestCase):
         bin_name = "to\u2028ol-none"
         cfg = os.path.join(self.repo, ".claude", "json-emit.json")
         write(cfg, json.dumps({"symbolGraph": {"bin": bin_name}}))
-        proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+        with open(cfg, "rb") as handle:
+            expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+        proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--expect-config-sha", expected, "--repo-root", self.repo],
                               capture_output=True, input=b"STDIN-SENTINEL\n",
                               timeout=30, env={k: v for k, v in os.environ.items()
                                                if k != "CODEGRAPH_DIR"})
@@ -245,17 +261,27 @@ class TestCodegraphProbe(unittest.TestCase):
                 log, env = self._default_stub()
                 self._assert_unavailable(run_script(self.repo, {"symbolGraph": value}, env), "invalid-config", log)
 
-    def test_invalid_json_config_is_invalid_config(self):
-        """DoD (8): malformed JSON is rejected by the standalone probe."""
+    def test_invalid_json_config_stops(self):
+        """A malformed sealed config is a hard input error."""
         log, env = self._default_stub()
         cfg = os.path.join(self.repo, ".claude", "doc-audit.json")
         write(cfg, "{")
-        self._assert_unavailable(run_raw(self.repo, ["--config", cfg, "--repo-root", self.repo], env), "invalid-config", log)
+        with open(cfg, "rb") as handle:
+            expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+        proc = raw_process(self.repo, ["--config", cfg, "--expect-config-sha", expected, "--repo-root", self.repo], env)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("sealed-config:", proc.stderr)
+        self.assertFalse(os.path.exists(log))
 
-    def test_missing_config_file_is_invalid_config(self):
-        """DoD (8): a missing config file is invalid-config."""
+    def test_missing_config_file_stops(self):
+        """An unreadable sealed config is a hard input error."""
         log, env = self._default_stub()
-        self._assert_unavailable(run_raw(self.repo, ["--config", os.path.join(self.repo, "missing.json"), "--repo-root", self.repo], env), "invalid-config", log)
+        proc = raw_process(self.repo, ["--config", os.path.join(self.repo, "missing.json"),
+                                       "--expect-config-sha", "sha256:" + "0" * 64,
+                                       "--repo-root", self.repo], env)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("sealed-config:", proc.stderr)
+        self.assertFalse(os.path.exists(log))
 
     def test_non_object_top_level_is_invalid_config(self):
         """DoD (8): the config top level must be an object."""
@@ -269,10 +295,13 @@ class TestCodegraphProbe(unittest.TestCase):
                 log, env = self._default_stub()
                 self._assert_unavailable(run_script(self.repo, {"symbolGraph": {"bin": value}}, env), "invalid-config", log)
 
-    def test_omitted_config_flag_is_invalid_config(self):
-        """DoD (8): omitting --config cannot enable the seam."""
+    def test_omitted_config_flag_stops(self):
+        """The config flag is mandatory for a shell consumer."""
         log, env = self._default_stub()
-        self._assert_unavailable(run_raw(self.repo, ["--repo-root", self.repo], env), "invalid-config", log)
+        proc = raw_process(self.repo, ["--repo-root", self.repo], env)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("--config required", proc.stderr)
+        self.assertFalse(os.path.exists(log))
 
     def test_disabled_with_invalid_bin_is_disabled_by_config(self):
         """DoD (8): enabled:false has precedence over an invalid bin."""
@@ -512,10 +541,12 @@ class TestCodegraphProbe(unittest.TestCase):
         write(os.path.join(repo, dirname, "codegraph.db"), "index")
         cfg = os.path.join(repo, ".claude", "doc-audit.json")
         write(cfg, json.dumps({"symbolGraph": {"bin": binpath}}))
+        with open(cfg, "rb") as handle:
+            expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
         env = dict(os.environb)
         env.pop(b"CODEGRAPH_DIR", None)
         env[b"CODEGRAPH_DIR"] = b"\xff.codegraph-win"
-        proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", repo],
+        proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--expect-config-sha", expected, "--repo-root", repo],
                               capture_output=True, text=True, env=env,
                               input="STDIN-SENTINEL\n", timeout=30)
         self.assertEqual(proc.returncode, 0, proc.stderr)

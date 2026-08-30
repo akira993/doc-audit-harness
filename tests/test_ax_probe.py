@@ -1,4 +1,4 @@
-import json, os, stat, subprocess, tempfile, unittest
+import hashlib, json, os, stat, subprocess, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "ax-probe.sh")
@@ -53,10 +53,12 @@ def version_stub(version="0.1.10-stub"):
 def run_script(repo, config, extra_env=None):
     cfg = os.path.join(repo, ".claude", "doc-audit.json")
     write(cfg, json.dumps(config))
+    with open(cfg, "rb") as handle:
+        expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
     env = dict(os.environ)
     if extra_env:
         env.update(extra_env)
-    p = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", repo],
+    p = subprocess.run(["bash", SCRIPT, "--config", cfg, "--expect-config-sha", expected, "--repo-root", repo],
                        capture_output=True, text=True, env=env)
     assert p.returncode == 0, p.stderr
     return json.loads(p.stdout)
@@ -83,7 +85,9 @@ class TestAxProbe(unittest.TestCase):
         def invoke(bin_name, env=None):
             cfg = os.path.join(self.repo, ".claude", "json-emit.json")
             write(cfg, json.dumps({"webExtract": {"bin": bin_name}}))
-            proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+            with open(cfg, "rb") as handle:
+                expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+            proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--expect-config-sha", expected, "--repo-root", self.repo],
                                   capture_output=True, env=env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertTrue(proc.stdout.isascii())
@@ -153,6 +157,7 @@ class TestAxProbe(unittest.TestCase):
             "compound": {"webExtract": {"enabled": False, "bin": []}},
         }
         invalid = case_ids - {"absent", "empty", "disabled", "compound"}
+        hard_errors = {"cfg_omitted", "cfg_value_missing", "cfg_empty", "cfg_missing", "cfg_broken"}
         for case_id in sorted(case_ids):
             with self.subTest(case_id=case_id):
                 cfg = os.path.join(self.repo, case_id + ".json")
@@ -167,10 +172,21 @@ class TestAxProbe(unittest.TestCase):
                         value = payloads[case_id]
                         write(cfg, value if isinstance(value, str) else json.dumps(value))
                     args += ["--config", cfg]
+                    if cfg and os.path.exists(cfg):
+                        with open(cfg, "rb") as handle:
+                            expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+                        args += ["--expect-config-sha", expected]
+                    elif cfg:
+                        args += ["--expect-config-sha", "sha256:" + "0" * 64]
                 if case_id != "cfg_value_missing":
                     args += ["--repo-root", self.repo]
                 before = read_marker(marker)
                 proc = subprocess.run(args, capture_output=True, text=True, env=env)
+                if case_id in hard_errors:
+                    self.assertEqual(proc.returncode, 2)
+                    self.assertFalse(proc.stdout)
+                    self.assertEqual(read_marker(marker), before)
+                    continue
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 self.assertTrue(proc.stdout.isascii())
                 self.assertEqual(len(proc.stdout.splitlines()), 1)

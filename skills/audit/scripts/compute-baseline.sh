@@ -9,15 +9,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-CONFIG=""; REPO_ROOT="$(pwd)"
+CONFIG=""; EXPECT_CONFIG_SHA=""; REPO_ROOT="$(pwd)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config) CONFIG="$2"; shift 2;;
+    --expect-config-sha) EXPECT_CONFIG_SHA="$2"; shift 2;;
     --repo-root) REPO_ROOT="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
 [[ -n "$CONFIG" ]] || { echo "error: --config required" >&2; exit 2; }
+[[ -n "$EXPECT_CONFIG_SHA" ]] || { echo "error: --expect-config-sha required" >&2; exit 2; }
+CONFIG_JSON="$(python3 "$SCRIPT_DIR/sealed_config.py" --config "$CONFIG" --expect-sha "$EXPECT_CONFIG_SHA" --print)" || { rc=$?; exit "$rc"; }
 
 if ! git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   echo "error: not a git repository: $REPO_ROOT" >&2; exit 1
@@ -27,12 +30,18 @@ TMPFILE="$(mktemp "${TMPDIR:-/tmp}/docaudit_changed.XXXXXX")"
 trap 'rm -f "$TMPFILE"' EXIT
 
 py() { python3 -c "$@"; }
-ANCHOR_PATH="$(py 'import json,sys; print(json.load(open(sys.argv[1])).get("anchorPath",""))' "$CONFIG")"
-GLOBS_JSON="$(py 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("diffGlobs",[])))' "$CONFIG")"
+if ! ANCHOR_PATH="$(printf '%s' "$CONFIG_JSON" | py 'import json,sys; print(json.load(sys.stdin).get("anchorPath",""))')"; then
+  echo "error: failed to read anchorPath from sealed config" >&2
+  exit 2
+fi
+if ! GLOBS_JSON="$(printf '%s' "$CONFIG_JSON" | py 'import json,sys; print(json.dumps(json.load(sys.stdin).get("diffGlobs",[])))')"; then
+  echo "error: failed to read diffGlobs from sealed config" >&2
+  exit 2
+fi
 
 ANCHOR_SHA=""
 if [[ -n "$ANCHOR_PATH" && -f "$REPO_ROOT/$ANCHOR_PATH" ]]; then
-  ANCHOR_SHA="$(py 'import json,sys; print(json.load(open(sys.argv[1])).get("sha",""))' "$REPO_ROOT/$ANCHOR_PATH")"
+  ANCHOR_SHA="$(py 'import json,sys; f=open(sys.argv[1]); print(json.load(f).get("sha","")); f.close()' "$REPO_ROOT/$ANCHOR_PATH")"
 fi
 
 MODE="full"; BASELINE="null"; BASE=""
@@ -58,12 +67,12 @@ fi
 # NOTE: this g2r is intentionally simpler than resolve-impact.py's (no zero-width '/**/' handling); do NOT reuse it for docGlobs-style patterns like docs/STARSTAR/*.md.
 # Paths dropped by the filter are not discarded silently (issue #7): filteredOutCount
 # is the full dropped count, filteredOutSample is capped at 5 for a readable report line.
-py '
+if ! printf '%s' "$CONFIG_JSON" | py '
 import importlib.util,json,sys,re
 sys.path.insert(0, sys.argv[5])
 spec=importlib.util.spec_from_file_location("change_set_sha", sys.argv[5]+"/change-set-sha.py")
 module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-config=json.load(open(sys.argv[6]))
+config=json.load(sys.stdin)
 def g2r(p):
     out=[];i=0;n=len(p)
     while i<n:
@@ -87,4 +96,7 @@ out={"mode":sys.argv[3],"baselineSha":json.loads(sys.argv[4]),"changed":changed,
      "filteredOutCount":len(dropped),"filteredOutSample":dropped[:5],
      "machineryExcludedCount":len(machinery),"machineryExcludedSample":machinery[:5]}
 print(json.dumps(out))
-' "$GLOBS_JSON" "$TMPFILE" "$MODE" "$BASELINE" "$SCRIPT_DIR" "$CONFIG"
+' "$GLOBS_JSON" "$TMPFILE" "$MODE" "$BASELINE" "$SCRIPT_DIR"; then
+  echo "error: failed to compute baseline from sealed config" >&2
+  exit 2
+fi

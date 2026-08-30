@@ -36,6 +36,8 @@ hard-won gotchas. Copy-paste config template: [docs/examples/doc-audit.example.j
 
 Full table with fallbacks → [docs/ADOPTION.md §2](docs/ADOPTION.md).
 
+Since v0.16.0, every plugin-engine config read is checked against the SHA sealed when the run opened. A `sealed-config-mismatch` stops the run and requires explicit `--accept-config` on the next open even if the config was restored. Phase-4 full review is sampling, not a convergence guarantee; gate-written history carries forward only validated `file` plus `severity` data and reports `phase4FlipsUnchangedContent` when blocking status changes under the same worktree, contract, config, and carry-forward inputs. Project-defined `docAuditCommands` remain trusted at repository-writer level.
+
 ## Install (Claude Code plugin marketplace)
 
     /plugin marketplace add akira993/doc-audit-harness   # register this repo as a marketplace
@@ -75,7 +77,7 @@ that exception is mechanically limited to approved documentation paths. Example 
     Delegated checks: existence ✔   semantic ✔   format ✔
     ✓ codex-review: completed (findings included in verdict when present)
     ✓ run class: standard (verifier=Sonnet; codex=Terra)
-    Counts: {"impacted":2,"dispatch":2,"verdictFlipsUnchangedContent":0,"verdictFlipsUnchangedContentSameChangeSet":0}
+    Counts: {"impacted":2,"dispatch":2,"verdictFlipsUnchangedContent":0,"verdictFlipsUnchangedContentSameChangeSet":0,"phase4FlipsUnchangedContent":0}
     Report:           docs/logs/doc_audit_2026-06-06.md
 
 Fix the flagged docs, then re-run `/docaudit:audit` until it reports **CONSISTENT** —

@@ -1,6 +1,7 @@
 """Contracts for the S1a portion of docaudit v0.13.2."""
 
 import ast
+import hashlib
 import json
 import os
 import re
@@ -34,11 +35,13 @@ class TestFixScopeDefaults(unittest.TestCase):
         paths_path = os.path.join(root, "paths.txt")
         with open(config_path, "w", encoding="utf-8") as handle:
             json.dump(config, handle)
+        with open(config_path, "rb") as handle:
+            config_sha = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
         with open(paths_path, "w", encoding="utf-8") as handle:
             handle.write("\n".join(paths) + "\n")
         proc = subprocess.run(
             [sys.executable, FIX_SCOPE, "--repo-root", root, "--config", config_path,
-             "--paths", paths_path],
+             "--expect-config-sha", config_sha, "--paths", paths_path],
             capture_output=True, text=True,
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)

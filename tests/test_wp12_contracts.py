@@ -6,12 +6,22 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 from tests.wp12_helpers import RunFixture, git, script, write
 
 
+def sealed_sha(path):
+    with open(path, "rb") as handle:
+        return "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+
+
 class TestOpenRun(unittest.TestCase):
+    def config_sha(self, fx):
+        with open(fx.config_path, "rb") as handle:
+            return "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+
     def test_initial_evidence_seeds_optional_sentinels(self):
         fx = RunFixture(self)
         proc = fx.open()
@@ -24,8 +34,11 @@ class TestOpenRun(unittest.TestCase):
         fx = RunFixture(self)
         first = fx.open()
         self.assertEqual(first.returncode, 0, first.stderr)
+        with open(fx.config_path, "rb") as handle:
+            expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
         second = fx.call("open-run.py", "--run-base", fx.run_base, "--repo-root", fx.repo,
-                         "--runid", "20260818T120001Z-abcdef13")
+                         "--runid", "20260818T120001Z-abcdef13",
+                         "--expect-config-sha", expected)
         self.assertEqual(second.returncode, 4)
         wrong = fx.call("open-run.py", "--run-base", fx.run_base, "--repo-root", fx.repo,
                         "--release", "--runid", "20260818T120001Z-abcdef13")
@@ -62,6 +75,296 @@ class TestOpenRun(unittest.TestCase):
                 proc = fx.open()
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 self.assertEqual(json.loads(proc.stdout).get("previousReportStatus"), expected)
+
+    def test_config_and_anchor_precheck_fail_before_lock_creation(self):
+        fx = RunFixture(self)
+        wrong_config = fx.call(
+            "open-run.py", "--run-base", fx.run_base, "--repo-root", fx.repo,
+            "--anchor-path", fx.anchor_rel, "--runid", fx.runid,
+            "--expect-config-sha", "sha256:" + "0" * 64)
+        self.assertEqual(wrong_config.returncode, 2)
+        self.assertIn("config-changed-before-open", wrong_config.stderr)
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+
+        wrong_anchor = fx.call(
+            "open-run.py", "--run-base", fx.run_base, "--repo-root", fx.repo,
+            "--anchor-path", ".claude/state/wrong-anchor.json", "--runid", fx.runid,
+            "--expect-config-sha", self.config_sha(fx))
+        self.assertEqual(wrong_anchor.returncode, 2)
+        self.assertIn("anchor-path-mismatch", wrong_anchor.stderr)
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+
+    def test_acceptance_exit_six_precedes_lock_and_consumption_preserves_fields(self):
+        fx = RunFixture(self)
+        original = {
+            "runid": "old", "reportStatus": "pending", "ts": "kept",
+            "configAcceptanceRequired": True,
+        }
+        write(fx.last_run, json.dumps(original) + "\n")
+        refused = fx.open()
+        self.assertEqual(refused.returncode, 6, refused.stdout + refused.stderr)
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+
+        accepted = fx.open(accept=True)
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        with open(fx.last_run, encoding="utf-8") as handle:
+            consumed = json.load(handle)
+        self.assertEqual(consumed["runid"], "old")
+        self.assertEqual(consumed["reportStatus"], "pending")
+        self.assertEqual(consumed["ts"], "kept")
+        self.assertFalse(consumed["configAcceptanceRequired"])
+        self.assertEqual(json.loads(accepted.stdout)["previousReportStatus"], "pending")
+
+    def test_existing_lock_is_unconditional_before_acceptance_state(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open().returncode, 0)
+        marker = {"configAcceptanceRequired": True, "reportStatus": "pending"}
+        write(fx.last_run, json.dumps(marker) + "\n")
+        blocked = fx.open(runid="20260818T120001Z-abcdef13")
+        self.assertEqual(blocked.returncode, 4, blocked.stdout + blocked.stderr)
+        with open(fx.last_run, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), marker)
+
+    def test_unreadable_last_run_requires_accept_and_is_normalized(self):
+        fx = RunFixture(self)
+        write(fx.last_run, "{broken")
+        refused = fx.open()
+        self.assertEqual(refused.returncode, 6, refused.stdout + refused.stderr)
+        self.assertEqual(json.loads(refused.stdout)["reason"], "last-run-unreadable")
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+
+        accepted = fx.open(accept=True)
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        with open(fx.last_run, encoding="utf-8") as handle:
+            normalized = json.load(handle)
+        self.assertEqual(normalized, {
+            "configAcceptanceRequired": False,
+            "historyQuarantineFailed": False,
+        })
+
+    def test_legacy_config_refusal_applies_only_before_marker_is_added(self):
+        fx = RunFixture(self)
+        legacy = {
+            "verdict": "REFUSED", "reason": "config-changed",
+            "expectedConfigSha": "sha256:" + "0" * 64,
+            "reportStatus": "not-requested",
+        }
+        write(fx.last_run, json.dumps(legacy) + "\n")
+        refused = fx.open()
+        self.assertEqual(refused.returncode, 6, refused.stdout + refused.stderr)
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+
+        accepted = fx.open(accept=True)
+        self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+        released = fx.call("open-run.py", "--run-base", fx.run_base,
+                           "--repo-root", fx.repo, "--release", "--runid", fx.runid)
+        self.assertEqual(released.returncode, 0, released.stdout + released.stderr)
+        reopened = fx.open(runid="20260818T120001Z-abcdef13")
+        self.assertEqual(reopened.returncode, 0, reopened.stdout + reopened.stderr)
+
+    def test_history_quarantine_marker_is_retried_and_cleared(self):
+        fx = RunFixture(self)
+        marker = {"historyQuarantineFailed": True, "reportStatus": "failed",
+                  "custom": "kept"}
+        write(fx.last_run, json.dumps(marker) + "\n")
+        write(fx.history, '{"entries":[]}\n')
+        opened = fx.open()
+        self.assertEqual(opened.returncode, 0, opened.stdout + opened.stderr)
+        self.assertFalse(os.path.exists(fx.history))
+        quarantined = [name for name in os.listdir(os.path.dirname(fx.history))
+                       if name.startswith("docaudit-history.json.tainted-" + fx.runid + "-")]
+        self.assertEqual(len(quarantined), 1)
+        with open(fx.last_run, encoding="utf-8") as handle:
+            recovered = json.load(handle)
+        self.assertFalse(recovered["historyQuarantineFailed"])
+        self.assertEqual(recovered["custom"], "kept")
+        self.assertEqual(json.loads(opened.stdout)["previousReportStatus"], "failed")
+
+    def test_history_quarantine_failure_releases_new_lock_and_keeps_marker(self):
+        fx = RunFixture(self)
+        marker = {"historyQuarantineFailed": True, "custom": "kept"}
+        write(fx.last_run, json.dumps(marker) + "\n")
+        write(fx.history, '{"entries":[]}\n')
+        now = int(time.time())
+        for epoch in range(now - 2, now + 11):
+            os.mkdir(fx.history + f".tainted-{fx.runid}-{epoch}")
+        failed = fx.open()
+        self.assertEqual(failed.returncode, 2, failed.stdout + failed.stderr)
+        self.assertIn("history-quarantine-pending", failed.stderr)
+        self.assertTrue(os.path.exists(fx.history))
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+        with open(fx.last_run, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), marker)
+
+    def test_acceptance_marker_write_failure_releases_new_lock(self):
+        fx = RunFixture(self)
+        os.makedirs(fx.last_run)
+        failed = fx.open(accept=True)
+        self.assertEqual(failed.returncode, 2, failed.stdout + failed.stderr)
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+        self.assertTrue(os.path.isdir(fx.last_run))
+
+    def test_break_lock_merges_holder_quarantine_marker_without_quarantining(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open().returncode, 0)
+        lock = os.path.join(fx.run_base, "lock")
+        with open(lock, encoding="utf-8") as handle:
+            holder = json.load(handle)
+        holder["historyQuarantineFailed"] = True
+        write(lock, json.dumps(holder) + "\n")
+        write(fx.history, '{"entries":[]}\n')
+        broken = fx.call("open-run.py", "--run-base", fx.run_base,
+                         "--repo-root", fx.repo, "--break-lock")
+        self.assertEqual(broken.returncode, 0, broken.stdout + broken.stderr)
+        self.assertTrue(os.path.exists(fx.history))
+        with open(fx.last_run, encoding="utf-8") as handle:
+            self.assertTrue(json.load(handle)["historyQuarantineFailed"])
+
+    def test_invalid_holder_is_not_removed_by_release_or_break(self):
+        for mode in ("release", "break"):
+            with self.subTest(mode=mode):
+                fx = RunFixture(self)
+                self.assertEqual(fx.open().returncode, 0)
+                lock = os.path.join(fx.run_base, "lock")
+                write(lock, "{broken")
+                args = ["--run-base", fx.run_base, "--repo-root", fx.repo]
+                if mode == "release":
+                    args.extend(["--release", "--runid", fx.runid])
+                else:
+                    args.append("--break-lock")
+                refused = fx.call("open-run.py", *args)
+                self.assertEqual(refused.returncode, 4, refused.stdout + refused.stderr)
+                self.assertTrue(os.path.exists(lock))
+
+    def test_history_taint_double_marker_failure_keeps_lock(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open().returncode, 0)
+        lock = os.path.join(fx.run_base, "lock")
+        state_dir = os.path.dirname(fx.history)
+        write(fx.history, '{"entries":[]}\n')
+        hook_dir = tempfile.mkdtemp(dir=fx.repo)
+        self.addCleanup(lambda: os.chmod(state_dir, 0o700))
+        self.addCleanup(lambda: os.chmod(lock, 0o600) if os.path.exists(lock) else None)
+        runner = r'''
+import importlib.util
+import os
+import sys
+
+target = sys.argv[1]
+sys.path.insert(0, os.path.dirname(target))
+spec = importlib.util.spec_from_file_location("decide_verdict_under_test", target)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+def fail_quarantine(path, runid):
+    os.chmod(os.environ["DOCAUDIT_READONLY_LOCK"], 0o400)
+    raise module.HistoryQuarantineFailed("history-quarantine-failed")
+
+def fail_state(*args, **kwargs):
+    raise OSError("read-only state directory")
+
+def fail_holder(*args, **kwargs):
+    raise OSError("read-only lock")
+
+module.quarantine_history = fail_quarantine
+module.atomic = fail_state
+module.rewrite_lock_holder = fail_holder
+sys.argv = [target] + sys.argv[2:]
+raise SystemExit(module.main())
+'''
+        runner_path = os.path.join(hook_dir, "run_readonly_taint.py")
+        write(runner_path, runner)
+        os.chmod(state_dir, 0o500)
+        env = dict(os.environ, DOCAUDIT_READONLY_LOCK=os.path.abspath(lock))
+        proc = subprocess.run(
+            [sys.executable, runner_path, script("decide-verdict.py"),
+             "--run-dir", fx.run_dir, "--repo-root", fx.repo,
+             "--runid", fx.runid, "--expect-json", json.dumps(fx.evidence),
+             "--taint-observed", "history", "--observed-by", "plan-dispatch.py"],
+            capture_output=True, text=True, env=env)
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("quarantine-marker-unpersisted", proc.stderr,
+                      proc.stdout + proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["reason"],
+                         "quarantine-marker-unpersisted")
+        self.assertTrue(os.path.exists(lock), "failed marker persistence must not release lock")
+        self.assertTrue(os.path.exists(fx.history))
+        self.assertFalse(os.path.exists(fx.last_run))
+
+    def test_non_object_and_non_bool_last_run_are_unreadable(self):
+        cases = ([], {"historyQuarantineFailed": "yes"})
+        for value in cases:
+            with self.subTest(value=value):
+                fx = RunFixture(self)
+                write(fx.last_run, json.dumps(value) + "\n")
+                proc = fx.open()
+                self.assertEqual(proc.returncode, 6, proc.stdout + proc.stderr)
+                self.assertEqual(json.loads(proc.stdout)["reason"], "last-run-unreadable")
+                self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+
+    def test_release_merges_holder_quarantine_marker(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open().returncode, 0)
+        lock = os.path.join(fx.run_base, "lock")
+        write(fx.last_run, json.dumps({"custom": "kept"}) + "\n")
+        with open(lock, encoding="utf-8") as handle:
+            holder = json.load(handle)
+        holder["historyQuarantineFailed"] = True
+        write(lock, json.dumps(holder) + "\n")
+        released = fx.call("open-run.py", "--run-base", fx.run_base,
+                           "--repo-root", fx.repo, "--release", "--runid", fx.runid)
+        self.assertEqual(released.returncode, 0, released.stdout + released.stderr)
+        self.assertFalse(os.path.exists(lock))
+        with open(fx.last_run, encoding="utf-8") as handle:
+            merged = json.load(handle)
+        self.assertEqual(merged["custom"], "kept")
+        self.assertTrue(merged["historyQuarantineFailed"])
+
+    def test_release_and_open_do_not_mutate_flocked_state(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open().returncode, 0)
+        lock = os.path.join(fx.run_base, "lock")
+        write(fx.last_run, json.dumps({"custom": "kept"}) + "\n")
+        write(fx.history, json.dumps({"entries": [{"kept": True}]}) + "\n")
+        with open(lock, "rb") as handle:
+            lock_before = handle.read()
+        with open(fx.last_run, "rb") as handle:
+            last_before = handle.read()
+        with open(fx.history, "rb") as handle:
+            history_before = handle.read()
+        fd = os.open(lock, os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            released = fx.call("open-run.py", "--run-base", fx.run_base,
+                               "--repo-root", fx.repo, "--release", "--runid", fx.runid)
+            self.assertEqual(released.returncode, 4, released.stdout + released.stderr)
+            self.assertEqual(json.loads(released.stdout)["reason"], "gate-running")
+            opened = fx.open(runid="20260818T120001Z-abcdef13")
+            self.assertEqual(opened.returncode, 4, opened.stdout + opened.stderr)
+        finally:
+            os.close(fd)
+        with open(lock, "rb") as handle:
+            self.assertEqual(handle.read(), lock_before)
+        with open(fx.last_run, "rb") as handle:
+            self.assertEqual(handle.read(), last_before)
+        with open(fx.history, "rb") as handle:
+            self.assertEqual(handle.read(), history_before)
+
+    def test_existing_unheld_lock_does_not_mutate_history(self):
+        fx = RunFixture(self)
+        self.assertEqual(fx.open().returncode, 0)
+        lock = os.path.join(fx.run_base, "lock")
+        write(fx.history, json.dumps({"entries": [{"kept": True}]}) + "\n")
+        with open(lock, "rb") as handle:
+            lock_before = handle.read()
+        with open(fx.history, "rb") as handle:
+            history_before = handle.read()
+        opened = fx.open(runid="20260818T120001Z-abcdef13")
+        self.assertEqual(opened.returncode, 4, opened.stdout + opened.stderr)
+        with open(lock, "rb") as handle:
+            self.assertEqual(handle.read(), lock_before)
+        with open(fx.history, "rb") as handle:
+            self.assertEqual(handle.read(), history_before)
 
 
 class TestEvidence(unittest.TestCase):
@@ -110,7 +413,8 @@ class TestDispatchConfiguration(unittest.TestCase):
             "plan-dispatch.py", "--run-dir", fx.run_dir, "--runid", fx.runid,
             "--repo-root", fx.repo, "--config", fx.config_path, "--history", fx.history,
             "--impact-json", impact_path, "--baseline-sha", "null", "--full",
-            "--contract-version", "0.10.0", "--evidence", json.dumps(fx.evidence))
+            "--contract-version", "0.10.0", "--evidence", json.dumps(fx.evidence),
+            "--expect-config-sha", fx.evidence["config"])
         self.assertEqual(proc.returncode, 0, proc.stderr)
         with open(os.path.join(fx.run_dir, "dispatch.json"), encoding="utf-8") as handle:
             dispatch = json.load(handle)
@@ -123,7 +427,8 @@ class TestChangeSet(unittest.TestCase):
     def call(self, fx, baseline=None):
         return subprocess.run(
             [sys.executable, script("change-set-sha.py"), "--repo-root", fx.repo,
-             "--baseline-sha", baseline or fx.head, "--config", fx.config_path],
+             "--baseline-sha", baseline or fx.head, "--config", fx.config_path,
+             "--expect-config-sha", sealed_sha(fx.config_path)],
             capture_output=True, text=True)
 
     def test_delete_mode_symlink_and_report_exclusion(self):
@@ -230,6 +535,7 @@ class TestImpactAndClassification(unittest.TestCase):
         write(changed, "src/app.py\n")
         proc = subprocess.run([sys.executable, script("resolve-impact.py"),
                                "--config", fx.config_path, "--changed", changed,
+                               "--expect-config-sha", sealed_sha(fx.config_path),
                                "--repo-root", fx.repo, "--mode", "full"],
                               capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -248,6 +554,7 @@ class TestImpactAndClassification(unittest.TestCase):
         write(changed, "src/app.py\n")
         proc = subprocess.run([sys.executable, script("resolve-impact.py"),
                                "--config", fx.config_path, "--changed", changed,
+                               "--expect-config-sha", sealed_sha(fx.config_path),
                                "--repo-root", fx.repo, "--mode", "incremental"],
                               capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -260,7 +567,8 @@ class TestImpactAndClassification(unittest.TestCase):
         impact = os.path.join(fx.repo, "impact.json")
         write(impact, json.dumps({"impacted": [{"path": "docs/a.md"}]}) + "\n")
         args = [sys.executable, script("classify-run.py"), "--repo-root", fx.repo,
-                "--config", fx.config_path, "--impact-json", impact,
+                "--config", fx.config_path, "--expect-config-sha", sealed_sha(fx.config_path),
+                "--impact-json", impact,
                 "--baseline-sha", baseline or fx.head, "--mode", mode]
         if last: args += ["--last-run", last]
         return subprocess.run(args, capture_output=True, text=True)
@@ -300,7 +608,8 @@ class TestImpactAndClassification(unittest.TestCase):
         write(impact, json.dumps({"impacted": []}) + "\n")
         proc = subprocess.run(
             [sys.executable, script("classify-run.py"), "--repo-root", fx.repo,
-             "--config", fx.config_path, "--impact-json", impact,
+             "--config", fx.config_path, "--expect-config-sha", sealed_sha(fx.config_path),
+             "--impact-json", impact,
              "--baseline-sha", fx.head, "--mode", "incremental"],
             capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -333,6 +642,7 @@ class TestRegressionSealedChainIntegration(unittest.TestCase):
         impact_path = os.path.join(fx.run_dir, "impact.json")
         resolved = fx.call(
             "resolve-impact.py", "--config", fx.config_path, "--changed", "-",
+            "--expect-config-sha", fx.evidence["config"],
             "--repo-root", fx.repo, "--mode", "incremental", "--history", fx.history,
             input_text="\n".join(changed) + "\n")
         self.assertEqual(resolved.returncode, 0, resolved.stderr)
@@ -343,6 +653,7 @@ class TestRegressionSealedChainIntegration(unittest.TestCase):
             "--change-summary", "S4a integration", "--repo-root", fx.repo,
             "--max-impacted-docs", str(fx.config["maxImpactedDocs"]),
             "--doc-globs", ",".join(fx.config["docGlobs"]), "--config", fx.config_path,
+            "--expect-config-sha", fx.evidence["config"],
             input_text="\n".join(changed) + "\n")
         self.assertEqual(supplemented.returncode, 0, supplemented.stderr)
 
@@ -351,7 +662,8 @@ class TestRegressionSealedChainIntegration(unittest.TestCase):
             "--repo-root", fx.repo, "--config", fx.config_path, "--history", fx.history,
             "--impact-json", impact_path, "--baseline-sha", fx.head,
             "--mode", "incremental", "--contract-version", "0.10.0",
-            "--evidence", json.dumps(fx.evidence))
+            "--evidence", json.dumps(fx.evidence),
+            "--expect-config-sha", fx.evidence["config"])
         self.assertEqual(planned.returncode, 0, planned.stderr)
         fx.evidence = json.loads(planned.stdout)
 
@@ -360,7 +672,8 @@ class TestRegressionSealedChainIntegration(unittest.TestCase):
             "--repo-root", fx.repo, "--impact-json", impact_path,
             "--dispatch-json", os.path.join(fx.run_dir, "dispatch.json"),
             "--run-class", "standard", "--mode", "incremental",
-            "--config", fx.config_path, "--evidence", json.dumps(fx.evidence))
+            "--config", fx.config_path, "--expect-config-sha", fx.evidence["config"],
+            "--evidence", json.dumps(fx.evidence))
         self.assertEqual(started.returncode, 0, started.stderr)
         fx.evidence = json.loads(started.stdout)
 
@@ -384,7 +697,11 @@ class TestRegressionSealedChainIntegration(unittest.TestCase):
         written = fx.write_evidence("returns", returns)
         self.assertEqual(written.returncode, 0, written.stderr)
         if manifest["phase4Required"]:
-            phase4 = fx.write_evidence("phase4", {"findings": []})
+            phase4 = fx.write_evidence("phase4", {
+                "findings": [],
+                "codexReview": {"state": "not-active", "promptVariant": None,
+                                "carryForwardSha": "none"},
+            })
             self.assertEqual(phase4.returncode, 0, phase4.stderr)
         gated = fx.gate()
         self.assertEqual(gated.returncode, 0, gated.stdout + gated.stderr)
@@ -449,7 +766,8 @@ class TestFixScopeAndConfig(unittest.TestCase):
         fx = RunFixture(self)
         write(os.path.join(fx.repo, "docs", "logs", "audit.md"), "protected\n")
         proc = subprocess.run([sys.executable, script("fix-scope.py"), "--repo-root", fx.repo,
-                               "--config", fx.config_path, "--paths", "-"],
+                               "--config", fx.config_path, "--expect-config-sha",
+                               sealed_sha(fx.config_path), "--paths", "-"],
                               input="docs/a.md\ndocs/logs/audit.md\n", capture_output=True, text=True)
         out = json.loads(proc.stdout)
         self.assertEqual(out["allowed"], ["docs/a.md"])

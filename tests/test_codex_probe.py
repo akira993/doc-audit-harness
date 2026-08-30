@@ -1,4 +1,4 @@
-import json, os, stat, subprocess, tempfile, unittest
+import hashlib, json, os, stat, subprocess, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "codex-probe.sh")
@@ -54,10 +54,12 @@ def version_stub(version="0.145.0-stub"):
 def run_script(repo, config, extra_env=None):
     cfg = os.path.join(repo, ".claude", "doc-audit.json")
     write(cfg, json.dumps(config))
+    with open(cfg, "rb") as handle:
+        expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
     env = dict(os.environ)
     if extra_env:
         env.update(extra_env)
-    p = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", repo],
+    p = subprocess.run(["bash", SCRIPT, "--config", cfg, "--expect-config-sha", expected, "--repo-root", repo],
                        capture_output=True, text=True, env=env)
     assert p.returncode == 0, p.stderr
     return json.loads(p.stdout)
@@ -84,10 +86,12 @@ class TestCodexProbe(unittest.TestCase):
     def test_json_emit_is_ascii_one_line(self):
         cfg = os.path.join(self.repo, ".claude", "keyless-json-emit.json")
         write(cfg, "{}")
+        with open(cfg, "rb") as handle:
+            expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
         keyless_env = {os.fsencode(key): os.fsencode(value) for key, value in os.environ.items()}
         keyless_env[b"CODEX_HOME"] = b"/tmp/h\xffome"
         keyless = subprocess.run(
-            ["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+            ["bash", SCRIPT, "--config", cfg, "--expect-config-sha", expected, "--repo-root", self.repo],
             capture_output=True, env=keyless_env,
         )
         self.assertEqual(keyless.returncode, 0, keyless.stderr)
@@ -104,7 +108,9 @@ class TestCodexProbe(unittest.TestCase):
         def invoke(bin_name, env):
             cfg = os.path.join(self.repo, ".claude", "json-emit.json")
             write(cfg, json.dumps({"codexReview": {"bin": bin_name}}))
-            proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+            with open(cfg, "rb") as handle:
+                expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+            proc = subprocess.run(["bash", SCRIPT, "--config", cfg, "--expect-config-sha", expected, "--repo-root", self.repo],
                                   capture_output=True, env=env)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertTrue(proc.stdout.isascii())
@@ -195,6 +201,7 @@ class TestCodexProbe(unittest.TestCase):
             "compound": {"codexReview": {"enabled": False, "bin": []}},
         }
         invalid = case_ids - {"absent", "empty", "disabled", "compound"}
+        hard_errors = {"cfg_omitted", "cfg_value_missing", "cfg_empty", "cfg_missing", "cfg_broken"}
         for case_id in sorted(case_ids):
             with self.subTest(case_id=case_id):
                 cfg = os.path.join(self.repo, case_id + ".json")
@@ -209,10 +216,21 @@ class TestCodexProbe(unittest.TestCase):
                         value = payloads[case_id]
                         write(cfg, value if isinstance(value, str) else json.dumps(value))
                     args += ["--config", cfg]
+                    if cfg and os.path.exists(cfg):
+                        with open(cfg, "rb") as handle:
+                            expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+                        args += ["--expect-config-sha", expected]
+                    elif cfg:
+                        args += ["--expect-config-sha", "sha256:" + "0" * 64]
                 if case_id != "cfg_value_missing":
                     args += ["--repo-root", self.repo]
                 before = read_marker(marker)
                 proc = subprocess.run(args, capture_output=True, text=True, env=env)
+                if case_id in hard_errors:
+                    self.assertEqual(proc.returncode, 2)
+                    self.assertFalse(proc.stdout)
+                    self.assertEqual(read_marker(marker), before)
+                    continue
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 self.assertTrue(proc.stdout.isascii())
                 self.assertEqual(len(proc.stdout.splitlines()), 1)
@@ -249,6 +267,8 @@ class TestCodexProbe(unittest.TestCase):
         make_exec(stub, version_stub())
         cfg = os.path.join(self.repo, "config.json")
         write(cfg, json.dumps({"codexReview": {"bin": stub}}))
+        with open(cfg, "rb") as handle:
+            config_sha = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
         for case_id in sorted(case_ids):
             with self.subTest(case_id=case_id):
                 base = self.tmpdir()
@@ -269,7 +289,8 @@ class TestCodexProbe(unittest.TestCase):
                     os.makedirs(expected_home, exist_ok=True)
                     write(os.path.join(expected_home, "auth.json"), "{}")
                 proc = subprocess.run(
-                    ["bash", SCRIPT, "--config", cfg, "--repo-root", self.repo],
+                    ["bash", SCRIPT, "--config", cfg, "--expect-config-sha", config_sha,
+                     "--repo-root", self.repo],
                     capture_output=True, text=True, env=env,
                 )
                 self.assertEqual(proc.returncode, 0, proc.stderr)

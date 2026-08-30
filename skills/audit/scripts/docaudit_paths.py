@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Repository-relative path validation shared by docaudit scripts."""
 
+import json
 import os
 import re
+import unicodedata
 
 
 def glob_to_regex(pattern):
@@ -63,6 +65,32 @@ def validate_repo_path(repo_root, path, *, must_exist=True, regular_file=True):
     if must_exist and regular_file and not os.path.isfile(current):
         raise ValueError("path is not a regular file")
     return "/".join(parts)
+
+
+def normalize_finding_path(repo_root, value):
+    """Return a safe canonical finding path, or ``None`` if unresolved.
+
+    A trailing line/column suffix is removed only when the path including that
+    suffix is not itself a valid repository file.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    if (re.match(r"^[A-Za-z]:", value) or value.startswith(("/", "\\\\"))
+            or "\\" in value or '"' in value
+            or any(unicodedata.category(char) == "Cc" for char in value)
+            or len(json.dumps(value, ensure_ascii=True).encode("utf-8")) > 512):
+        return None
+    candidate = value[2:] if value.startswith("./") else value
+    try:
+        return validate_repo_path(repo_root, candidate)
+    except ValueError:
+        stripped = re.sub(r":\d+(?::\d+)?$", "", candidate)
+        if stripped == candidate:
+            return None
+        try:
+            return validate_repo_path(repo_root, stripped)
+        except ValueError:
+            return None
 
 
 def list_doc_files(repo_root, doc_globs, warnings=None):

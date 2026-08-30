@@ -12,24 +12,29 @@
 # local binary and do not start a model invocation.
 set -uo pipefail
 
-CONFIG=""; CONFIG_SET=0; REPO_ROOT="$(pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG=""; CONFIG_SET=0; EXPECT_CONFIG_SHA=""; REPO_ROOT="$(pwd)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config)
       CONFIG_SET=1
       if [[ $# -ge 2 ]]; then CONFIG="$2"; shift 2; else CONFIG=""; shift; fi
       ;;
+    --expect-config-sha) EXPECT_CONFIG_SHA="$2"; shift 2;;
     --repo-root) REPO_ROOT="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
 
-DECISION="$(python3 -c '
+[[ -n "$CONFIG" ]] || { echo "error: --config required" >&2; exit 2; }
+[[ -n "$EXPECT_CONFIG_SHA" ]] || { echo "error: --expect-config-sha required" >&2; exit 2; }
+CONFIG_JSON="$(python3 "$SCRIPT_DIR/sealed_config.py" --config "$CONFIG" --expect-sha "$EXPECT_CONFIG_SHA" --print)" || { rc=$?; exit "$rc"; }
+
+if ! DECISION="$(printf '%s' "$CONFIG_JSON" | python3 -c '
 import base64,json,sys
 state="invalid"; binary="codex"
 try:
-    if sys.argv[1] != "1" or not sys.argv[2]: raise ValueError
-    config=json.load(open(sys.argv[2]))
+    config=json.load(sys.stdin)
     if not isinstance(config,dict): raise ValueError
     if "codexReview" not in config:
         state="not-configured"
@@ -50,7 +55,10 @@ except Exception:
     state="invalid"; binary="codex"
 line=state+"\t"+base64.b64encode(binary.encode("utf-8")).decode("ascii")+"\n"
 sys.stdout.buffer.write(line.encode("utf-8"))
-' "$CONFIG_SET" "$CONFIG")"
+')"; then
+  echo "error: failed to parse sealed config for codex probe" >&2
+  exit 2
+fi
 IFS=$'\t' read -r CONFIG_STATE BIN_B64 <<< "$DECISION"
 BIN="$(python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.argv[1]))' "$BIN_B64")"
 

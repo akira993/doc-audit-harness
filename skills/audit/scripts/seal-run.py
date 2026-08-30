@@ -50,7 +50,12 @@ def main():
         change = subprocess.run(
             [sys.executable, os.path.join(HERE, "change-set-sha.py"),
              "--repo-root", args.repo_root, "--baseline-sha", manifest["baselineSha"],
-             "--config", config], capture_output=True, text=True)
+             "--config", config, "--expect-config-sha", evidence["config"]],
+            capture_output=True, text=True)
+        if change.returncode == 7:
+            if change.stderr:
+                print(change.stderr.rstrip(), file=sys.stderr)
+            return 7
         if change.returncode:
             raise ValueError(change.stderr.strip() or "change-set-sha failed")
         current_change = json.loads(change.stdout)

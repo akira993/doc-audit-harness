@@ -12,6 +12,7 @@ import sys
 import tempfile
 
 from docaudit_paths import list_doc_files, matches_glob, validate_repo_path
+from sealed_config import SealedConfigMismatch, load_sealed_config
 
 
 RUNID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
@@ -180,6 +181,7 @@ def main():
     parser.add_argument("--run-class", required=True, choices=["light", "standard"])
     parser.add_argument("--mode", required=True, choices=["incremental", "full"])
     parser.add_argument("--config", required=True)
+    parser.add_argument("--expect-config-sha", required=True)
     parser.add_argument("--evidence", required=True)
     args = parser.parse_args()
     try:
@@ -195,6 +197,8 @@ def main():
         if (not isinstance(evidence, dict) or evidence.get("runid") != args.runid
                 or os.path.realpath(str(evidence.get("runDir"))) != os.path.realpath(args.run_dir)):
             raise ValueError("EVIDENCE run identity mismatch")
+        if evidence.get("config") != args.expect_config_sha:
+            raise ValueError("--expect-config-sha does not match EVIDENCE config")
         repo = os.path.realpath(args.repo_root)
         expected_run_dir = os.path.join(repo, ".claude", "state", "docaudit-run", args.runid)
         if os.path.realpath(args.run_dir) != os.path.realpath(expected_run_dir):
@@ -212,11 +216,7 @@ def main():
         if "sha256:" + hashlib.sha256(impact_raw).hexdigest() != expected_impact_sha:
             raise ValueError("impact.json changed after plan-dispatch")
         impact = json.loads(impact_raw)
-        with open(args.config, "rb") as handle:
-            config_raw = handle.read()
-        if "sha256:" + hashlib.sha256(config_raw).hexdigest() != evidence.get("config"):
-            raise ValueError("config changed after open-run")
-        config = json.loads(config_raw.decode("utf-8"))
+        _config_raw, config = load_sealed_config(args.config, args.expect_config_sha)
         phase3_backend, phase3_codex_timeout = phase3_settings(config)
         report_rule = report_candidate_rule(config, repo, report_date)
         paths = impacted_paths(impact, repo)
@@ -282,6 +282,9 @@ def main():
         if os.path.realpath(args.impact_json) != os.path.realpath(impact_target):
             atomic_write(impact_target, impact_raw)
         evidence["manifest"] = "sha256:" + hashlib.sha256(raw).hexdigest()
+    except SealedConfigMismatch as exc:
+        print(str(exc), file=sys.stderr)
+        return 7
     except (OSError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
         print(f"start-run: {exc}", file=sys.stderr)
         return 2

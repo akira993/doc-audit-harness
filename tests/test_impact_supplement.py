@@ -1,4 +1,4 @@
-import json, os, stat, subprocess, tempfile, unittest
+import hashlib, json, os, stat, subprocess, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "impact-supplement.py")
@@ -40,6 +40,11 @@ def run_script(args_list, stdin_text=""):
     p = subprocess.run(["python3", SCRIPT] + args_list, input=stdin_text,
                         capture_output=True, text=True)
     return p
+
+
+def sealed_sha(path):
+    with open(path, "rb") as handle:
+        return "sha256:" + hashlib.sha256(handle.read()).hexdigest()
 
 
 GRAPHIFY_MIXED_STUB = '''#!/usr/bin/env bash
@@ -192,6 +197,7 @@ class TestImpactSupplement(unittest.TestCase):
             "--impact-json", self.impact_path, "--changed", "-",
             "--change-summary", "change", "--repo-root", self.repo,
             "--graphify-bin", gbin, "--config", config_path,
+            "--expect-config-sha", sealed_sha(config_path),
         ], stdin_text="src/foo.py\n")
         self.assertEqual(with_config.returncode, 0, with_config.stderr)
         with open(self.impact_path, encoding="utf-8") as handle:
@@ -215,6 +221,7 @@ class TestImpactSupplement(unittest.TestCase):
                     "--impact-json", self.impact_path, "--changed", "-",
                     "--change-summary", "change", "--repo-root", self.repo,
                     "--graphify-bin", gbin, "--config", config_path,
+                    "--expect-config-sha", sealed_sha(config_path),
                 ], stdin_text="src/foo.py\n")
                 self.assertEqual(proc.returncode, 0, proc.stderr)
                 with open(self.impact_path, encoding="utf-8") as handle:

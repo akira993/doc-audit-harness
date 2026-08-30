@@ -1,4 +1,4 @@
-import json, os, subprocess, tempfile, unittest
+import hashlib, json, os, subprocess, tempfile, unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "compute-baseline.sh")
@@ -19,7 +19,10 @@ def run_script(repo, config):
     cfg_rel = ".claude/doc-audit.json"
     write(repo, cfg_rel, json.dumps(config))
     git(repo, "add", "-A"); git(repo, "commit", "-m", "cfg")
-    p = subprocess.run(["bash", SCRIPT, "--config", os.path.join(repo, cfg_rel), "--repo-root", repo],
+    cfg = os.path.join(repo, cfg_rel)
+    with open(cfg, "rb") as handle:
+        expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+    p = subprocess.run(["bash", SCRIPT, "--config", cfg, "--expect-config-sha", expected, "--repo-root", repo],
                        capture_output=True, text=True)
     assert p.returncode == 0, p.stderr
     return json.loads(p.stdout)
@@ -119,7 +122,9 @@ class TestComputeBaseline(unittest.TestCase):
         for path in (".claude/state/docaudit-history.json", ".claude/worktrees/a", ".mdq/x", ".codegraph/x", "graphify-out/x", ".cocoindex_code/x", "docs/logs/doc_audit_2026-01-01.md", "docs/logs/doc_audit_2026-01-01_02.md", "docs/logs/doc_audit_policy.md", "docs/kept.md"):
             write(self.repo, path, "changed\n")
         git(self.repo, "add", "-A"); git(self.repo, "commit", "-m", "change")
-        proc = subprocess.run(["bash", SCRIPT, "--config", config_path, "--repo-root", self.repo],
+        with open(config_path, "rb") as handle:
+            expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
+        proc = subprocess.run(["bash", SCRIPT, "--config", config_path, "--expect-config-sha", expected, "--repo-root", self.repo],
                               capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)

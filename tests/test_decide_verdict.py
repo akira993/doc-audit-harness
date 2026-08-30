@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest import mock
 
@@ -44,6 +45,57 @@ class TestHappy(GateBase):
         proc = fx.gate()
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(json.loads(proc.stdout)["verdict"], "CONSISTENT")
+
+    def test_config_replaced_after_read_is_tainted_from_fd_signature(self):
+        fx = self.prepared()
+        with tempfile.TemporaryDirectory() as hook_dir:
+            hook = textwrap.dedent(r'''
+                import os
+                _os_open = os.open
+                _os_read = os.read
+                _target = os.path.realpath(os.environ["DOCAUDIT_SWAP_PATH"])
+                _replacement = os.environ["DOCAUDIT_SWAP_REPLACEMENT"]
+                _target_fd = None
+                _swapped = False
+                def tracked_open(path, *args, **kwargs):
+                    global _target_fd
+                    fd = _os_open(path, *args, **kwargs)
+                    try: same = os.path.realpath(os.fspath(path)) == _target
+                    except Exception: same = False
+                    if same: _target_fd = fd
+                    return fd
+                def tracked_read(fd, *args, **kwargs):
+                    global _swapped
+                    data = _os_read(fd, *args, **kwargs)
+                    if fd == _target_fd and not data and not _swapped:
+                        _swapped = True
+                        os.replace(_replacement, _target)
+                    return data
+                os.open = tracked_open
+                os.read = tracked_read
+            ''')
+            write(os.path.join(hook_dir, "sitecustomize.py"), hook)
+            replacement = fx.config_path + ".replacement"
+            with open(fx.config_path, "rb") as source:
+                write(replacement, source.read().decode("utf-8"))
+            env = dict(os.environ, PYTHONPATH=hook_dir,
+                       DOCAUDIT_SWAP_PATH=fx.config_path,
+                       DOCAUDIT_SWAP_REPLACEMENT=replacement)
+            proc = subprocess.run(
+                [sys.executable, DECIDE,
+                 "--run-dir", fx.run_dir, "--repo-root", fx.repo,
+                 "--config", fx.config_path, "--anchor-path", fx.anchor_rel,
+                 "--runid", fx.runid, "--expect-json", json.dumps(fx.evidence),
+                 "--date", "2026-08-18"],
+                capture_output=True, text=True, env=env)
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["verdict"], "REFUSED")
+        self.assertEqual(result["reason"], "config-changed")
+        with open(fx.last_run, encoding="utf-8") as handle:
+            last_run = json.load(handle)
+        self.assertTrue(last_run["configAcceptanceRequired"])
+        self.assertEqual(last_run["expectedConfigSha"], fx.evidence["config"])
 
     def test_warn_never_blocks(self):
         fx = self.prepared({"docs/a.md": "WARN", "docs/b.md": "PASS"})
@@ -816,8 +868,11 @@ class TestAttacks(GateBase):
                          "--repo-root", fx.repo, "--break-lock")
         self.assertEqual(broken.returncode, 0, broken.stderr)
         later = "20260818T120001Z-deadbeef"
+        with open(fx.config_path, "rb") as handle:
+            config_sha = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
         opened = fx.call("open-run.py", "--run-base", fx.run_base,
-                         "--repo-root", fx.repo, "--runid", later)
+                         "--repo-root", fx.repo, "--runid", later,
+                         "--expect-config-sha", config_sha)
         self.assertEqual(opened.returncode, 0, opened.stderr)
         proc = fx.gate()
         self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
@@ -1117,10 +1172,19 @@ class TestCache(GateBase):
 
 
 class TestCodexReviewGate(GateBase):
-    def prepared_codex(self, config, phase4):
+    @staticmethod
+    def codex_phase(state, mode="incremental"):
+        if state in {"completed", "execution-failed"}:
+            variant = "full" if mode == "full" else "diff"
+        else:
+            variant = None
+        return {"findings": [], "codexReview": {
+            "state": state, "promptVariant": variant, "carryForwardSha": "none"}}
+
+    def prepared_codex(self, config, phase4, mode="incremental"):
         fx = RunFixture(self, config_extra=config)
         self.assertEqual(fx.open().returncode, 0)
-        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        self.assertEqual(fx.plan_start_seal(mode=mode).returncode, 0)
         self.assertEqual(fx.complete(phase4=phase4).returncode, 0)
         return fx
 
@@ -1136,7 +1200,8 @@ class TestCodexReviewGate(GateBase):
             with self.subTest(state=state):
                 fx = self.prepared_codex(
                     {"codexReview": {"required": True}},
-                    {"findings": [], "codexReview": {"state": state}})
+                    self.codex_phase(state, "full" if state == "skipped-full-run" else "incremental"),
+                    mode="full" if state == "skipped-full-run" else "incremental")
                 proc = fx.gate()
                 self.assertEqual(proc.returncode, returncode, proc.stdout + proc.stderr)
                 result = json.loads(proc.stdout)
@@ -1153,7 +1218,7 @@ class TestCodexReviewGate(GateBase):
     def test_required_with_not_active_state_is_refused(self):
         fx = self.prepared_codex(
             {"codexReview": {"required": True}},
-            {"findings": [], "codexReview": {"state": "not-active"}})
+            self.codex_phase("not-active"))
         proc = fx.gate()
         self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
         result = json.loads(proc.stdout)
@@ -1167,7 +1232,7 @@ class TestCodexReviewGate(GateBase):
         proc = missing_key.gate()
         self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
         self.assertEqual(json.loads(proc.stdout)["reason"],
-                         "codex-review required but state=missing")
+                         "codexReview evidence invalid: codexReview must be an object")
 
         missing_file = RunFixture(self, config_extra={"codexReview": {"required": True}})
         self.assertEqual(missing_file.open().returncode, 0)
@@ -1193,7 +1258,7 @@ class TestCodexReviewGate(GateBase):
         for config, reason in cases:
             with self.subTest(reason=reason):
                 fx = self.prepared_codex(
-                    config, {"findings": [], "codexReview": {"state": "completed"}})
+                    config, self.codex_phase("completed"))
                 proc = fx.gate()
                 self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
                 self.assertEqual(json.loads(proc.stdout)["reason"], reason)
@@ -1201,8 +1266,10 @@ class TestCodexReviewGate(GateBase):
     def test_codex_review_evidence_shape_is_always_strict(self):
         cases = [
             (["completed"], "codexReview must be an object"),
-            ({"state": 7}, "state must be a string"),
-            ({"state": "future-state"}, "state is not recognized"),
+            ({"state": 7, "promptVariant": "diff", "carryForwardSha": "none"},
+             "state must be a string"),
+            ({"state": "future-state", "promptVariant": "diff", "carryForwardSha": "none"},
+             "state is not recognized"),
         ]
         for evidence, detail in cases:
             with self.subTest(detail=detail):
@@ -1213,20 +1280,19 @@ class TestCodexReviewGate(GateBase):
                 self.assertEqual(json.loads(proc.stdout)["reason"],
                                  "codexReview evidence invalid: " + detail)
 
-    def test_absent_codex_review_keeps_backward_compatible_behavior(self):
+    def test_absent_codex_review_is_refused_as_mixed_version_evidence(self):
         fx = self.prepared_codex({}, {"findings": []})
         proc = fx.gate()
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
         result = json.loads(proc.stdout)
-        self.assertEqual(result["verdict"], "CONSISTENT")
-        self.assertEqual(result["codexReview"],
-                         {"state": None, "required": False, "degraded": False})
+        self.assertEqual(result["verdict"], "REFUSED")
+        self.assertEqual(result["reason"],
+                         "codexReview evidence invalid: codexReview must be an object")
 
     def test_degraded_report_is_decorated_but_state_and_anchor_are_plain(self):
         fx = self.prepared_codex(
             {"reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"},
-            {"findings": [],
-             "codexReview": {"state": "execution-failed", "required": True}})
+            self.codex_phase("execution-failed"))
         self.assertEqual(fx.write_template().returncode, 0)
         proc = fx.gate()
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -1251,7 +1317,7 @@ class TestCodexReviewGate(GateBase):
 
     def test_optional_ref_invalid_warns_without_refusing(self):
         fx = self.prepared_codex(
-            {}, {"findings": [], "codexReview": {"state": "ref-invalid"}})
+            {}, self.codex_phase("ref-invalid"))
         proc = fx.gate()
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         result = json.loads(proc.stdout)
@@ -1262,7 +1328,7 @@ class TestCodexReviewGate(GateBase):
     def test_required_refusal_preserves_history_and_anchor_and_updates_last_run(self):
         fx = self.prepared_codex(
             {"codexReview": {"required": True}},
-            {"findings": [], "codexReview": {"state": "completed"}})
+            self.codex_phase("completed"))
         first = fx.gate()
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         with open(fx.history, "rb") as handle:
@@ -1272,8 +1338,7 @@ class TestCodexReviewGate(GateBase):
 
         self.assertEqual(fx.open(runid="20260818T120001Z-abcdef12").returncode, 0)
         self.assertEqual(fx.plan_start_seal().returncode, 0)
-        self.assertEqual(fx.complete(phase4={
-            "findings": [], "codexReview": {"state": "execution-failed"}}).returncode, 0)
+        self.assertEqual(fx.complete(phase4=self.codex_phase("execution-failed")).returncode, 0)
         proc = fx.gate()
         self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
         reason = "codex-review required but state=execution-failed"

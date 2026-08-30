@@ -29,8 +29,9 @@ Rules:
 """
 import argparse, hashlib, json, os, re, sys
 
-from docaudit_cache import content_sha, parse_history
+from docaudit_cache import content_sha, parse_history_document
 from docaudit_paths import list_doc_files as safe_list_doc_files, matches_glob, validate_repo_path
+from sealed_config import SealedConfigMismatch, load_sealed_config
 
 DEFAULT_MIN_IDENT = 5
 DEFAULT_EXCLUDE_BASENAMES = {
@@ -136,6 +137,7 @@ def tokens_for(changed_path, min_len, exclude):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
+    ap.add_argument("--expect-config-sha", required=True)
     ap.add_argument("--changed", required=True)
     ap.add_argument("--repo-root", default=os.getcwd())
     ap.add_argument("--mode", choices=["incremental", "full"], default="incremental")
@@ -143,11 +145,10 @@ def main():
     args = ap.parse_args()
 
     try:
-        with open(args.config, encoding="utf-8") as f:
-            cfg = json.load(f)
-    except OSError as e:
-        print(f"error: {e}", file=sys.stderr); sys.exit(2)
-    except json.JSONDecodeError as e:
+        _config_raw, cfg = load_sealed_config(args.config, args.expect_config_sha)
+    except SealedConfigMismatch as e:
+        print(str(e), file=sys.stderr); sys.exit(7)
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as e:
         print(f"error: {e}", file=sys.stderr); sys.exit(2)
 
     if args.changed == "-":
@@ -247,7 +248,9 @@ def main():
                 with open(args.history, "rb") as handle:
                     history_raw = handle.read()
                 history_sha = "sha256:" + hashlib.sha256(history_raw).hexdigest()
-                entries = parse_history(json.loads(history_raw.decode("utf-8")))
+                entries, _phase4_runs, history_warnings = parse_history_document(
+                    json.loads(history_raw.decode("utf-8")))
+                warnings.extend(history_warnings)
                 last = {}
                 for entry in entries:
                     last[entry["path"]] = entry

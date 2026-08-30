@@ -7,15 +7,21 @@ import os
 import sys
 import tempfile
 
+from sealed_config import SealedConfigMismatch, load_sealed_config
+
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
+    parser.add_argument("--expect-config-sha")
     parser.add_argument("--set", action="append", required=True)
     args = parser.parse_args()
     try:
-        with open(args.config, encoding="utf-8") as handle:
-            config = json.load(handle)
+        if args.expect_config_sha is not None:
+            _config_raw, config = load_sealed_config(args.config, args.expect_config_sha)
+        else:
+            with open(args.config, encoding="utf-8") as handle:
+                config = json.load(handle)
         if not isinstance(config, dict):
             raise ValueError("config must be an object")
         changed = []
@@ -39,6 +45,9 @@ def main():
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
+    except SealedConfigMismatch as exc:
+        print(str(exc), file=sys.stderr)
+        return 7
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         print(f"set-config-key: {exc}", file=sys.stderr)
         return 2

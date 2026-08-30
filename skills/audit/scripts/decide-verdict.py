@@ -15,9 +15,10 @@ import sys
 import tempfile
 
 from docaudit_cache import (CODEX_REVIEW_STATES, VALID_BACKENDS, cache_qualification,
-                            content_sha, json_bytes, parse_history, sha256_bytes,
+                            content_sha, json_bytes, parse_history_document, sha256_bytes,
                             trim_history, validate_min_passes)
-from docaudit_paths import validate_repo_path
+from docaudit_paths import normalize_finding_path, validate_repo_path
+from sealed_config import SealedConfigMismatch, load_sealed_config
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +29,15 @@ VALID_VERDICTS = {"PASS", "WARN", "FAIL"}
 VALID_PROVENANCE = {"mapped", "heuristic", "both", "full", "graphify", "semantic",
                     "regression"}
 FAIL_SEVERITIES = {"FAIL", "HIGH", "CRITICAL"}
+PHASE4_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
+OBSERVERS = (
+    "mdq-index.sh", "ax-probe.sh", "codex-probe.sh", "codegraph-probe.sh",
+    "graphify-probe.sh", "cocoindex-probe.sh", "set-config-key.py",
+    "generic-layers.py", "check-docs.py", "fix-scope.py", "compute-baseline.sh",
+    "resolve-impact.py", "impact-supplement.py", "classify-run.py",
+    "plan-dispatch.py", "start-run.py", "seal-run.py", "codex-review-plan.py",
+    "sealed_config.py",
+)
 MAX_TEMPLATE_BYTES = 2 * 1024 * 1024
 MAX_REPORT_BYTES = 4 * 1024 * 1024
 MAX_RECEIPT_BYTES = 64 * 1024
@@ -60,6 +70,10 @@ class TemplateMissing(Exception):
 
 
 class TemplateInvalid(Exception):
+    pass
+
+
+class HistoryQuarantineFailed(Exception):
     pass
 
 
@@ -288,6 +302,97 @@ def findings_fail(value):
     return blocking
 
 
+PHASE4_ELIGIBILITY = {
+    ("full", "full", "completed"): True,
+    ("full", "full", "execution-failed"): False,
+    ("full", None, "skipped-full-run"): False,
+    ("full", None, "not-active"): False,
+    ("incremental", "diff", "completed"): False,
+    ("incremental", "diff", "execution-failed"): False,
+    ("incremental", None, "ref-invalid"): False,
+    ("incremental", None, "not-active"): False,
+}
+
+
+def validate_phase4_contract(repo, manifest, phase4):
+    if not isinstance(phase4, dict):
+        raise Refused("phase4 evidence must be an object")
+    codex = phase4.get("codexReview")
+    if not isinstance(codex, dict):
+        raise Refused("codexReview evidence invalid: codexReview must be an object")
+    if "state" not in codex or "promptVariant" not in codex or "carryForwardSha" not in codex:
+        raise Refused("codexReview evidence invalid: required keys are missing")
+    state = codex["state"]
+    variant = codex["promptVariant"]
+    carry_sha = codex["carryForwardSha"]
+    if not isinstance(state, str):
+        raise Refused("codexReview evidence invalid: state must be a string")
+    if state not in CODEX_REVIEW_STATES:
+        raise Refused("codexReview evidence invalid: state is not recognized")
+    if variant not in ("full", "diff", None):
+        raise Refused("codexReview evidence invalid: promptVariant is not recognized")
+    if not isinstance(carry_sha, str):
+        raise Refused("codexReview evidence invalid: carryForwardSha must be a string")
+    key = (manifest.get("mode"), variant, state)
+    if key not in PHASE4_ELIGIBILITY:
+        raise Refused("codexReview evidence invalid: mode, promptVariant, and state conflict")
+    normalized = set()
+    unresolved = 0
+    findings = phase4.get("findings", [])
+    if not isinstance(findings, list):
+        raise Refused("phase findings must be an array")
+    for finding in findings:
+        if not isinstance(finding, dict) or finding.get("source") != "codex-review":
+            continue
+        value = finding.get("file")
+        if not isinstance(value, str) or not value:
+            raise Refused("codex-review finding file is missing")
+        severity = finding.get("severity")
+        if not isinstance(severity, str) or severity.upper() not in PHASE4_SEVERITIES:
+            raise Refused("codex-review finding severity is invalid")
+        try:
+            path = normalize_finding_path(repo, value)
+        except ValueError:
+            path = None
+        if path is None:
+            unresolved += 1
+        else:
+            normalized.add((path, severity.upper()))
+    rank = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
+    ordered = [{"file": path, "severity": severity}
+               for path, severity in sorted(normalized,
+                                            key=lambda item: (-rank[item[1]], item[0]))]
+    return PHASE4_ELIGIBILITY[key], codex, ordered, unresolved
+
+
+def phase4_flip_count(records, current):
+    if current.get("truncated"):
+        return 0
+    keys = ("worktreeDigest", "contractVersion", "configSha", "carryForwardSha")
+    previous = next((record for record in reversed(records)
+                     if not record.get("truncated")
+                     and all(record.get(key) == current.get(key) for key in keys)), None)
+    if previous is None:
+        return 0
+    old = {item["file"] for item in previous["findings"]
+           if item["severity"] in {"CRITICAL", "HIGH"}}
+    new = {item["file"] for item in current["findings"]
+           if item["severity"] in {"CRITICAL", "HIGH"}}
+    return len(old.symmetric_difference(new))
+
+
+def trim_phase4_runs(records):
+    if len(records) <= 5:
+        return records
+    latest_digest = records[-1]["worktreeDigest"]
+    keep_indexes = set(range(max(0, len(records) - 5), len(records)))
+    source_index = next((index for index in range(len(records) - 2, -1, -1)
+                         if records[index]["worktreeDigest"] != latest_digest), None)
+    if source_index is not None:
+        keep_indexes.add(source_index)
+    return [record for index, record in enumerate(records) if index in keep_indexes]
+
+
 def run_tree_digest(repo, manifest):
     command = [sys.executable, os.path.join(HERE, "tree-digest.py"),
                "--repo-root", repo, "--include-head"]
@@ -337,6 +442,22 @@ def validate_evidence(value):
     for key in optional_sha_fields:
         if not isinstance(value[key], str) or (value[key] != "none" and not sha_re.fullmatch(value[key])):
             raise Refused(f"EVIDENCE {key} has invalid type")
+
+
+def validate_taint_evidence(value):
+    """Validate only identity/seal fields available immediately after open-run."""
+    if not isinstance(value, dict):
+        raise Refused("EVIDENCE is not an object")
+    if {"runid", "runDir", "lockIno", "config"} - set(value):
+        raise Refused("EVIDENCE taint identity fields are missing")
+    if not isinstance(value["runid"], str) or not isinstance(value["runDir"], str):
+        raise Refused("EVIDENCE run identity has invalid types")
+    if (isinstance(value["lockIno"], bool) or not isinstance(value["lockIno"], int)
+            or value["lockIno"] <= 0):
+        raise Refused("EVIDENCE lockIno has invalid type")
+    if (not isinstance(value["config"], str)
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", value["config"])):
+        raise Refused("EVIDENCE config has invalid type")
 
 
 def validate_report_rule(manifest, repo, runid):
@@ -534,6 +655,118 @@ def release_lock(lock_path, lock_inode):
     os.unlink(lock_path)
 
 
+def rewrite_lock_holder(fd, holder):
+    raw = json_bytes(holder)
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.ftruncate(fd, 0)
+    write_all(fd, raw)
+    os.fsync(fd)
+
+
+def quarantine_history(history_path, runid):
+    if not os.path.exists(history_path):
+        return
+    target = history_path + ".tainted-" + runid
+    try:
+        os.replace(history_path, target)
+    except OSError as exc:
+        raise HistoryQuarantineFailed("history-quarantine-failed") from exc
+    if os.path.exists(history_path):
+        raise HistoryQuarantineFailed("history-quarantine-failed")
+
+
+def taint_repo_from_run_dir(run_dir):
+    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(run_dir))))
+
+
+def early_taint(args):
+    run_dir = os.path.realpath(args.run_dir)
+    run_base = os.path.dirname(run_dir)
+    lock_path = os.path.join(run_base, "lock")
+    repo = os.path.realpath(args.repo_root) if args.repo_root else taint_repo_from_run_dir(run_dir)
+    state_dir = os.path.join(repo, ".claude", "state")
+    history_path = os.path.join(state_dir, "docaudit-history.json")
+    last_run_path = os.path.join(state_dir, "docaudit-last-run.json")
+    lock_fd = None
+    try:
+        expected = json.loads(args.expect_json)
+        validate_taint_evidence(expected)
+        if (expected.get("runid") != args.runid
+                or os.path.realpath(str(expected.get("runDir"))) != run_dir
+                or os.path.basename(run_dir) != args.runid):
+            raise Refused("EVIDENCE run identity mismatch")
+        lock_fd = os.open(lock_path, os.O_RDWR | os.O_NOFOLLOW)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise Refused("lock is held by another process") from exc
+        lock_inode = os.fstat(lock_fd).st_ino
+        path_inode = os.stat(lock_path, follow_symlinks=False).st_ino
+        os.lseek(lock_fd, 0, os.SEEK_SET)
+        holder = parse_json(os.read(lock_fd, 65536), "lock")
+        if (not isinstance(holder, dict) or holder.get("runid") != args.runid
+                or path_inode != lock_inode or lock_inode != expected.get("lockIno")):
+            raise Refused("lock inode or runid mismatch")
+        if args.detail is not None:
+            if (len(args.detail) > 200 or any(ord(char) < 32 or ord(char) == 127
+                                              for char in args.detail)):
+                raise Refused("detail is invalid")
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        last_state = {"runid": args.runid, "verdict": "REFUSED",
+                      "reason": "config-changed" if args.taint_observed == "config"
+                      else "history-changed",
+                      "observedBy": args.observed_by, "ts": now,
+                      "reportStatus": "not-requested"}
+        if args.detail is not None:
+            last_state["detail"] = args.detail
+        if args.taint_observed == "config":
+            last_state["expectedConfigSha"] = expected["config"]
+            last_state["configAcceptanceRequired"] = True
+            atomic(last_run_path, last_state)
+            release_lock(lock_path, lock_inode)
+            print(json.dumps({"verdict": "REFUSED", "anchorWritten": False,
+                              "reason": "config-changed", "observedBy": args.observed_by},
+                             sort_keys=True))
+            return 3
+        try:
+            quarantine_history(history_path, args.runid)
+        except HistoryQuarantineFailed:
+            failed_state = dict(last_state, reason="history-quarantine-failed",
+                                historyQuarantineFailed=True)
+            state_written = False
+            holder_written = False
+            try:
+                atomic(last_run_path, failed_state)
+                state_written = True
+            except OSError:
+                pass
+            try:
+                rewrite_lock_holder(lock_fd, dict(holder, historyQuarantineFailed=True))
+                holder_written = True
+            except OSError:
+                pass
+            reason = ("history-quarantine-failed" if state_written or holder_written
+                      else "quarantine-marker-unpersisted")
+            if reason == "quarantine-marker-unpersisted":
+                print(reason, file=sys.stderr)
+            print(json.dumps({"verdict": "REFUSED", "anchorWritten": False,
+                              "reason": reason, "observedBy": args.observed_by}, sort_keys=True))
+            return 3
+        atomic(last_run_path, last_state)
+        release_lock(lock_path, lock_inode)
+        print(json.dumps({"verdict": "REFUSED", "anchorWritten": False,
+                          "reason": "history-changed", "observedBy": args.observed_by},
+                         sort_keys=True))
+        return 3
+    except (OSError, ValueError, KeyError, Refused, json.JSONDecodeError) as exc:
+        print(json.dumps({"verdict": "REFUSED", "anchorWritten": False,
+                          "reason": str(exc)}, sort_keys=True))
+        return 3
+    finally:
+        if lock_fd is not None:
+            os.close(lock_fd)
+
+
 def add_warning(warnings, code):
     if code not in warnings:
         warnings.append(code)
@@ -588,13 +821,24 @@ def finalize_report(repo, run_dir, rule, report_date, last_run_path, base_state,
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", required=True)
-    parser.add_argument("--repo-root", required=True)
-    parser.add_argument("--config", required=True)
-    parser.add_argument("--anchor-path", required=True)
+    parser.add_argument("--repo-root")
+    parser.add_argument("--config")
+    parser.add_argument("--anchor-path")
     parser.add_argument("--runid", required=True)
     parser.add_argument("--expect-json", required=True)
     parser.add_argument("--date")
+    parser.add_argument("--taint-observed", choices=("config", "history"))
+    parser.add_argument("--observed-by", choices=OBSERVERS)
+    parser.add_argument("--detail")
     args = parser.parse_args()
+    if args.taint_observed:
+        if not args.observed_by:
+            parser.error("--observed-by is required with --taint-observed")
+        return early_taint(args)
+    if args.observed_by or args.detail:
+        parser.error("--observed-by/--detail require --taint-observed")
+    if not args.repo_root or not args.config or not args.anchor_path:
+        parser.error("--repo-root, --config, and --anchor-path are required")
     repo_input = os.path.abspath(args.repo_root)
     repo = os.path.realpath(repo_input)
     run_dir = os.path.realpath(args.run_dir)
@@ -681,30 +925,31 @@ def main():
         except Refused as exc:
             raise Refused("impact sha mismatch") from exc
         returns_raw = read_once(os.path.join(run_dir, "returns.json"), "returns.json")
-        config_raw, config_signature = read_state_once(config_path, "config")
         manifest = parse_json(manifest_raw, "manifest.json")
         if not isinstance(manifest, dict):
             raise Refused("manifest must be an object")
+        verify_sha(manifest_raw, expected["manifest"], "manifest")
+        if manifest.get("sealed") is not True:
+            raise Refused("manifest is not sealed")
         identity_mismatch = (holder.get("runid") != args.runid
                              or manifest.get("runid") != args.runid
                              or os.path.basename(run_dir) != args.runid
                              or lock_inode != expected.get("lockIno"))
         identity_ok = not identity_mismatch
-        verify_sha(manifest_raw, expected["manifest"], "manifest")
-        if manifest.get("sealed") is not True:
-            raise Refused("manifest is not sealed")
+        try:
+            config_raw, config, config_signature = load_sealed_config(
+                config_path, expected["config"], with_signature=True)
+        except SealedConfigMismatch as exc:
+            config_taint = True
+            raise Refused(str(exc)) from exc
         report_rule = validate_report_rule(manifest, repo, args.runid)
         verify_sha(dispatch_raw, expected["dispatch"], "dispatch")
         verify_sha(returns_raw, expected["returns"], "returns")
-        if sha256_bytes(config_raw) != expected["config"]:
-            config_taint = True
-            raise Refused("run 中に config が変更された。git diff .claude/doc-audit.json で確認し復元せよ")
         dispatch_doc = parse_json(dispatch_raw, "dispatch.json")
         if not isinstance(dispatch_doc, dict) or sha256_bytes(impact_raw) != dispatch_doc.get("impactSha"):
             raise Refused("impact sha mismatch")
         impact_doc = parse_json(impact_raw, "impact.json")
         returns = parse_json(returns_raw, "returns.json")
-        config = parse_json(config_raw, "config")
         if not all(isinstance(value, dict) for value in (manifest, dispatch_doc, config)):
             raise Refused("manifest, dispatch, and config must be objects")
         codex_review_config = config.get("codexReview", {})
@@ -725,6 +970,7 @@ def main():
         if expected.get("attempt") != max((item["attempt"] for item in returns), default=0):
             raise Refused("EVIDENCE attempt does not match returns")
         history_entries = []
+        phase4_runs = []
         history_raw = None
         if expected["history"] == "none":
             if os.path.exists(history_path) or expected.get("historyStatus") != "absent":
@@ -737,7 +983,10 @@ def main():
                 raise Refused("history sha mismatch")
             if expected.get("historyStatus") == "ok":
                 try:
-                    history_entries = parse_history(parse_json(history_raw, "history"))
+                    history_entries, phase4_runs, history_warnings = parse_history_document(
+                        parse_json(history_raw, "history"))
+                    for warning in history_warnings:
+                        add_warning(warnings, warning)
                 except (ValueError, Refused) as exc:
                     history_taint = True
                     raise Refused(f"history is corrupt: {exc}") from exc
@@ -770,6 +1019,10 @@ def main():
             preflight = parse_json(raw, "preflight.json")
 
         phase4 = None
+        phase4_eligible = False
+        phase4_findings = []
+        phase4_unresolved = 0
+        codex_review_evidence = None
         phase4_path = os.path.join(run_dir, "phase4.json")
         if expected["phase4"] == "none":
             if os.path.exists(phase4_path):
@@ -782,17 +1035,11 @@ def main():
             raw = read_once(phase4_path, "phase4.json")
             verify_sha(raw, expected["phase4"], "phase4")
             phase4 = parse_json(raw, "phase4.json")
+            (phase4_eligible, codex_review_evidence, phase4_findings,
+             phase4_unresolved) = validate_phase4_contract(repo, manifest, phase4)
 
-        codex_review_state = None
-        if isinstance(phase4, dict) and "codexReview" in phase4:
-            codex_review_evidence = phase4["codexReview"]
-            if not isinstance(codex_review_evidence, dict):
-                raise Refused("codexReview evidence invalid: codexReview must be an object")
-            codex_review_state = codex_review_evidence.get("state")
-            if not isinstance(codex_review_state, str):
-                raise Refused("codexReview evidence invalid: state must be a string")
-            if codex_review_state not in CODEX_REVIEW_STATES:
-                raise Refused("codexReview evidence invalid: state is not recognized")
+        codex_review_state = (codex_review_evidence.get("state")
+                              if codex_review_evidence is not None else None)
         codex_review_status["state"] = codex_review_state
         if codex_review_required and codex_review_state != "completed":
             raise Refused(f"codex-review required but state={codex_review_state or 'missing'}")
@@ -807,8 +1054,12 @@ def main():
             raise Refused("worktree digest mismatch")
         change_proc = subprocess.run(
             [sys.executable, os.path.join(HERE, "change-set-sha.py"), "--repo-root", repo,
-             "--baseline-sha", manifest["baselineSha"], "--config", config_path],
+             "--baseline-sha", manifest["baselineSha"], "--config", config_path,
+             "--expect-config-sha", expected["config"]],
             capture_output=True, text=True)
+        if change_proc.returncode == 7:
+            config_taint = True
+            raise Refused(change_proc.stderr.strip() or "sealed-config-mismatch")
         if change_proc.returncode:
             raise Refused(change_proc.stderr.strip() or "change-set-sha failed")
         if json.loads(change_proc.stdout).get("changeSetSha") != manifest.get("changeSetSha"):
@@ -867,7 +1118,9 @@ def main():
                     or item.get("verdict") != verdicts[path]["verdict"]):
                 raise Refused(f"final return mismatch for {path}")
 
-        enabled, minimum, warnings = validate_min_passes(config)
+        enabled, minimum, cache_warnings = validate_min_passes(config)
+        for warning in cache_warnings:
+            add_warning(warnings, warning)
         codex_review_status["degraded"] = (
             not codex_review_required
             and codex_review_state in {"execution-failed", "ref-invalid"})
@@ -919,8 +1172,9 @@ def main():
             raise Refused("config changed before state write")
         verify_audit_scope_at_barrier(repo, config, manifest.get("auditScopeSha"))
         if history_taint and os.path.exists(history_path):
-            os.replace(history_path, history_path + ".tainted-" + args.runid)
+            quarantine_history(history_path, args.runid)
             history_entries = []
+            phase4_runs = []
             history_taint = False
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
         existing_keys = {(item["runid"], item["path"]) for item in history_entries}
@@ -943,7 +1197,49 @@ def main():
                 f'content since the previous run ({same_change_set_flips} with an unchanged '
                 'change set) — single-pass verification samples the defect pool; "fix these '
                 f'{flips} and re-run" is not guaranteed to converge (see ADOPTION)')
-        atomic(history_path, {"entries": trim_history(history_entries + additions)})
+        phase4_flips = 0
+        next_phase4_runs = list(phase4_runs)
+        if phase4_eligible:
+            truncated = len(phase4_findings) > 500
+            current_phase4 = {
+                "runid": args.runid,
+                "ts": now,
+                "worktreeDigest": manifest["worktreeDigest"],
+                "contractVersion": manifest["contractVersion"],
+                "configSha": expected["config"],
+                "carryForwardSha": codex_review_evidence["carryForwardSha"],
+                "unresolvedFileCount": phase4_unresolved,
+                "truncated": truncated,
+                "findings": phase4_findings[:500],
+            }
+            if phase4_unresolved:
+                add_warning(warnings, f"Phase-4 unresolved finding paths: {phase4_unresolved}")
+            if truncated:
+                add_warning(warnings, "Phase-4 findings were truncated; flip comparison skipped")
+            else:
+                phase4_flips = phase4_flip_count(phase4_runs, current_phase4)
+            if phase4_flips:
+                add_warning(
+                    warnings,
+                    f'Phase-4 instability: {phase4_flips} file(s) changed blocking status with '
+                    'unchanged worktree, contract, config, and carry-forward inputs — the '
+                    'codex full review samples '
+                    'the defect pool; "fix N and re-run" is not guaranteed to converge '
+                    '(see ADOPTION)')
+            candidate_runs = trim_phase4_runs(phase4_runs + [current_phase4])
+            candidate_doc = {"entries": trim_history(history_entries + additions),
+                             "phase4Runs": candidate_runs}
+            try:
+                _entries_check, _runs_check, roundtrip_warnings = parse_history_document(
+                    json.loads(json.dumps(candidate_doc, ensure_ascii=True)))
+                if roundtrip_warnings:
+                    raise ValueError("phase4Runs round-trip degraded")
+                next_phase4_runs = candidate_runs
+            except ValueError:
+                add_warning(warnings, "Phase-4 history record failed round-trip validation")
+                phase4_flips = 0
+        atomic(history_path, {"entries": trim_history(history_entries + additions),
+                              "phase4Runs": next_phase4_runs})
         report_status = "pending" if report_rule is not None else "not-requested"
         last_state = {"runid": args.runid, "verdict": verdict, "ts": now,
                       "reportStatus": report_status}
@@ -957,7 +1253,8 @@ def main():
         counts = {"impacted": len(impacted), "dispatch": len(dispatched),
                   "cached": len(cached),
                   "verdictFlipsUnchangedContent": flips,
-                  "verdictFlipsUnchangedContentSameChangeSet": same_change_set_flips}
+                  "verdictFlipsUnchangedContentSameChangeSet": same_change_set_flips,
+                  "phase4FlipsUnchangedContent": phase4_flips}
         report_verdict = verdict
         if verdict == "CONSISTENT" and codex_review_status["degraded"]:
             report_verdict = f"CONSISTENT (codex-review did not run: {codex_review_state})"
@@ -981,50 +1278,69 @@ def main():
             result["reportPath"] = report_path
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
-    except (Refused, OSError, ValueError, KeyError, json.JSONDecodeError,
+    except (Refused, HistoryQuarantineFailed, OSError, ValueError, KeyError, json.JSONDecodeError,
             subprocess.CalledProcessError) as exc:
         reason = str(exc)
         # Degrade only state owned by this run; never touch a later run's state.
         report_path = None
         report_status = None
         if owned:
+            quarantine_failed = False
             try:
                 if history_taint and os.path.exists(history_path):
-                    os.replace(history_path, history_path + ".tainted-" + args.runid)
-            except OSError:
-                pass
+                    quarantine_history(history_path, args.runid)
+                    history_taint = False
+            except HistoryQuarantineFailed:
+                quarantine_failed = True
             try:
                 if anchor_taint and os.path.exists(anchor_path):
                     os.unlink(anchor_path)
             except OSError:
                 pass
-            can_report = report_trusted and report_rule is not None and not config_taint
+            can_report = (report_trusted and report_rule is not None and not config_taint
+                          and not quarantine_failed)
             state_written = False
+            holder_marker_written = False
             if identity_ok:
                 now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-                recorded_reason = "config-changed" if config_taint else reason
+                recorded_reason = ("history-quarantine-failed" if quarantine_failed
+                                   else "config-changed" if config_taint else reason)
                 last_state = {"runid": args.runid, "verdict": "REFUSED",
                               "reason": recorded_reason, "ts": now,
                               "reportStatus": "pending" if can_report else "not-requested"}
                 if config_taint:
                     last_state["expectedConfigSha"] = expected.get("config")
+                    last_state["configAcceptanceRequired"] = True
+                if quarantine_failed:
+                    last_state["historyQuarantineFailed"] = True
                 try:
                     atomic(last_run_path, last_state)
                     state_written = True
                     report_status = last_state["reportStatus"]
                 except OSError:
                     add_warning(warnings, "reportStatusUpdateFailed")
+                if quarantine_failed and lock_fd is not None:
+                    try:
+                        rewrite_lock_holder(
+                            lock_fd, dict(holder, historyQuarantineFailed=True))
+                        holder_marker_written = True
+                    except OSError:
+                        pass
+                    if not state_written and not holder_marker_written:
+                        reason = "quarantine-marker-unpersisted"
+                        print(reason, file=sys.stderr)
                 if can_report and state_written:
                     report_path, report_status = finalize_report(
                         repo, run_dir, report_rule, manifest["reportDate"], last_run_path,
                         last_state, warnings, "REFUSED", reason=reason,
                         anchor_written=False)
-            if lock_fd is not None:
+            if lock_fd is not None and not quarantine_failed:
                 try:
                     release_lock(lock_path, lock_inode)
                 except OSError:
                     add_warning(warnings, "lockReleaseFailed")
-        result = {"verdict": "REFUSED", "anchorWritten": False, "reason": reason,
+        output_reason = "config-changed" if config_taint else reason
+        result = {"verdict": "REFUSED", "anchorWritten": False, "reason": output_reason,
                   "codexReview": codex_review_status}
         if warnings:
             result["warnings"] = warnings

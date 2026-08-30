@@ -22,7 +22,35 @@ Reads:  --config, --repo-root, --layer {format,existence,semantic,all},
         --paths PATH|-  (optional; restrict to these docs; default = all docGlobs docs)
 Writes JSON: {"findings":[{layer,severity,path,line,message}], "counts":{docs,findings,fail,warn}}
 """
-import argparse, json, os, re, sys, urllib.parse
+import argparse, hashlib, json, os, re, sys, urllib.parse
+
+
+class SealedConfigMismatch(Exception):
+    pass
+
+
+def load_config(path, expected_sha=None):
+    if expected_sha is None:
+        with open(path, encoding="utf-8") as handle:
+            return json.load(handle)
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", expected_sha):
+        raise ValueError("--expect-config-sha must be sha256:<64 lowercase hex>")
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        chunks = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    finally:
+        os.close(fd)
+    raw = b"".join(chunks)
+    observed = "sha256:" + hashlib.sha256(raw).hexdigest()
+    if observed != expected_sha:
+        raise SealedConfigMismatch(
+            f"sealed-config-mismatch: expected {expected_sha} observed {observed}")
+    return json.loads(raw.decode("utf-8"))
 
 # NOTE: small copies of glob helpers, intentionally not shared with resolve-impact.py
 # to avoid destabilizing verified Plan 1 code (future: extract _docaudit_common.py).
@@ -580,6 +608,7 @@ LAYERS = {"format": check_format, "existence": check_existence, "semantic": chec
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
+    ap.add_argument("--expect-config-sha")
     ap.add_argument("--repo-root", default=os.getcwd())
     ap.add_argument("--layer", choices=["format", "existence", "semantic", "all"], default="all")
     ap.add_argument("--paths", default=None,
@@ -589,9 +618,10 @@ def main():
                     help="exit 1 when at least one FAIL finding exists")
     args = ap.parse_args()
     try:
-        with open(args.config, encoding="utf-8") as f:
-            cfg = json.load(f)
-    except (OSError, json.JSONDecodeError) as e:
+        cfg = load_config(args.config, args.expect_config_sha)
+    except SealedConfigMismatch as exc:
+        print(str(exc), file=sys.stderr); sys.exit(7)
+    except (OSError, ValueError, json.JSONDecodeError) as e:
         print(f"error: {e}", file=sys.stderr); sys.exit(2)
     repo = args.repo_root
     report_rx, config_findings = _corpus_report_filter(cfg)

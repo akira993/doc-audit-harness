@@ -14,40 +14,47 @@
 # Targets bash 3.2 (macOS): no mapfile; guard "${arr[@]}" under set -u with a count.
 set -uo pipefail
 
-CONFIG=""; CONFIG_SET=0; REPO_ROOT="$(pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CONFIG=""; CONFIG_SET=0; EXPECT_CONFIG_SHA=""; REPO_ROOT="$(pwd)"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config) CONFIG_SET=1; CONFIG="$2"; shift 2;;
+    --expect-config-sha) EXPECT_CONFIG_SHA="$2"; shift 2;;
     --repo-root) REPO_ROOT="$2"; shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
 
+[[ -n "$CONFIG" ]] || { echo "error: --config required" >&2; exit 2; }
+[[ -n "$EXPECT_CONFIG_SHA" ]] || { echo "error: --expect-config-sha required" >&2; exit 2; }
+CONFIG_JSON="$(python3 "$SCRIPT_DIR/sealed_config.py" --config "$CONFIG" --expect-sha "$EXPECT_CONFIG_SHA" --print)" || { rc=$?; exit "$rc"; }
+
 # Validate config before probing. Keep option presence separate from its value.
-DECISION="$(python3 -c '
+if ! DECISION="$(printf '%s' "$CONFIG_JSON" | python3 -c '
 import base64,json,sys
 state="enabled"; binary="mdq"
 try:
-    if sys.argv[1] == "1":
-        if not sys.argv[2]: raise ValueError
-        config=json.load(open(sys.argv[2]))
-        if not isinstance(config,dict): raise ValueError
-        if "indexing" in config:
-            seam=config["indexing"]
-            if not isinstance(seam,dict): raise ValueError
-            if "enabled" in seam and not isinstance(seam["enabled"],bool): raise ValueError
-            if seam.get("enabled") is False: state="disabled"
-            elif "bin" in seam:
-                value=seam["bin"]
-                if (not isinstance(value,str) or not value or value != value.strip()
-                    or any(ord(c) <= 31 or ord(c) == 127 for c in value)): raise ValueError
-                value.encode("utf-8")
-                binary=value
+    config=json.load(sys.stdin)
+    if not isinstance(config,dict): raise ValueError
+    if "indexing" in config:
+        seam=config["indexing"]
+        if not isinstance(seam,dict): raise ValueError
+        if "enabled" in seam and not isinstance(seam["enabled"],bool): raise ValueError
+        if seam.get("enabled") is False: state="disabled"
+        elif "bin" in seam:
+            value=seam["bin"]
+            if (not isinstance(value,str) or not value or value != value.strip()
+                or any(ord(c) <= 31 or ord(c) == 127 for c in value)): raise ValueError
+            value.encode("utf-8")
+            binary=value
 except Exception:
     state="invalid"; binary="mdq"
 line=state+"\t"+base64.b64encode(binary.encode("utf-8")).decode("ascii")+"\n"
 sys.stdout.buffer.write(line.encode("utf-8"))
-' "$CONFIG_SET" "$CONFIG")"
+')"; then
+  echo "error: failed to parse sealed config for mdq index" >&2
+  exit 2
+fi
 IFS=$'\t' read -r CONFIG_STATE BIN_B64 <<< "$DECISION"
 BIN="$(python3 -c 'import base64,sys; sys.stdout.buffer.write(base64.b64decode(sys.argv[1]))' "$BIN_B64")"
 
@@ -68,16 +75,20 @@ fi
 # indexing.roots[] override; default to the whole repo (--root .).
 ROOTS=()
 if [[ "$CONFIG_SET" == "1" ]]; then
-  while IFS= read -r r; do [[ -n "$r" ]] && ROOTS+=("$r"); done < <(python3 -c '
+  if ! ROOTS_TEXT="$(printf '%s' "$CONFIG_JSON" | python3 -c '
 import json,sys
 r=[]
 try:
-    v=((json.load(open(sys.argv[1])).get("indexing") or {}).get("roots"))
+    v=((json.load(sys.stdin).get("indexing") or {}).get("roots"))
     if isinstance(v,list): r=[str(x) for x in v if str(x).strip()]
 except Exception:
     pass
 print("\n".join(r))
-' "$CONFIG")
+')"; then
+    echo "error: failed to read indexing roots from sealed config" >&2
+    exit 2
+  fi
+  while IFS= read -r r; do [[ -n "$r" ]] && ROOTS+=("$r"); done <<< "$ROOTS_TEXT"
 fi
 ROOT_ARGS=()
 if [[ ${#ROOTS[@]} -gt 0 ]]; then

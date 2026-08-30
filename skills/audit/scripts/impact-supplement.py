@@ -29,6 +29,7 @@ passthrough (impact.json left byte-identical).
 import argparse, json, os, re, subprocess, sys
 
 from docaudit_paths import matches_glob, validate_repo_path
+from sealed_config import SealedConfigMismatch, load_sealed_config
 
 DEFAULT_DOC_GLOBS = ["docs/**/*.md", "*.md"]
 DEFAULT_MIN_SCORE = 0.4
@@ -191,10 +192,31 @@ def main():
     ap.add_argument("--max-impacted-docs", type=int, default=DEFAULT_MAX_IMPACTED_DOCS)
     ap.add_argument("--doc-globs", default=",".join(DEFAULT_DOC_GLOBS))
     ap.add_argument("--config")
+    ap.add_argument("--expect-config-sha")
     ap.add_argument("--graphify-bin", default=None)
     ap.add_argument("--cocoindex-bin", default=None)
     ap.add_argument("--min-score", type=float, default=DEFAULT_MIN_SCORE)
     args = ap.parse_args()
+
+    config = None
+    if args.config and args.expect_config_sha is None:
+        print("impact-supplement: --config requires --expect-config-sha", file=sys.stderr)
+        sys.exit(2)
+    if (args.expect_config_sha is not None
+            and not re.fullmatch(r"sha256:[0-9a-f]{64}", args.expect_config_sha)):
+        print("impact-supplement: --expect-config-sha must be sha256:<64 lowercase hex>",
+              file=sys.stderr)
+        sys.exit(2)
+    if args.config:
+        try:
+            _config_raw, config = load_sealed_config(args.config, args.expect_config_sha)
+        except SealedConfigMismatch as exc:
+            print(str(exc), file=sys.stderr)
+            sys.exit(7)
+        except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
+            print(f"warn: impact-supplement: cannot read/parse config ({exc}); no-op",
+                  file=sys.stderr)
+            sys.exit(0)
 
     # Always exit 0. Any failure reading/parsing impact.json is a no-op: leave
     # the file untouched (spec §5.7/§7 fallback rule).
@@ -214,13 +236,7 @@ def main():
         sys.exit(0)
 
     report_rx = None
-    if args.config:
-        try:
-            with open(args.config, encoding="utf-8") as f:
-                config = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            print(f"warn: impact-supplement: cannot read/parse config ({e}); no-op", file=sys.stderr)
-            sys.exit(0)
+    if config is not None:
         if config.get("auditReportsInCorpus") is not True:
             report_rx = report_pattern(config)
 

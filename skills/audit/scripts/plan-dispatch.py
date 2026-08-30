@@ -10,8 +10,10 @@ import sys
 import tempfile
 
 from docaudit_cache import (cache_qualification, content_sha, json_bytes,
-                            parse_history, sha256_bytes, validate_min_passes)
+                            parse_history_document, sha256_bytes,
+                            validate_min_passes)
 from docaudit_paths import validate_repo_path
+from sealed_config import SealedConfigMismatch, load_sealed_config
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -51,6 +53,7 @@ def main():
     parser.add_argument("--runid", required=True)
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--config", required=True)
+    parser.add_argument("--expect-config-sha", required=True)
     parser.add_argument("--history", required=True)
     parser.add_argument("--impact-json", required=True)
     parser.add_argument("--baseline-sha", required=True)
@@ -65,11 +68,10 @@ def main():
         if (not isinstance(evidence, dict) or evidence.get("runid") != args.runid
                 or os.path.realpath(str(evidence.get("runDir"))) != os.path.realpath(args.run_dir)):
             raise ValueError("--evidence run identity mismatch")
-        with open(args.config, "rb") as handle:
-            config_raw = handle.read()
-        if sha256_bytes(config_raw) != evidence.get("config"):
-            raise ValueError("config changed after open-run")
-        config = json.loads(config_raw.decode("utf-8"))
+        if args.expect_config_sha != evidence.get("config"):
+            raise ValueError("--expect-config-sha does not match evidence config")
+        _config_raw, config = load_sealed_config(
+            args.config, args.expect_config_sha)
         backend = config.get("phase3Backend", "workflow")
         with open(args.impact_json, "rb") as handle:
             impact_raw = handle.read()
@@ -83,29 +85,39 @@ def main():
                 capture_output=True, text=True, check=True).stdout.strip()
         command = [sys.executable, os.path.join(HERE, "change-set-sha.py"),
                    "--repo-root", args.repo_root, "--baseline-sha", baseline_sha,
-                   "--config", args.config]
+                   "--config", args.config,
+                   "--expect-config-sha", args.expect_config_sha]
         changed_proc = subprocess.run(command, capture_output=True, text=True)
+        if changed_proc.returncode == 7:
+            print(changed_proc.stderr.strip(), file=sys.stderr)
+            return 7
         if changed_proc.returncode:
             raise ValueError(changed_proc.stderr.strip() or "change-set-sha failed")
         changed = json.loads(changed_proc.stdout)
         history_raw = None
         history_status = "absent"
         entries = []
+        history_warnings = []
         if os.path.isfile(args.history):
             with open(args.history, "rb") as handle:
                 history_raw = handle.read()
+        expected_history_sha = impact.get("historySha")
+        actual_history_sha = sha256_bytes(history_raw) if history_raw is not None else None
+        if "historySha" in impact and expected_history_sha != actual_history_sha:
+            print(
+                f"sealed-history-mismatch: expected {expected_history_sha} "
+                f"observed {actual_history_sha}", file=sys.stderr)
+            return 7
+        if history_raw is not None:
             try:
-                entries = parse_history(json.loads(history_raw.decode("utf-8")))
+                entries, _phase4_runs, history_warnings = parse_history_document(
+                    json.loads(history_raw.decode("utf-8")))
                 history_status = "ok"
             except (UnicodeError, ValueError, json.JSONDecodeError):
                 history_status = "corrupt"
                 entries = []
-        expected_history_sha = impact.get("historySha")
-        actual_history_sha = sha256_bytes(history_raw) if history_raw is not None else None
-        if "historySha" in impact and expected_history_sha != actual_history_sha:
-            print("history changed between resolve and dispatch", file=sys.stderr)
-            return 3
-        enabled, minimum, warnings = validate_min_passes(config)
+        enabled, minimum, config_warnings = validate_min_passes(config)
+        warnings = history_warnings + config_warnings
         if history_status != "ok" or mode == "full":
             enabled = False
         dispatch = []
@@ -152,7 +164,11 @@ def main():
                          "history": sha256_bytes(history_raw) if history_raw is not None else "none",
                          "historyStatus": history_status})
         evidence["counts"] = {"dispatch": len(dispatch), "cached": len(cached)}
-    except (OSError, ValueError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
+    except SealedConfigMismatch as exc:
+        print(str(exc), file=sys.stderr)
+        return 7
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError,
+            subprocess.CalledProcessError) as exc:
         print(f"plan-dispatch: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(evidence, ensure_ascii=False, sort_keys=True))

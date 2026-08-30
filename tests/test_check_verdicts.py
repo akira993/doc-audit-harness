@@ -171,7 +171,13 @@ class TestRecoveryDrill(unittest.TestCase):
         returns = [{"attempt": 1, "assignedPath": "docs/a.md", "returnedPath": "docs/a.md",
                     "verdict": "PASS", "rationale": "x", "suggestion": None}]
         fx.write_evidence("returns", returns)
-        fx.write_evidence("phase4", {"findings": []})
+        fx.write_evidence("phase4", {
+            "findings": [],
+            "codexReview": {
+                "state": "completed", "promptVariant": "diff",
+                "carryForwardSha": "none",
+            },
+        })
         checked = subprocess.run(
             [sys.executable, CHECK, "--run-dir", fx.run_dir,
              "--impact-json", os.path.join(fx.run_dir, "impact.json"), "--returns"],
