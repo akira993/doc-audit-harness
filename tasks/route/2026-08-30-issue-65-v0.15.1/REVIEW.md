@@ -166,3 +166,5 @@ rev.6→rev.7 の差分 70 行を全行読解し、B-1〜B-4・S-1/S-2 の反映
 - 検査系成果物の実数: gate.py 12 検査（A2 で 12 検査全てが違反 fixture で単独 FAIL を実測、G11 は 2 ケース）／probe テスト 38 method（N1〜N15 の 18 状態）／handoff テスト 28 method／フルスイート 655（ベースライン 630、+25）／A3 実機 4 ケース（codegraph 1.5.0）。
 - 出荷（handoff）は未実施: push・PR・merge はユーザー、その後 `release-handoff.sh <merge-sha> <pr>`（tag `docaudit--v0.15.1`・Release・#65 close・skills-dir 同期。#59/#63/#66 が OPEN であることが事前条件）。
 - 持ち越し: (1) dir-framework `docs/runbooks/initial-setup.md:50` の「init は拒否される」回避手順は stale（別途）、(2) dir-framework の `harness.engineVersion` を 0.15.1 へ（release 後）、(3) 解決済み DIRNAME の Workflow sealed 引数化は #63 route、(4) #63+#59 合同 route・#66 方式 B route は `00-issue-review.md` の決定に従い次に着手。
+
+- PR: https://github.com/akira993/doc-audit-harness/pull/67（2026-08-30、head `a6d8e8e`、本文に closing keyword なし。マージはユーザー）
