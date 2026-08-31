@@ -143,3 +143,5 @@ grep 0・版数一致・release_handoff 無変更）。§6b 充足。R1・R2 差
 - 検査系成果物の実数: CT `call sites 23／exempt 3／getters 13／scripts 22／observers 20`・
   CT-2 対象 22 本・test_docaudit_review 対象 23 件・test_code_review_plan 対象 10 件・
   フルスイート Ran 739 tests / OK（boss 実測 319.994s）
+- PR: https://github.com/akira993/doc-audit-harness/pull/69（セルフマージは classifier 拒否のため
+  マージはユーザー実施 → 以後 tag `docaudit--v0.17.0`・Release・#66 close・skills-dir 同期の handoff）
