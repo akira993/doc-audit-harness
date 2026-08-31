@@ -46,8 +46,15 @@ def validate(name, value):
         for key, typ in required.items():
             if not isinstance(value.get(key), typ):
                 raise ValueError(f"preflight.{key} is invalid")
-    elif name == "phase4" and not isinstance(value.get("findings", []), list):
-        raise ValueError("phase4.findings must be an array")
+    elif name == "phase4":
+        if not isinstance(value.get("findings", []), list):
+            raise ValueError("phase4.findings must be an array")
+        if "codeReview" in value:
+            code_review = value["codeReview"]
+            if not isinstance(code_review, dict):
+                raise ValueError("phase4.codeReview must be an object")
+            if code_review.get("state") not in {"ran", "blocked-by-settings", "not-run"}:
+                raise ValueError("phase4.codeReview.state is invalid")
 
 
 def main():

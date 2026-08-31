@@ -390,6 +390,21 @@ class TestEvidence(unittest.TestCase):
                 "verdict": None, "rationale": None, "suggestion": None}
         self.assertEqual(fx.write_evidence("returns", [item, item]).returncode, 2)
 
+    def test_phase4_code_review_type_and_state_are_checked(self):
+        valid_states = ("ran", "blocked-by-settings", "not-run")
+        for state in valid_states:
+            with self.subTest(state=state):
+                fx = RunFixture(self); fx.open()
+                proc = fx.write_evidence("phase4", {
+                    "findings": [], "codeReview": {"state": state}})
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+        for value in (None, [], "ran", {"state": "unknown"}, {}):
+            with self.subTest(value=value):
+                fx = RunFixture(self); fx.open()
+                proc = fx.write_evidence("phase4", {
+                    "findings": [], "codeReview": value})
+                self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+
 
 class TestDispatchConfiguration(unittest.TestCase):
     def test_invalid_minimum_disables_cache_with_warning(self):

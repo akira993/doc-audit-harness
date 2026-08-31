@@ -163,7 +163,7 @@ Build a `doc-audit.json` draft from the inventory:
   `semanticSearch` block. If `ccc` was NOT detected at all, OMIT the key. This seam is purely
   advisory (never affects the verdict), like `webExtract`/`docGraph`; absent key ⇒ the audit reports
   `not-configured` and never runs the tool.
-- `reviewCommands`: `{code:"/code-review high", security:"/security-review"}`.
+- `reviewCommands`: `{code:"/code-review high", security:"/security-review", required:false}` (`required` applies only to `code`).
   `reportPath`: `docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md` (or repo-root if no docs/logs).
   `maxImpactedDocs`: 60.
 - `docAuditCommands`: if `existingDocTools` found project doc commands, wire them

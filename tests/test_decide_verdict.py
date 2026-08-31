@@ -315,6 +315,7 @@ anchor: {{GATE_ANCHOR_WRITTEN}}
 counts: {{GATE_COUNTS}}
 history: {{GATE_HISTORY_STATUS}}
 sibling: {{GATE_SIBLING_SCAN}}
+codeReview: {{GATE_CODE_REVIEW_STATUS}}
 """
 
     def test_invalid_utf8_template_is_rejected_by_gate(self):

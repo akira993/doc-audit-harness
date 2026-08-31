@@ -1,0 +1,867 @@
+[0mdirenv: loading ~/Projects/doc-audit-harness/.envrc
+OpenAI Codex v0.149.0
+--------
+workdir: /Users/akiratakahashi/Projects/doc-audit-harness
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR] (network access enabled)
+reasoning effort: high
+reasoning summaries: none
+session id: 01a0557d-fdc3-70c1-b548-2b58fa32ad05
+--------
+user
+PLAN.md を v5 に改版した。これが批判ラウンドの上限(5)である。再読して再批判せよ(修正はまだ行わない)。
+
+## 前回指摘との対応(自己申告)
+1. (false でも legacy 実行) → 採用。分岐前は分類と初期状態束縛のみ。P6 の Skill 起動・P8 の project command 実行は phase4Required=true の内側に限定。false は P6/P8 とも phase4-not-required(S3-2)。
+2. (legacy findings の表現不能) → 採用。state を legacy-ran/legacy-not-run に分割し、legacy 所見は専用 source "review-command" で fold(severity は現行規則のまま・UNSPECIFIED 非適用)。gate は legacy-ran のときのみ受理(S2-4, S4, §9.8)。
+3. (状態行の checkpoint 復元不能) → 採用。gate 出力に codeReviewStatus を追加し、Phase 5 状態行は gate 導出値から描画。会話変数を checkpoint 越しに信用しない(S4, S5)。
+4. (library の registry 外証明) → 採用。AST 検査＋隔離単体テストで純粋性を固定(S7)。
+5. (REFUSED 優先順位) → 採用。厳密 boolean → config refuse → sentinel 整合 → eligibility の順を明記(S4)。
+6. (call-site 表記) → 採用。§9.1 #22 の位置を訂正。
+
+## 判定要求
+新規の実質的指摘があれば同形式で。無ければ「収束」と明言し、残る懸念があれば「計画自体の欠陥(PLAN を直してから実装)」と「worker 指示で吸収できる細部」に区分して締めよ。
+
+codex
+メタ認知: 最終ラウンドという締切効果で、軽微な曖昧さを過大評価することと、逆に収束宣言を急ぐことの両方を警戒する。v5 では新設した `codeReviewStatus` の生成時点・報告書描画順と、legacy の状態／所見対応だけを反例ベースで確認する。  
+読み取り専用で再確認します。該当する専門スキルはないため、通常の厳格レビューを行います。
+  → v5 PLAN を再読し、v4からの契約変更を抽出する
+  • codeReviewStatus・legacy evidence・gate/report順序を現行実装と突合する
+  • 新規実質欠陥の有無を最終裁定する
+exec
+/bin/zsh -lc 'nl -ba tasks/route/2026-08-31-issue-66/PLAN.md' in /Users/akiratakahashi/Projects/doc-audit-harness
+ succeeded in 0ms:
+     1	# PLAN — Issue #66 方式 B: `/code-review` の自律実行と verdict 統合（docaudit v0.17.0）
+     2	
+     3	版: v5（Sol R4 #1〜#6 反映、2026-08-31）。
+     4	
+     5	## 1. 目的
+     6	
+     7	上流 Claude Code（≥2.1.246、実測 2.1.251）で `/code-review` がモデル起動可能になったため、docaudit の
+     8	Phase 4 で `reviewCommands.code` を**単一窓口**として自律実行し、所見を verdict に畳み込む（方式 B、
+     9	ユーザー決定済み）。旧契約（「監査自身は起動しない」「AskUserQuestion で一度だけ提案」
+    10	「`CODE_REVIEW_STATE=not-model-invocable`」）を全面置換する。fail-closed を維持し、「設定された
+    11	レビュー層が黙ってスキップされて CONSISTENT」を構造的に不可能にする。
+    12	
+    13	**設計原則（v0.16.0 から継承、逸脱禁止）**
+    14	- 決定は script の決定表で行い、SKILL.md の散文で再決定しない（codex-review-plan.py と対称）。
+    15	- config を読む新規消費者は sealed-config 契約（verify-on-read・exit 7・taint funnel・registry 計数）に完全参加。
+    16	- **REFUSED を出すのは gate（decide-verdict.py）だけ**。planner の refuse はレビュー起動の抑止のみで、
+    17	  監査は通常どおり gate まで進み、gate が封印 config から独立に同じ判定を導出して正式な REFUSED
+    18	  （報告書・履歴・lock 解放を伴う）を出す（Sol R1-4）。
+    19	- 強制（required）は gate が封印 config から直接導出。モデルの EVIDENCE 自己申告を根拠にしない。
+    20	- ターンを跨いだ「完了」を信用しない: resume 後の `ran` は禁止（Sol R1-1）。
+    21	- 実測に無い挙動を文書化しない（`permissions.ask` は推奨しない — 実測不成立）。
+    22	
+    23	## 2. 入力・参照資料
+    24	
+    25	- Issue #66 本文（方式 A の JSON 例は不採用。B の等価物: effort は `reviewCommands.code` 文字列内・
+    26	  格上げは `reviewCommands.required`）。
+    27	- `tasks/route/2026-08-31-issue-66/00-preflight-verification.md` — 実機検証。**前提事実の正本**。
+    28	- `tasks/route/2026-08-31-issue-66/01-survey-out.md` — 現状インベントリ（file:line 付き）。
+    29	- `tasks/route/2026-08-31-issue-66/02-critique-r1-out.md` — Sol R1 指摘（本版で反映済み）。
+    30	
+    31	### 実測で確定した前提（再検証不要）
+    32	
+    33	| 事実 | 出所 |
+    34	|---|---|
+    35	| モデルは Skill ツールで code-review を起動できる（headless/interactive、flag 不要） | preflight |
+    36	| headless: 同期 tool_result（`Skill "code-review" completed (forked execution).`）で所見返却 | preflight |
+    37	| interactive: background agent（`Running in the background`）→ 同一ターン内で完了待ち可能・完了通知後に所見が可視 | preflight |
+    38	| 所見レイアウトは揺れる（bullet／`file:line —` 行／fenced JSON）。severity ラベルは無い | preflight |
+    39	| `deny: ["Skill(code-review *)"]` → `Error: Skill execution blocked by permission rules` | preflight |
+    40	| project settings の `skillOverrides: user-invocable-only` → `Error: Skill code-review is disabled for model invocation in skillOverrides settings` | preflight |
+    41	| `ask` は headless 素通り・interactive(auto mode) プロンプト無し → 承認ゲート不成立 | preflight |
+    42	| `ultra` は待たない（cloud 起動のみ）・`--fix` は checkpoint 外編集 | 上流 docs |
+    43	
+    44	## 3. 担当
+    45	
+    46	boss = Fable/Opus（計画・レビューのみ。実装は書かない）。
+    47	
+    48	## 4. 実行者
+    49	
+    50	worker = GPT-5.6（実装: Terra high 起点。批判: Sol high）。
+    51	
+    52	## 5. 成果物
+    53	
+    54	### S1 新規 script `skills/audit/scripts/code-review-plan.py` — 決定表
+    55	
+    56	決定的・字句的。入力: `--config CFG --expect-config-sha SHA`。config は
+    57	`sealed_config.load_sealed_config` で読む（registry 完全参加）。出力（stdout JSON 1 個）:
+    58	`{"action": "run|legacy|not-active|refuse", "state": "...", "effort": "...|null", "required": bool, "command": "...|null", "reason": "..."}`。
+    59	`command` は legacy 時の原文字列（SKILL が現行 legacy 実行に使う）。
+    60	
+    61	**優先順位付き完全表（上から順に最初の一致で確定。Sol R1-5・R2-2 改訂）**
+    62	
+    63	| P | 条件 | action | state | 備考 |
+    64	|---|---|---|---|---|
+    65	| 1 | `reviewCommands` キー無し | not-active | not-configured | 状態行も出さない（現行どおり） |
+    66	| 2 | `reviewCommands` が JSON object でない（null・配列・文字列・数値含む） | refuse | invalid-review-config | reason に型を明記 |
+    67	| 3 | `code` キー無し | not-active | not-configured | `security` の有無に関わらず |
+    68	| 4 | `code` が文字列でない（null 含む） | refuse | invalid-review-command | |
+    69	| 5 | `code` が空文字列または Unicode 空白のみ | refuse | invalid-review-command | |
+    70	| 6 | `code` が `^/code-review (low|medium|high)$`（ASCII 単一空白）に完全一致 | run | pending | effort を抽出 |
+    71	| 7 | `code` が `/code-review` そのもの、または `/code-review` の直後に任意の Unicode 空白が続く（`ultra`・`--fix` 含む・二重空白・全角空白・未知レベル・追加トークン） | refuse | invalid-review-command | 公式コマンド名前空間の不正形。reason に原文。charset 制約は**この名前空間内のみ** |
+    72	| 8 | それ以外すべて（`/code-review-custom`・`/社内レビュー 高` 等の project 固有コマンド。文字集合の制約なし＝現行スキーマどおり） | legacy | legacy-pending | 現行挙動維持。token 境界: `-custom` は空白が続かないため P7 に該当せず legacy |
+    73	
+    74	**`required`（Sol R1-6）**: 省略時 false。非 boolean → refuse `invalid-review-config`。
+    75	`required:true` は P6（run）とのみ併用可。P1/P3（not-configured）または P8（legacy）と併用 → refuse
+    76	`invalid-review-config`（設定矛盾。codexReview の「absent key と矛盾できない」と同語彙）。
+    77	refuse 行（P2/P4/P5/P7）では required は評価不要（すでに refuse）。**refuse／not-active 行の planner 出力は常に `required:false` に正規化する**（Sol R2-9。実装間の揺れ防止）。
+    78	`required` は `code` にのみ作用（`security` に作用しない。schema に明記）。
+    79	
+    80	**分類の単一実装（Sol R2-6）**: P1〜P8 の分類は副作用のない共通関数
+    81	`classify_review_command(config_doc) -> {p, action, state, effort, required, command, reason}` として新規
+    82	ライブラリ `skills/audit/scripts/docaudit_review.py` に置き、planner（code-review-plan.py）・gate
+    83	（decide-verdict.py）・start-run.py（S3-1）の 3 者がこれを封印済み config doc に対して呼ぶ。正規表現・型判定の二重実装を
+    84	禁止する（docaudit_cache.py と同じ「parsed doc を受ける library」であり、config 消費者ではない＝
+    85	registry 計数に入らない）。
+    86	
+    87	sealed-config 契約: sha 不一致 → exit 7 + stderr `sealed-config-mismatch` → SKILL stopping rule →
+    88	`decide-verdict.py --taint-observed config --observed-by code-review-plan.py`。OBSERVERS に追加。
+    89	
+    90	### S2 SKILL.md Phase 4 step 3 の全面書き換え（現行 :580-602）
+    91	
+    92	1. 既存 getter `REVIEW_COMMANDS_JSON`（:556）は維持し、**`security` コマンド値の供給源として
+    93	   引き続き消費する**（Sol R1-10。死に getter 化しない）。legacy 実行値は planner 出力の `command`
+    94	   に**一本化**する（Sol R2-7。二重供給を作らない）。
+    95	2. `CODE_REVIEW_PLAN="$(python3 "$SD/scripts/code-review-plan.py" --config "$CFG" --expect-config-sha "$CONFIG_SHA")"`
+    96	   を束縛し、`action/state/effort/required/command` を得る。表の外で再決定しない。
+    97	3. `action=refuse` → **起動せず**、`CODE_REVIEW_STATE=<state>` を束縛して**通常どおり続行**
+    98	   （security・codex review・gate まで進む。gate が正式 REFUSED を出す。Sol R1-4）。
+    99	4. `action=not-active` → 現行どおり何もしない（状態行なし）。`action=legacy` →
+   100	   `phase4Required=true` の内側で現行の project 固有コマンド挙動（実行を試み、不可なら skip+WARN）。
+   101	   状態は **`legacy-ran`／`legacy-not-run`** に分ける（Sol R4-2）。legacy 所見は**専用 source
+   102	   `"review-command"`** で fold し、severity の扱いは現行規則のまま（`UNSPECIFIED` 正規化は適用しない
+   103	   ＝既存互換。gate は `source=="review-command"` を `state=="legacy-ran"` の場合のみ受理）。
+   104	5. `action=run` → **Skill ツールで起動**: skill=`code-review`、args=**effort のみ**。
+   105	   AskUserQuestion offer は廃止。非対話でも起動。
+   106	6. **完了確認は同一ターン列内のみ**（Sol R1-1）: 同期 tool_result、または background agent の
+   107	   完了通知を**ターンを終えずに待つ**（`Waiting for background agent` の継続）。ユーザー入力を
+   108	   跨いだ resume 後に `ran` を束縛することは**禁止** — cross-turn checkpoint 表の行 (g) を
+   109	   「code-review 起動後に中断された監査は resume 時 `CODE_REVIEW_STATE=not-run` とし、会話に
+   110	   残る所見を fold しない」に改める（偽装完了の遮断）。
+   111	7. 状態束縛（旧 `not-model-invocable` 全廃）:
+   112	   - `ran` — 同一ターン列内で完了確認。所見 0 でも ran。
+   113	   - `blocked-by-settings` — エラーに `disabled for model invocation in skillOverrides` または
+   114	     `blocked by permission rules` を含む。
+   115	   - `not-run` — その他（skill 不存在＝旧 CC、起動失敗、完了未確認、resume 後）。
+   116	   - `invalid-review-command` / `invalid-review-config` / `legacy` — S1 から。
+   117	8. **fold 契約（レイアウト非依存）**: 完了結果に可視の所見のみ、`source:"code-review"` を付けて
+   118	   Phase-4 findings collection へ。明示 severity は既存正規化。**severity の無い・未知の所見は
+   119	   `severity:"UNSPECIFIED"` として fold し、gate で blocking**（Sol R1-2。実測の eval() 注入が
+   120	   ラベル無しで返る以上、非 blocking 既定は「検出したのに素通り」になる）。
+   121	9. `reviewCommands.security` は現行のまま変更しない。
+   122	10. 現行の `/code-review ultra` 段落・`disable-model-invocation` 分岐・非対話分岐は削除（S1/S4 に置換）。
+   123	
+   124	### S3 code-review 層のライフサイクル（Sol R3-1/R3-2 で確定）
+   125	
+   126	**codexReview の実挙動と真に対称にする**（実装事実: `start-run.py:247` は `codexReview.required:true`
+   127	自体を `phase4Required=true` の条件に含め、gate は `phase4:"none"`×`required:true` を REFUSED にする）:
+   128	
+   129	1. **start-run.py（変更対象に復帰）**: `phase4Required` の計算に「classify_review_command が P6 かつ
+   130	   `required:true`」を追加する（codexReview.required と並列の 1 条件。**P6 でも required:false なら
+   131	   影響しない** — R2-1 の過剰起動は起こさない）。判定は共通分類関数を import して行う。
+   132	2. **planner の配置（Sol R3-2/R4-1）**: `code-review-plan.py` の呼び出しは Phase 4 の CONFIG_SHA
+   133	   再束縛・getter 直後、**global Phase 4 分岐より前**に置く。分岐前で行うのは**分類と初期状態の
+   134	   束縛のみ**で、実コマンドの起動（P6 の Skill・P8 の project command）は一切行わない:
+   135	   - `phase4Required=true` の内側でのみ、action=run → S2 の Skill 起動、action=legacy → 現行の
+   136	     project command 実行試行。
+   137	   - `phase4Required=false` → P6 も P8 も起動せず `phase4-not-required`（required:true は 1. により
+   138	     false と共存しない）。
+   139	   - action=refuse/not-active → 起動なし・状態のみ（phase4Required に関わらず）。
+   140	3. gate: `phase4:"none"` sentinel × P6 × `required:true` → REFUSED（codexReview:1027 と対称）。
+   141	   `phase4:"none"` × P6 × required:false → 正常（`codeReview` evidence は存在し得ない）。
+   142	4. **`manifest.phase4Required` の厳密型検査（Sol R3-3）**: gate は双方向契約（false ⇔ `"none"`
+   143	   sentinel）の判定より前に、`phase4Required` が厳密な JSON boolean であることを検査する。
+   144	   欠落・null・数値・文字列 → REFUSED（truthiness による迂回を遮断）。
+   145	
+   146	### S4 EVIDENCE / gate の enforcement（decide-verdict.py）
+   147	
+   148	- EVIDENCE.phase4 に `codeReview: {"state": "<ran|blocked-by-settings|not-run|legacy-ran|legacy-not-run>"}`
+   149	  を追加（`phase4-not-required` は phase4 が `"none"` sentinel の run にのみ生じるため evidence enum には現れない）。
+   150	- **Phase 5 の code-review 状態行は gate が導出する（Sol R4-3）**: decide-verdict.py の出力 JSON に
+   151	  `codeReviewStatus`（封印 config・manifest.phase4Required・検証済み evidence から決定的に導出）を
+   152	  追加し、SKILL は checkpoint 越しでも会話変数に依存せずこの値から状態行を描画する。
+   153	- **REFUSED 理由の優先順位（Sol R4-5、gate はこの順で検査し最初の該当で確定）**:
+   154	  (1) `phase4Required` 厳密 boolean → (2) config 分類の refuse（P2/P4/P5/P7・required 矛盾） →
+   155	  (3) sentinel 双方向整合 → (4) codeReview eligibility（§9.8）。
+   156	- gate は封印 config（既存の fd 同一 signature 読取）から S1 の表を**独立に再導出**:
+   157	  - P2/P4/P5/P7 または required 矛盾 → **REFUSED**（`invalid-review-command: <原文>` 等。EVIDENCE の
+   158	    内容に関わらず。planner との判定一致は同一正規表現リテラル＋一致テストで担保）。
+   159	  - P6（run）かつ `phase4Required=true` → `phase4.codeReview` 必須。欠落・enum 外・型違い → REFUSED
+   160	    「codeReview evidence invalid」（**P6 config の v0.16 進行中 run の resume はここで確定的に落ちる**。
+   161	    Sol R1-13/R2-10 → ADOPTION には「P6 設定のプロジェクトでは upgrade 後 fresh run 必須」と**限定**して明記）。
+   162	  - P6（run）かつ `phase4Required=false`（`"none"` sentinel） → `codeReview` キーは存在してはならない
+   163	    （codexReview と対称。S3）。
+   164	  - P6 かつ `required:true` かつ `state != ran` → REFUSED `code-review-required-not-run`。
+   165	  - P6 かつ `required:false` かつ `state != ran` → WARNING 1 行（黙殺しない）。
+   166	  - P8（legacy） → `codeReview.state` は `legacy` のみ許容（他値 → evidence invalid）。
+   167	  - P1/P3（not-active） → `codeReview` キーは**存在してはならない**（存在 → evidence invalid。
+   168	    eligibility の全数表として S7 のテストに固定）。
+   169	- **`source=="code-review"` の所見に限り**: severity 欠落・未知値は `UNSPECIFIED` に正規化され、
+   170	  gate は `UNSPECIFIED` を blocking として扱う（Sol R2-5。共通の `findings_fail()` の severity 集合は
+   171	  **変更しない** — source 判定つきの追加分岐とし、他 source の既存挙動を変えない）。
+   172	- **state×findings の整合検査（Sol R2-4/R4-2）**: `source=="code-review"` の所見は「封印 config が
+   173	  P6 かつ `codeReview.state=="ran"`」の場合のみ、`source=="review-command"` の所見は「P8 かつ
+   174	  `state=="legacy-ran"`」の場合のみ許可。それ以外での存在 → REFUSED（evidence invalid。偽所見の混入遮断）。
+   175	- **phase4Runs / flip 計測は現行どおり `source=="codex-review"` のみ**（Sol R1-7）。code-review 所見は
+   176	  verdict に効くが history record・flip には入らない。これは意図的な非対象（#59 の計測は codex 層の
+   177	  再現性のためのもの。code-review 層の揺れ計測は将来 Issue）— ADOPTION に明記し、除外を固定テスト化。
+   178	- write-evidence.py の phase4 検証に `codeReview` の型検査（object・state 文字列）を追加が必要なら行う。
+   179	
+   180	### S5 Phase 5 の状態行（現行 :813-816 置換）
+   181	
+   182	- `ran` → `✓ code-review: ran (findings folded into phase4)`
+   183	- `blocked-by-settings` → `⚠ code-review: blocked by this repo's own settings (skillOverrides or permission deny) while reviewCommands.code is configured — remove the block or unset reviewCommands.code`
+   184	- `not-run` → `⚠ code-review: configured but could not be run or confirmed this session`
+   185	- `legacy-ran`／`legacy-not-run` → 既存の project 固有コマンド表示（ran/skip+WARN、変更なし）
+   186	- 状態行の値は S4 の `codeReviewStatus`（gate 出力）から描画する（会話変数は checkpoint 越しに信用しない）
+   187	- `phase4-not-required` → `💡 code-review: not run — Phase 4 not required for this run (expected)`
+   188	- refuse 系は gate の REFUSED 理由に出る（専用行不要）。
+   189	
+   190	### S6 registry 改訂（v0.17.0 正本 = 本 PLAN §9。Sol R1-9）
+   191	
+   192	scripts 21→**22**、call sites 22→**23**、observers 19→**20**、getters **13**（不変・ただし
+   193	REVIEW_COMMANDS_JSON の消費検査を追加）、exempt **3**（不変）。§9 に完全表。
+   194	`tests/test_v016_contracts.py` の CT 計数・registry 一覧を §9 に一致させる。
+   195	`skills/audit/references/engine-shas.json` に 0.17.0 エントリ。
+   196	
+   197	### S7 テスト
+   198	
+   199	- 新規 `tests/test_code_review_plan.py`: S1 全 8 行×境界値（P5 の Unicode 空白・制御文字、P7 の
+   200	  `ultra`/`--fix`/二重空白/bare、P8 の `/code-review-custom`）× required（絶対値 4 種: 省略/false/true/非 bool）、
+   201	  一致/不一致 sha 対、exit 7。「対象 N 件を検査」の実数出力。
+   202	- 新規 `tests/test_docaudit_review.py`: 共通分類関数の **P1〜P8 全行×境界値の表駆動検査**
+   203	  （Sol R2-6。型異常 P2/P4・空/空白 P5・token 境界 P7/P8・Unicode legacy `/社内レビュー 高`）。
+   204	  「対象 N 件を検査」の実数出力。
+   205	- gate 側（表駆動。Sol R1-8/R2-6）: config 分類（**P1〜P8 全行**）× `codeReview` evidence
+   206	  （欠落・各 enum・未知値・型違い）× required × `phase4Required`（true/false）× phase4
+   207	  （`"none"` sentinel／present）×既存 codexReview evidence 健全、の全有効組合せと代表的無効組合せを
+   208	  列挙して verdict/理由を assert。加えて: UNSPECIFIED blocking（source=="code-review" 限定・他 source
+   209	  無影響の対照ケース込み）、state×findings 整合（Sol R2-4 の偽所見混入ケース）、
+   210	  `phase4Required=false`＋phase4 evidence 存在 → REFUSED（Sol R2-3 双方向）、code-review 所見の
+   211	  phase4Runs **不算入**、既存 CT-5b（codexReview eligibility）の無回帰。
+   212	- EVIDENCE end-to-end は**本番順序**で: `start-run → seal-run → write-evidence → decide-verdict`
+   213	  （Sol R2-8。封印後に Phase 4 evidence を書く現行契約の順序を再現する）。
+   214	- `tests/test_v015_contracts.py`: 旧固定（not-model-invocable・AskUserQuestion offer・#66 追跡文言）を
+   215	  新契約固定へ全面更新＋旧トークン不在検査。
+   216	- `tests/test_v016_contracts.py`: CT 計数 23/3/13/22/20・registry・REVIEW_COMMANDS_JSON の
+   217	  「代入後に消費されている」検査（Sol R1-10）。
+   218	- `tests/test_v016_docs_contracts.py`: README/ADOPTION en/ja/SKILL 冒頭 description の**旧意味句
+   219	  不在検査**（`offered`×code-review 文脈、`not started by the audit`、「監査自身がまだ起動しない」等。
+   220	  Sol R1-12）＋新契約トークン（`blocked-by-settings`・deny/skillOverrides・ask 非推奨・
+   221	  `/code-review (low|medium|high)`・`UNSPECIFIED`）の per-file 表。
+   222	- planner・gate・start-run が**同一の共通分類関数を呼んでいること**の検査（import 経路の検査＋分類
+   223	  結果のクロス assert）。
+   224	- **library 純粋性（Sol R4-4）**: `docaudit_review.py` が parsed dict 以外を入力に取らず、
+   225	  config I/O・環境変数参照・`sealed_config` import・`open()` を持たないことを AST 検査＋隔離
+   226	  単体テストで固定（registry 対象外である根拠をテストで証明）。
+   227	- 無回帰（Sol R3-4）: config/history early-taint 経路、および「空 impact＋corrupt history＋
+   228	  `phase4:"none"`」の隔離成功ケースが本変更後も不変であることを固定。
+   229	- `phase4Required` 厳密 boolean 検査（欠落・null・0・空文字列 → REFUSED）と、start-run 側
+   230	  「`reviewCommands.required:true` で空 diff でも phase4Required=true」「P6+required:false では不変」。
+   231	- **既存テストの棚卸し（Sol R3-5）**: `test_v0131_docs_contracts.py`（内部ファイル数 44→46 と
+   232	  ADOPTION en/ja のファイル一覧: docaudit_review.py・code-review-plan.py 追加）、`test_scaffold.py`
+   233	  :192/:337 等の 0.16.0 固定、`test_v013_contracts.py:187` の版面一致、`test_v016_contracts.py:829`
+   234	  の harness stamp 契約 — すべて 0.17.0 へ更新。
+   235	- `tests/test_release_handoff.py` は**変更禁止**（v0.15.1 の歴史契約。Sol R1-11）。
+   236	
+   237	### S8 ドキュメント是正
+   238	
+   239	- `README.md` :9-10, :14-15, :26 — 新契約へ置換。
+   240	- `docs/ADOPTION.md` / `.ja.md` — survey §8 の全該当行＋冒頭要約（:11 相当）を更新。新設節
+   241	  「code-review の自律実行と opt-out」:
+   242	  - opt-out は `permissions.deny: ["Skill(code-review *)"]` または `skillOverrides`
+   243	    （実測エラー文字列と `blocked-by-settings` 検出を記載）。
+   244	  - **`permissions.ask` は推奨しない**（実測: headless 素通り・interactive prompt 無し。2026-08-31、CC 2.1.251）。
+   245	  - 要求バージョン: 自律実行は CC ≥ 2.1.246。旧環境は `not-run` WARN（required で REFUSED）。
+   246	  - severity: code-review の所見はラベル無しのため `UNSPECIFIED`＝blocking として扱う旨と理由。
+   247	  - 再現性: code-review は LLM サンプリング（#59 と同型の注意）。phase4Runs/flip 計測の対象外である旨。
+   248	  - v0.17.0 Behavior changes: 自律起動開始／`ultra`・`--fix`・不正 effort は REFUSED／
+   249	    `not-model-invocable` 廃止／`required` 追加／**P6 設定（公式 `/code-review <effort>`）の
+   250	    プロジェクトでは進行中の v0.16 run を resume 不可（fresh run 必須。P1/P3 設定は影響なし）**／
+   251	    code-review 層は Phase 4 のライフサイクルに従う（Phase 4 不要の run では codexReview 同様走らない）。
+   252	  - v0.15.1 記録の「autonomous invocation remains tracked in #66」は過去形＋v0.17.0 参照に修正
+   253	    （歴史段落自体は保存）。
+   254	- `skills/audit/SKILL.md:3` の description（`offers /code-review`）を新契約に更新（Sol R1-12）。
+   255	- `skills/audit/references/config-schema.md` :20 — `reviewCommands` 行を S1 の字句契約・`required`・
+   256	  legacy・refuse 条件込みで全面更新。
+   257	- `docs/examples/doc-audit.example.json` — `"required": false` を追記。
+   258	- ADOPTION en/ja の内部ファイル一覧に `docaudit_review.py`・`code-review-plan.py` を追加（Sol R3-5）。
+   259	- `skills/init/SKILL.md` :166 — required の言及を追加。
+   260	
+   261	### S9 バージョン・記録
+   262	
+   263	`.claude-plugin/plugin.json` → 0.17.0。SKILL.md の harness 互換 stamp「0.16.0」→「0.17.0」。
+   264	engine-shas.json 0.17.0。REVIEW.md にラウンド記録・route-close。
+   265	
+   266	## 6. 完了条件（機械判定）
+   267	
+   268	1. `python3 -m unittest discover -s tests` 全緑。`Ran N tests / OK` verbatim（基準 716＋追加分、実数記録）。
+   269	2. CT 実数出力 = `call sites 23／exempt 3／getters 13／scripts 22／observers 20`。
+   270	3. `tests/test_code_review_plan.py` が「対象 N 件を検査」を出力し、N ≥ S1 表の行×境界の組合せ数（実数記録）。
+   271	4. `grep -rn 'not-model-invocable' skills/ README.md docs/` が 0 件（tests/ は不在検査コード内の
+   272	   文字列のみ許容、tasks/route の歴史記録は対象外）。
+   273	5. planner/gate が共通分類関数 `docaudit_review.classify_review_command` を呼ぶことの検査 green。
+   274	6. code-review-plan.py 単体: S1 全行が期待 JSON、破損 config で exit 7・stderr `sealed-config-mismatch`。
+   275	7. gate: UNSPECIFIED blocking・required REFUSED・evidence eligibility 全数表・phase4Runs 不算入が
+   276	   それぞれ独立テストで green。
+   277	8. plugin.json = 0.17.0、engine-shas.json に 0.17.0 エントリ。
+   278	9. `tests/test_release_handoff.py` に diff が無い。
+   279	
+   280	## 7. 変更範囲
+   281	
+   282	**許可**: `skills/audit/SKILL.md`、`skills/audit/scripts/code-review-plan.py`（新規）、
+   283	`skills/audit/scripts/docaudit_review.py`（新規・分類 library）、
+   284	`skills/audit/scripts/decide-verdict.py`、`skills/audit/scripts/start-run.py`（phase4Required 条件への S3-1 追加のみ）、
+   285	`skills/audit/scripts/write-evidence.py`（phase4.codeReview 型検査のみ）、
+   286	`skills/audit/references/config-schema.md`、`skills/audit/references/engine-shas.json`、
+   287	`skills/init/SKILL.md`（reviewCommands 行のみ）、`README.md`、`docs/ADOPTION.md`、`docs/ADOPTION.ja.md`、
+   288	`docs/examples/doc-audit.example.json`、`.claude-plugin/plugin.json`、`tests/`
+   289	（**ただし `tests/test_release_handoff.py` は変更禁止**）。
+   290	
+   291	**禁止**: 上記以外のすべて。probe 群・sealed_config.py・open-run.py・
+   292	docaudit_cache.py・docaudit_paths.py・codex-review-plan.py・seal-run.py。`reviewCommands.security` の挙動変更。
+   293	`.gitignore`。git 操作（commit/push は boss）。
+   294	**許可外ファイルの変更が必要になった場合は、修正せず報告のみせよ（boss が別途扱う）。**
+   295	
+   296	## 8. 検証コマンド一式
+   297	
+   298	```
+   299	python3 -m unittest discover -s tests
+   300	python3 -m unittest tests.test_v016_contracts -v 2>&1 | tail -20
+   301	python3 -m unittest tests.test_code_review_plan -v
+   302	grep -rn 'not-model-invocable' skills/ README.md docs/ ; test $? -eq 1
+   303	git diff --stat && git status --short
+   304	git diff -- tests/test_release_handoff.py   # 空であること
+   305	```
+   306	
+   307	## 9. Registry（v0.17.0 の単一の真実。件数は本表から導出）
+   308	
+   309	### 9.1 スクリプト消費者（v0.16.0 §9.1 の 21 本 ＋ 下記 1 本 = **K=22**）
+   310	
+   311	v0.16.0 route PLAN §9.1 の #1〜#21 は**そのまま**（行番号は現 SKILL に読み替え）。追加:
+   312	
+   313	| # | script | SKILL call site | sha 供給 | フラグ | 読み | 正常 exit | mismatch exit | observer ID |
+   314	|---|---|---|---|---|---|---|---|---|
+   315	| 22 | `code-review-plan.py`（新規） | Phase 4 の CONFIG_SHA 再束縛・getter 後、global Phase 4 分岐直前（S3-2 の 1 行） | `$CONFIG_SHA` | 必須 | 直接 | 0 | 7 | `code-review-plan.py` |
+   316	
+   317	→ call sites **N = 22＋1 = 23**。exempt **M = 3**（不変）。
+   318	
+   319	### 9.2 getter registry（**G=13**、構成不変）
+   320	
+   321	v0.16.0 §9.2 のまま。ただし `reviewCommands` → `REVIEW_COMMANDS_JSON` の行に消費先を追記:
+   322	「**`security` 実行値のみ**の供給源（S2-1。legacy は planner の `command` に一本化）。CT は代入後の消費を検査」。
+   323	
+   324	### 9.4 observers（**O=20**）
+   325	
+   326	v0.16.0 §9.4 の 19 個 ＋ `code-review-plan.py`。
+   327	
+   328	### 9.8 code-review evidence eligibility（gate の全数表。`phase4Required` を明示軸に含む）
+   329	
+   330	前提（gate が順に検査）:
+   331	(0) `manifest.phase4Required` は厳密 JSON boolean（欠落・null・数値・文字列 → REFUSED。Sol R3-3）。
+   332	(1) 双方向契約: `phase4Required=false` ⇔ `phase4` は `"none"` sentinel（どちらか一方のみ → REFUSED）。
+   333	(2) P6×`required:true` の run は start-run により `phase4Required=true` が保証される（S3-1）。よって
+   334	    `"none"`×P6×required:true は REFUSED（codexReview の :1027 対称）。
+   335	
+   336	| config 分類 | phase4Required | `phase4.codeReview` | gate の扱い |
+   337	|---|---|---|---|
+   338	| P1/P3 not-active | true | キー無し | 正常（状態行なし） |
+   339	| P1/P3 not-active | true | キー有り | REFUSED（evidence invalid） |
+   340	| P1/P3 not-active | false（`"none"`） | —（phase4 自体なし） | 正常（Sol R3-7） |
+   341	| P2/P4/P5/P7 refuse・required 矛盾 | 任意 | 任意 | REFUSED（`invalid-review-command`/`invalid-review-config` + 原文） |
+   342	| P6 run | true | `{state:"ran"}` | 正常・所見 fold 済み |
+   343	| P6 run | true | `{state:"blocked-by-settings"}` / `{state:"not-run"}` | required:true → REFUSED `code-review-required-not-run`／false → WARNING |
+   344	| P6 run | true | キー無し・enum 外・型違い・`legacy-*` | REFUSED（evidence invalid。P6 config の v0.16 進行中 run resume を含む） |
+   345	| P6 run（required:false のみ到達可） | false（`"none"`） | — | 正常（SKILL が `phase4-not-required` 状態行を表示。S3-2） |
+   346	| P6 run（required:true） | false（`"none"`） | — | REFUSED（前提 (2)） |
+   347	| P8 legacy | true | `{state:"legacy-ran"}` | 正常（`source=="review-command"` 所見を受理） |
+   348	| P8 legacy | true | `{state:"legacy-not-run"}` | 正常（現行の skip+WARN） |
+   349	| P8 legacy | true | キー無し・他値 | REFUSED（evidence invalid） |
+   350	| P8 legacy | false（`"none"`） | — | 正常 |
+   351	
+   352	追加の整合検査（全行に適用）: `source=="code-review"` の所見は「P6 かつ state=="ran"」の行でのみ許可。
+   353	それ以外の行に存在 → REFUSED。
+   354	
+   355	### 9.5 期待値（CT が出力・assert）
+   356	
+   357	- call sites **N=23**／exempt **M=3**／getters **G=13**／scripts **K=22**／observers **O=20**。
+   358	- worker の実測が異なれば、実装を曲げず報告する（boss が registry を改訂）。
+   359	
+   360	## 10. 非対象の明示
+   361	
+   362	- `reviewCommands.security`（/security-review）の挙動・状態体系。
+   363	- code-review 所見の phase4Runs/flip 計測（意図的除外、S4）。
+   364	- `tests/test_release_handoff.py`（歴史契約）。
+   365	- ledger 型の所見持ち越し（#59 で撤回済み）。
+   366	- `permissions.ask` の推奨（実測不成立）。
+
+exec
+/bin/zsh -lc "nl -ba skills/audit/SKILL.md | sed -n '674,785p'; nl -ba skills/audit/SKILL.md | sed -n '825,905p'; nl -ba skills/audit/scripts/decide-verdict.py | sed -n '520,590p'; nl -ba skills/audit/scripts/write-template.py | sed -n '1,140p'" in /Users/akiratakahashi/Projects/doc-audit-harness
+ succeeded in 0ms:
+   674	## Phase 5 — gate + report
+   675	Re-derive `CONFIG_SHA` from `EVIDENCE` as specified above.
+   676	Phase-3 verdicts (`$RUN_DIR/verdicts/`) and required Phase-4 findings
+   677	(`$RUN_DIR/phase4.json`, absent only with the valid `none` sentinel) are already on disk. **You do
+   678	NOT compute, declare, or hand off the verdict** — the deterministic gate derives
+   679	it and is the SOLE writer of the anchor and report.
+   680	
+   681	Before constructing any status line, run
+   682	`PROBE_REBIND="$(python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --read)"`.
+   683	
+   684	Within each status-line table the first matching bullet wins: the whole-record unknown bullet (when the table has one) comes first, the invalid-config bullet second, then the remaining states; for codex-review use invalid-config → review-state-not-recorded → probe-record-unavailable → 4-way.
+   685	
+   686	If that read fails, use the script's seven unknown-shaped values for every status line and continue.
+   687	For fresh runs, bind the Phase-5 inputs exclusively from `PROBE_REBIND.rebind`:
+   688	`mdq`, `context-mode`, `ax`, `codex-review`, `symbol-graph`, `doc-graph`, and `semantic-search`,
+   689	in the existing display order. On resume, webExtract/codexReview are the exception: re-run their
+   690	key-gated probes, bind their operational values and overwrite their records from the same stdout,
+   691	then read `PROBE_REBIND`; if re-probing or re-recording fails, force only that seam's display state
+   692	to unknown. Rebind `CODEX_REVIEW_STATE` from
+   693	`rebind.codex-review.reviewState`; retain the existing four literal state branches below. A failed
+   694	record write for other seams merely emits its `⚠ probe-record: <seam> not recorded [non-blocking]`
+   695	warning and continues; a failed read makes all seven status lines unknown; neither case changes
+   696	the verdict. A failed resume re-record for webExtract/codexReview additionally forces its own line
+   697	unknown as specified above.
+   698	
+   699	Bind `REPORT_PATH_CONFIG="$(python3 "$SD/scripts/sealed_config.py" --config "$CFG" --expect-sha "$CONFIG_SHA" --get reportPath --default null --raw)"`.
+   700	When `reportPath` is configured, generate the complete human report body **before starting the
+   701	gate**, with the change set, impacted docs and per-doc verdicts, delegated-check results, review
+   702	summaries, `mapGapCandidates`, the Phase-3 attempt count and final
+   703	`missing`/`returnMissing`/`mismatch`/`invalid`/`warnings`, and all required status lines below.
+   704	Include exactly one literal `Phase-3 backend: <manifest.phase3Backend>` line, filling the
+   705	placeholder from `SEALED_PHASE3_BACKEND` with the sealed `workflow` or `codex` value; this is
+   706	concrete report text, not a `{{GATE_*}}` placeholder.
+   707	Use the following single placeholder contract for every possible verdict; do not predict the
+   708	verdict or create separate success and REFUSED templates:
+   709	
+   710	| placeholder | exact occurrences | gate-rendered value |
+   711	|---|---:|---|
+   712	| `{{GATE_VERDICT}}` | 1 | final verdict |
+   713	| `{{GATE_REASON}}` | 0 or 1 | REFUSED reason; `"n/a"` on success |
+   714	| `{{GATE_COUNTS}}` | 1 | counts; `"n/a"` on REFUSED |
+   715	| `{{GATE_HISTORY_STATUS}}` | 1 | history status; `"n/a"` on REFUSED |
+   716	| `{{GATE_WARNINGS}}` | 1 | gate warning codes |
+   717	| `{{GATE_SIBLING_SCAN}}` | 1 | sibling scan; `"n/a"` on REFUSED |
+   718	| `{{GATE_ANCHOR_WRITTEN}}` | 1 | whether the anchor was written |
+   719	| `{{GATE_REPORT_DATE}}` | 2 | sealed date for front matter `created` and `updated` |
+   720	
+   721	`{{GATE_WARNINGS}}` includes only warnings known before report publication. For warnings discovered
+   722	during publication (`reportDurabilityUnknown`, `reportWriteError`, `reportStatusUpdateFailed`, or
+   723	`lockReleaseFailed`), the gate stdout and `last_run.reportStatus` are authoritative.
+   724	
+   725	Pass that UTF-8 body on stdin to
+   726	`python3 "$SD/scripts/write-template.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID"`.
+   727	The helper binds the template to the run ledger; never write `report-template.md`, its receipt, or
+   728	the final `reportPath` directly. If the body must be regenerated, invoke the same helper with the
+   729	explicit `--replace` flag and pass the complete replacement body on stdin. If `reportPath` is not
+   730	configured, do not create a template; the gate completes reportless.
+   731	
+   732	After the helper succeeds, invoke the gate:
+   733	`python3 "$SD/scripts/decide-verdict.py" --run-dir "$RUN_DIR" --repo-root "$CLAUDE_PROJECT_DIR" --config "$CFG" --anchor-path "$ANCHOR_PATH" --runid "$RUNID" --expect-json "$EVIDENCE"`.
+   734	The gate validates the sealed immutable evidence snapshot, updates persistent state when allowed,
+   735	and publishes the report while holding the lock, then releases the lock. Parse stdout `verdict`
+   736	(`CONSISTENT`, `NEEDS_FIX`, or `REFUSED`), `reason`, `counts`, `historyStatus`, `warnings`,
+   737	`siblingScan` (always an object for CONSISTENT and NEEDS_FIX), `reportPath`, `reportStatus`, and
+   738	`codexReview:{state,required,degraded}`. When Codex review is degraded, the gate renders
+   739	`{{GATE_VERDICT}}` as `CONSISTENT (codex-review did not run: <state>)` while keeping stdout
+   740	`verdict` equal to `CONSISTENT`;
+   741	include `counts.verdictFlipsUnchangedContent` and
+   742	`counts.verdictFlipsUnchangedContentSameChangeSet` and `counts.phase4FlipsUnchangedContent` in the existing report counts line. The Phase-4 counter compares only records with the same worktreeDigest, contractVersion, configSha, and carryForwardSha and is a warning, never a verdict input;
+   743	never replace any of them with an orchestrator judgment. Report stdout `reportPath`, `warnings`,
+   744	and `reportStatus` to the user. `reportPath` exists only after successful publication, and
+   745	`reportStatus` is omitted when a pre-lock or non-owned REFUSED path wrote no `last_run` state.
+   746	`CONSISTENT` means the anchor advanced, `NEEDS_FIX` means blocking evidence was found and the
+   747	anchor did not advance, and exit 3 `REFUSED` means the run is invalid. Never override
+   748	`NEEDS_FIX`/`REFUSED`, hand-write an anchor or report, fabricate evidence, or retry the gate with a
+   749	modified expectation. If a REFUSED `reason` is config change/unaccepted config, add: inspect
+   750	`git diff .claude/doc-audit.json`, restore or approve it, then explicitly re-run with
+   751	`/docaudit:audit --accept-config`.
+   752	
+   753	After invoking the gate, orchestrator lock release is required on exactly two recovery paths:
+   754	(i) a pre-lock REFUSED caused by invalid required EVIDENCE or invalid invocation identity, where
+   755	the gate could not validate and release the lock — run the matching
+   756	`open-run.py --release --runid "$RUNID"`; and (ii) stdout `warnings` contains
+   757	`lockReleaseFailed` — after the gate exits, run the same ownership-checking release command. If
+   758	either release fails, stop and tell the user to inspect the holder and run
+   759	`/docaudit:audit --break-lock`. A true fd/path/expected-inode mismatch after lock validation is
+   760	non-owned: do not call `--release`; stop and give the same `--break-lock` guidance.
+   761	
+   762	The report uses 6-field front matter (title, description, category, created, updated, version)
+   763	with `category: logs`. It is written by the gate while the lock is held, so it cannot race with a
+   764	parallel run's sealed digest. Do NOT edit any existing doc and do NOT auto-edit `docs/README.md` —
+   765	list "add report to index" as a manual follow-up.
+   766	
+   767	Never overwrite an existing report. On a collision, start with the zero-padded two-digit suffix
+   768	`_02`, then increment it; `_99` is followed by `_100`. Insert the suffix at `[_NN]` when that
+   769	placeholder is present, otherwise immediately after the rendered date. The gate now implements
+   770	this suffix contract inside its lock-held report publication interval.
+   771	
+   772	**mdq status line** — always include exactly one; it is **non-blocking** (never changes the verdict). If Phase 0's confirmation gate fired, append the matching `MDQ_DEGRADE` suffix below to whichever base line applies (omit the suffix when `MDQ_DEGRADE` is `n/a`):
+   773	- `rebind.mdq.state=unknown` → `⚠ mdq: state unknown (probe record unavailable) [non-blocking]`
+   774	- `MDQ_REASON=invalid-config` → `⚠ mdq: doc-audit.json indexing is invalid — mdq not probed this run; fix the key. [non-blocking]`
+   775	- `MDQ_AVAILABLE` false → `💡 mdq: not active — docs read in full. Install mdq for Phase-0 indexed, chunked reads (~90%+ token savings on large docs): clone github.com/dahatake/skills and run its ./setup/setup-markdown-query.sh`
+   776	- `MDQ_AVAILABLE` true and `MDQ_HEALTHY` true → `✓ mdq: active (indexed <MDQ_CHUNKS> chunks; chunked reads on)`
+   777	- `MDQ_AVAILABLE` true and `MDQ_HEALTHY` false → `⚠ mdq: installed but NOT firing (<MDQ_STATUS>) — not getting token savings; run mdq index --root . (or check indexing.roots). [non-blocking]`
+   778	- `MDQ_DEGRADE` suffix: `user-approved` → append ` [user-approved degrade]`; `non-interactive` → append ` [UNCONFIRMED degrade — non-interactive session]` and lead the line with `⚠` regardless of the base glyph, so it cannot be mistaken for the routine nudge.
+   779	- If the Phase-3 refresh failed or was unhealthy, also append ` [Phase-3 refresh failed: <detail>; grep-degrade]` and lead the line with `⚠`.
+   780	
+   781	**context-mode status line** — always include exactly one, immediately after the mdq line; it is **non-blocking** (never changes the verdict):
+   782	- `rebind.context-mode.state=unknown` → `⚠ context-mode: state unknown (probe record unavailable) [non-blocking]`
+   783	- `CM_STATUS=invalid-config` → `⚠ context-mode: doc-audit.json contextMode is invalid — not probed this run; fix the key. [non-blocking]`
+   784	- `CM_AVAILABLE` false → `💡 context-mode: not active — large outputs (diff, reviews) read in full. Install context-mode for sandboxed processing (token savings on big audits).`
+   785	- `CM_AVAILABLE` true and `CM_HEALTHY` true → `✓ context-mode: active (sandbox processing on)`
+   825	- `SYMBOL_GRAPH_REASON=ok` → `✓ symbol-graph: active (codegraph impact/node corroboration available; read-only)`
+   826	
+   827	**doc-graph status line** — always include exactly one, immediately after the symbol-graph line; it is **non-blocking** (never changes the verdict), 6-state (7 messages):
+   828	- `rebind.doc-graph.state=unknown` → `⚠ doc-graph: state unknown (probe record unavailable) [non-blocking]`
+   829	- `DOC_GRAPH_REASON=not-configured` → `💡 doc-graph: not configured — docGraph is absent from doc-audit.json, so the tool is not probed; run /docaudit:init to enable it.`
+   830	- `DOC_GRAPH_REASON=invalid-config` → `⚠ doc-graph: doc-audit.json docGraph is invalid — tool not probed this run; fix the key. [non-blocking]`
+   831	- `DOC_GRAPH_REASON=not-installed` → `💡 doc-graph: not active — mapGapCandidates uses the token heuristic only; install: (see graphify install docs)`
+   832	- `DOC_GRAPH_REASON=disabled-by-config` → `💡 doc-graph: disabled by config — mapGapCandidates uses the token heuristic only.`
+   833	- `DOC_GRAPH_REASON=update-failed` → `⚠ doc-graph: installed but index update failed — not available this run. [non-blocking]`
+   834	- `DOC_GRAPH_REASON=ok` and `DOC_GRAPH_GITIGNORE_OK=true` → `✓ doc-graph: active (mapGapCandidates supplemented via graphify; graphify-out/ gitignored)`
+   835	- `DOC_GRAPH_REASON=ok` and `DOC_GRAPH_GITIGNORE_OK=false` → `⚠ doc-graph: active but graphify-out/ is NOT gitignored — add it to .gitignore. [non-blocking]`
+   836	
+   837	**semanticSearch status line** — always include exactly one, immediately after the doc-graph line; it is **non-blocking** (never changes the verdict), 8-state:
+   838	- `rebind.semantic-search.state=unknown` → `⚠ semantic-search: state unknown (probe record unavailable) [non-blocking]`
+   839	- `SEMANTIC_SEARCH_REASON=not-configured` → `💡 semanticSearch: not configured — semanticSearch is absent from doc-audit.json, so the tool is not probed; run /docaudit:init to enable it.`
+   840	- `SEMANTIC_SEARCH_REASON=invalid-config` → `⚠ semanticSearch: doc-audit.json semanticSearch is invalid — tool not probed this run; fix the key. [non-blocking]`
+   841	- `SEMANTIC_SEARCH_REASON=not-installed` → `💡 semanticSearch: not active — mapGapCandidates gets no semantic-search source; install: uv tool install "cocoindex-code[full]==0.2.39"`
+   842	- `SEMANTIC_SEARCH_REASON=disabled-by-config` → `💡 semanticSearch: disabled by config — mapGapCandidates gets no semantic-search source.`
+   843	- `SEMANTIC_SEARCH_REASON=not-initialized` → `💡 semanticSearch: not active — CocoIndex is installed but this repo isn't indexed yet; run /docaudit:init to set it up (or manually: ccc init && ccc index).`
+   844	- `SEMANTIC_SEARCH_REASON=index-failed` → `⚠ semanticSearch: installed but index update failed — not available this run. [non-blocking]`
+   845	- `SEMANTIC_SEARCH_REASON=gitignore-modified` → `⚠ semanticSearch: .gitignore changed while ccc index ran — inspect it manually (git status / git diff -- .gitignore; if .gitignore is a symlink, resolve the target with readlink and review that file's content against your backup or VCS); not available this run. [non-blocking]`
+   846	- `SEMANTIC_SEARCH_REASON=ok` → `✓ semanticSearch: active (mapGapCandidates supplemented via CocoIndex semantic search; minScore=<config value>)`
+   847	
+   848	**harness status line** — always include exactly one immediately after semanticSearch, using the
+   849	effective `HARNESS_STATE`: `✓ harness: <state>` for active/declined states;
+   850	`⚠ harness: broken — run /docaudit:init --harness --refresh` for the derived broken state; or
+   851	`💡 harness: unanswered — run /docaudit:init --harness` for a non-interactive unset state.
+   852	
+   853	**pre-flight status line** — always include exactly one immediately after harness:
+   854	`✓ pre-flight: <PREFLIGHT_STATE> (findings=<count>)` when it ran or was skipped cleanly, and lead
+   855	with `⚠` for `failed`, `non-interactive`, or `broken`. The gate, not this glyph, decides whether
+   856	recorded FAIL findings block.
+   857	
+   858	**run-class status line** — always include exactly one immediately after pre-flight:
+   859	`✓ run class: <SEALED_RUN_CLASS> (verifier=<actual model(s) used|not-dispatched>; codex=<actual model(s) used|not-run>)`.
+   860	List both Haiku and Sonnet if a light run was re-dispatched, and both Luna and Terra when the
+   861	permitted Codex light fallback ran; report a configured model exactly as configured.
+   862	
+   863	**cache status line** — always include exactly one immediately after run class:
+   864	`✓ cache: dispatch=<count> cached=<count> historyStatus=<absent|ok|corrupt>`. Cache decisions are
+   865	deterministic and never pass through an LLM; use the manifest/gate counts, not estimates.
+   866	
+   867	**diffGlobs filter status line** — if Phase 1's `filteredOutCount > 0`, include one line immediately after the cache line: `⚠ diffGlobs excluded <filteredOutCount> changed path(s) from this audit (sample: <filteredOutSample joined by ", ">). If these are source roots you expect to affect docs, widen diffGlobs. [non-blocking]`. It is **non-blocking** (never changes the verdict) — a deliberately docs-only scope is legitimate. Omit the line entirely when `filteredOutCount` is 0.
+   868	
+   869	Append ` (+<machineryExcludedCount> machinery excluded)` to that line when the machinery count is non-zero.
+   870	When `filteredOutCount` is zero but `machineryExcludedCount` is non-zero, emit one standalone line
+   871	at the same position: `ℹ changed-set machinery exclusion: <machineryExcludedCount> path(s) (sample: <machineryExcludedSample joined by ", ">) [non-blocking]`.
+   872	
+   873	**siblingScan status line** — include exactly one `{{GATE_SIBLING_SCAN}}` placeholder in the
+   874	pre-gate template; it is non-blocking. The gate replaces it with the scan object for CONSISTENT or
+   875	NEEDS_FIX and with `"n/a"` for REFUSED; never fabricate a scan result.
+   876	
+   877	**impact warning lines** — if the Phase-2 `warnings[]` is non-empty, include one `⚠ <warning> [non-blocking]` line per entry, immediately after the diffGlobs filter line; they are **non-blocking** (never change the verdict).
+   878	
+   879	## Guardrails
+   880	Report-only. Never rewrite ADRs or `docs/logs/`; surface fixes as proposals. The **only** exception
+   881	is a Phase-0.5 FAIL whose user explicitly chose “修正して監査”, and then only documentation paths
+   882	allowed by `fix-scope.py`, under the run lock and before `seal-run.py`; snapshot/verify is
+   883	mandatory and no other audit phase may edit existing docs. mdq is auto-detected in Phase 0; when
+   884	present it is REQUIRED for doc reads (whole-repo index + chunked `mdq search`/`get`), with grep
+   885	used only when mdq is genuinely absent (conditional-force). The engine still runs fully without
+   886	mdq. MCP servers are optional.
+   887	
+   888	After open, never use the Read tool or an ad-hoc direct JSON file read to inspect `CFG`; every plugin-engine config value must come from `sealed_config.py` using the current `CONFIG_SHA`. Project-defined `docAuditCommands` and their repository-side definitions are trusted only at repository-writer level, while sealed-config completely covers the plugin engine's decision path. A copied harness engine is defense-in-depth: only the exact current `0.16.0` stamp is executed; every older, future, missing, invalid, or modified stamp falls back to the plugin engine with a WARN and refresh guidance.
+   889	
+   890	Concurrent audits are excluded mechanically by `RUN_BASE/lock`: `open-run.py` uses exclusive
+   891	creation, the gate holds an exclusive `flock` through its decision, state writes, and report
+   892	publication, and `--break-lock` cannot take it anywhere in that gate+report interval. Breaking a
+   893	stale lock is an emergency operation that intentionally breaks the report serialization guarantee;
+   894	never use it to bypass `gate-running`. There is no TTL or best-effort shared run directory; each
+   895	accepted run owns `RUN_BASE/<runid>/`. Every pre-gate terminal path releases only its own runid.
+   896	`$RUN_DIR/phase0-probes.json` stores raw probe output for display only; it is separate from the
+   897	ban on handwritten evidence, and the gate never reads it.
+   898	
+   899	The threat model protects two properties against one verifier writing anything in the repository
+   900	during its run: (a) it cannot make the gate emit an evidence-unsupported CONSISTENT, and (b) it
+   901	cannot carry contaminated persistent state into a later run. The gate reads each evidence file
+   902	once and judges that immutable byte snapshot; replacing disposable evidence after that read does
+   903	not change the decision and is not itself detected. Before writing later-run state, the gate
+   904	rechecks lock identity, HEAD/digest, history, anchor, and config. Owned-run contamination fails
+   905	safe: corrupt/changed history is quarantined as `.tainted-<runid>`, a changed anchor is removed,
+   520	        os.close(fd)
+   521	
+   522	
+   523	def load_report_template(run_dir):
+   524	    receipt_raw = read_regular_bounded(
+   525	        os.path.join(run_dir, "report-template.receipt.json"), "report receipt",
+   526	        MAX_RECEIPT_BYTES, TemplateMissing)
+   527	    try:
+   528	        receipt = json.loads(receipt_raw.decode("utf-8"))
+   529	    except (UnicodeError, json.JSONDecodeError) as exc:
+   530	        raise TemplateInvalid(f"report receipt is invalid: {exc}") from exc
+   531	    if not isinstance(receipt, dict) or receipt.get("failed") is not False:
+   532	        raise TemplateInvalid("report receipt does not record a successful helper invocation")
+   533	    raw = read_regular_bounded(os.path.join(run_dir, "report-template.md"), "report template",
+   534	                               MAX_TEMPLATE_BYTES, TemplateMissing)
+   535	    expected_sha = "sha256:" + hashlib.sha256(raw).hexdigest()
+   536	    if (receipt.get("sha256") != expected_sha or receipt.get("bytes") != len(raw)
+   537	            or isinstance(receipt.get("bytes"), bool)):
+   538	        raise TemplateInvalid("report receipt does not match the template")
+   539	    try:
+   540	        return raw.decode("utf-8")
+   541	    except UnicodeError as exc:
+   542	        raise TemplateInvalid(f"report template is not valid UTF-8: {exc}") from exc
+   543	
+   544	
+   545	def safe_json(value):
+   546	    rendered = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+   547	    if any(char in BIDI_CONTROLS for char in rendered):
+   548	        raise TemplateInvalid("report replacement contains a bidirectional control character")
+   549	    return (rendered.replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+   550	            .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
+   551	
+   552	
+   553	def render_report(template, verdict, report_date, *, reason=None, counts=None,
+   554	                  history_status=None, warnings=None, sibling=None, anchor_written=False):
+   555	    found = TOKEN_RE.findall(template)
+   556	    if any(token not in TOKEN_COUNTS for token in found):
+   557	        raise TemplateInvalid("report template contains an unknown gate token")
+   558	    for token, count in TOKEN_COUNTS.items():
+   559	        actual_count = found.count(token)
+   560	        if ((token in OPTIONAL_TOKENS and actual_count not in (0, count))
+   561	                or (token not in OPTIONAL_TOKENS and actual_count != count)):
+   562	            raise TemplateInvalid(f"report template token count is invalid for {token}")
+   563	    refused = verdict == "REFUSED"
+   564	    values = {
+   565	        "{{GATE_VERDICT}}": verdict,
+   566	        "{{GATE_REASON}}": safe_json(reason if refused else "n/a"),
+   567	        "{{GATE_COUNTS}}": safe_json("n/a" if refused else counts),
+   568	        "{{GATE_HISTORY_STATUS}}": safe_json("n/a" if refused else history_status),
+   569	        "{{GATE_WARNINGS}}": safe_json(warnings or []),
+   570	        "{{GATE_SIBLING_SCAN}}": safe_json("n/a" if refused else sibling),
+   571	        "{{GATE_ANCHOR_WRITTEN}}": "true" if anchor_written else "false",
+   572	        "{{GATE_REPORT_DATE}}": report_date,
+   573	    }
+   574	    rendered = TOKEN_RE.sub(lambda match: values[match.group(0)], template)
+   575	    raw = rendered.encode("utf-8")
+   576	    if len(raw) > MAX_REPORT_BYTES:
+   577	        raise TemplateInvalid("rendered report exceeds 4 MiB")
+   578	    return raw
+   579	
+   580	
+   581	def write_all(fd, raw):
+   582	    offset = 0
+   583	    while offset < len(raw):
+   584	        written = os.write(fd, raw[offset:])
+   585	        if written <= 0:
+   586	            raise OSError("short write")
+   587	        offset += written
+   588	
+   589	
+   590	def fsync_directory_fd(fd):
+     1	#!/usr/bin/env python3
+     2	"""Safely write the report template bound to a sealed-run ledger directory."""
+     3	
+     4	import argparse
+     5	import hashlib
+     6	import json
+     7	import os
+     8	import re
+     9	import stat
+    10	import sys
+    11	import tempfile
+    12	
+    13	from docaudit_paths import validate_repo_path
+    14	
+    15	
+    16	RUNID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
+    17	MAX_TEMPLATE_BYTES = 2 * 1024 * 1024
+    18	
+    19	
+    20	def write_all(fd, raw):
+    21	    offset = 0
+    22	    while offset < len(raw):
+    23	        written = os.write(fd, raw[offset:])
+    24	        if written <= 0:
+    25	            raise OSError("short write")
+    26	        offset += written
+    27	
+    28	
+    29	def atomic_receipt(run_dir, value):
+    30	    path = os.path.join(run_dir, "report-template.receipt.json")
+    31	    raw = (json.dumps(value, sort_keys=True) + "\n").encode("utf-8")
+    32	    fd, temporary = tempfile.mkstemp(prefix=".report-template-receipt.", dir=run_dir)
+    33	    try:
+    34	        write_all(fd, raw)
+    35	        os.fsync(fd)
+    36	        os.close(fd)
+    37	        fd = None
+    38	        os.replace(temporary, path)
+    39	        directory_fd = os.open(run_dir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    40	        try:
+    41	            os.fsync(directory_fd)
+    42	        finally:
+    43	            os.close(directory_fd)
+    44	    finally:
+    45	        if fd is not None:
+    46	            os.close(fd)
+    47	        if os.path.exists(temporary):
+    48	            os.unlink(temporary)
+    49	
+    50	
+    51	def inspect_existing(path):
+    52	    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    53	    try:
+    54	        info = os.fstat(fd)
+    55	        if not stat.S_ISREG(info.st_mode):
+    56	            raise ValueError("existing template is not a regular file")
+    57	    finally:
+    58	        os.close(fd)
+    59	
+    60	
+    61	def create_template(path, raw):
+    62	    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    63	    try:
+    64	        write_all(fd, raw)
+    65	        os.fsync(fd)
+    66	    finally:
+    67	        os.close(fd)
+    68	
+    69	
+    70	def replace_template(run_dir, path, raw):
+    71	    inspect_existing(path)
+    72	    fd, temporary = tempfile.mkstemp(prefix=".report-template.", dir=run_dir)
+    73	    try:
+    74	        write_all(fd, raw)
+    75	        os.fsync(fd)
+    76	        os.close(fd)
+    77	        fd = None
+    78	        os.replace(temporary, path)
+    79	    finally:
+    80	        if fd is not None:
+    81	            os.close(fd)
+    82	        if os.path.exists(temporary):
+    83	            os.unlink(temporary)
+    84	
+    85	
+    86	def main():
+    87	    parser = argparse.ArgumentParser()
+    88	    parser.add_argument("--repo-root", required=True)
+    89	    parser.add_argument("--runid", required=True)
+    90	    parser.add_argument("--replace", action="store_true")
+    91	    args = parser.parse_args()
+    92	    try:
+    93	        if not RUNID_RE.fullmatch(args.runid):
+    94	            raise ValueError("invalid runid")
+    95	        repo = os.path.realpath(args.repo_root)
+    96	        run_rel = f".claude/state/docaudit-run/{args.runid}"
+    97	        validated = validate_repo_path(repo, run_rel, regular_file=False)
+    98	        run_dir = os.path.join(repo, validated)
+    99	        if not os.path.isdir(run_dir):
+   100	            raise ValueError("run directory is not a directory")
+   101	        template = os.path.join(run_dir, "report-template.md")
+   102	
+   103	        # Invalidate first. Every invocation makes an older successful receipt unusable.
+   104	        atomic_receipt(run_dir, {"failed": True})
+   105	
+   106	        raw = sys.stdin.buffer.read(MAX_TEMPLATE_BYTES + 1)
+   107	        if len(raw) > MAX_TEMPLATE_BYTES:
+   108	            raise ValueError("template exceeds 2 MiB")
+   109	        if args.replace:
+   110	            replace_template(run_dir, template, raw)
+   111	        else:
+   112	            create_template(template, raw)
+   113	        receipt = {
+   114	            "bytes": len(raw),
+   115	            "failed": False,
+   116	            "sha256": "sha256:" + hashlib.sha256(raw).hexdigest(),
+   117	        }
+   118	        atomic_receipt(run_dir, receipt)
+   119	    except (OSError, ValueError) as exc:
+   120	        print(f"write-template: {exc}", file=sys.stderr)
+   121	        return 2
+   122	    print(json.dumps(receipt, sort_keys=True))
+   123	    return 0
+   124	
+   125	
+   126	if __name__ == "__main__":
+   127	    raise SystemExit(main())
+
+exec
+/bin/zsh -lc "nl -ba skills/audit/scripts/decide-verdict.py | sed -n '250,305p'; rg -n \"codeReviewStatus|GATE_CODE|status line|report body\" tasks/route/2026-08-31-issue-66/PLAN.md" in /Users/akiratakahashi/Projects/doc-audit-harness
+ succeeded in 0ms:
+   250	            if previous["changeSetSha"] == current["changeSetSha"]:
+   251	                same_change_set += 1
+   252	    return flips, same_change_set
+   253	
+   254	
+   255	def validate_returns(value):
+   256	    if not isinstance(value, list):
+   257	        raise Refused("returns.json must be an array")
+   258	    seen = set()
+   259	    for index, item in enumerate(value):
+   260	        if not isinstance(item, dict):
+   261	            raise Refused(f"returns[{index}] is not an object")
+   262	        attempt = item.get("attempt")
+   263	        assigned = item.get("assignedPath")
+   264	        if (isinstance(attempt, bool) or not isinstance(attempt, int) or not 1 <= attempt <= 3
+   265	                or not isinstance(assigned, str)):
+   266	            raise Refused(f"returns[{index}] has invalid attempt/assignedPath")
+   267	        if (attempt, assigned) in seen:
+   268	            raise Refused("returns contains duplicate (attempt,assignedPath)")
+   269	        seen.add((attempt, assigned))
+   270	        if item.get("returnedPath") is not None and not isinstance(item.get("returnedPath"), str):
+   271	            raise Refused(f"returns[{index}].returnedPath is invalid")
+   272	        if item.get("verdict") is not None and item.get("verdict") not in VALID_VERDICTS:
+   273	            raise Refused(f"returns[{index}].verdict is invalid")
+   274	
+   275	
+   276	def findings_fail(value):
+   277	    if not isinstance(value, dict):
+   278	        raise Refused("phase evidence must be an object")
+   279	    findings = value.get("findings", [])
+   280	    if not isinstance(findings, list):
+   281	        raise Refused("phase findings must be an array")
+   282	    blocking = False
+   283	    for finding in findings:
+   284	        if not isinstance(finding, dict):
+   285	            raise Refused("phase finding is not an object")
+   286	        raw_severity = finding.get("severity")
+   287	        if not isinstance(raw_severity, str) or not raw_severity.strip():
+   288	            raise Refused("phase finding severity is missing")
+   289	        severity = raw_severity.strip().upper()
+   290	        if severity in FAIL_SEVERITIES:
+   291	            blocking = True
+   292	        elif severity not in {"PASS", "WARN", "MEDIUM", "LOW", "INFO"}:
+   293	            raise Refused(f"unknown finding severity: {severity}")
+   294	    if value.get("parsed") is False:
+   295	        exit_code = value.get("exitCode", value.get("returncode", 0))
+   296	        if isinstance(exit_code, int) and exit_code != 0:
+   297	            return True
+   298	        commands = value.get("commands", [])
+   299	        if isinstance(commands, list) and any(isinstance(item, dict) and item.get("exitCode") not in (None, 0)
+   300	                                              for item in commands):
+   301	            return True
+   302	    return blocking
+   303	
+   304	
+   305	PHASE4_ELIGIBILITY = {
+151:  `codeReviewStatus`（封印 config・manifest.phase4Required・検証済み evidence から決定的に導出）を
+186:- 状態行の値は S4 の `codeReviewStatus`（gate 出力）から描画する（会話変数は checkpoint 越しに信用しない）
+
+codex
+v5 の主要な新規矛盾を確認しました。`codeReviewStatus` は gate の返却値ですが、現行契約では人向け報告書を gate 実行前に完成させ、gate 自身がその呼び出し中に公開します。そのため、stdout を受け取ってから状態行を描画する方式では、公開済み報告書に反映できません。gate 用の新しい置換欄が計画に必要です。
+collab: Wait
+collab: Wait
+collab: Wait
+collab: Wait
+collab: Wait
+collab: Wait

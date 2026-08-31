@@ -7,8 +7,7 @@ docaudit ハーネスを一度インストールし、任意のリポジトリ�
 > 🌐 English version: [ADOPTION.md](ADOPTION.md)
 
 > **docaudit は原則 report-only（報告専用）。** 変更内容を、それを説明するドキュメントへマッピング
-> し、検証し、`/security-review` を実行し、`/code-review` はユーザー実行を提案して
-> （監査自身はまだ起動しない。自律起動は #66 で追跡）、単一の
+> し、検証し、設定された `/code-review` と `/security-review` を自律実行して
 > **CONSISTENT / NEEDS FIX / REFUSED** verdict を出す。唯一の文書編集例外は、pre-flight の
 > FAIL に対して利用者が明示的に「修正して監査」を選んだ場合である。`fix-scope.py` が承認済みの
 > 文書パスだけに制限し、非対話実行では編集しない。
@@ -52,7 +51,7 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | 1 | **Baseline + diff** — anchor を読み、それ以降の変更集合（merge-base diff + 未コミット + 未追跡）を `diffGlobs` で絞って算出。anchor が無ければ full モード。 | `compute-baseline.sh` |
 | 2 | **Impact resolution** — 変更ファイル → 影響ドキュメント（明示 `impactMap` ∪ heuristic）、`ssotSources` の再検証対象、`truncated` フラグを解決。 | `resolve-impact.py` |
 | 3 | **Change-impact verification** — 影響ドキュメント 1 件ごとに verifier が *「このドキュメントは変更後のソースとまだ整合しているか？」* を敵対的に検証（PASS/WARN/FAIL）。 | 既定は Workflow fan-out、opt-in で `codex-dispatch.py` backend |
-| 4 | **既存レイヤ + reviews** — プロジェクト固有のドキュメントチェック（または組込み generic fallback）、boundary コマンド、続いて `/security-review` を実行し、監査自身がまだ起動しない `/code-review` は対話実行で一度だけ提案（#66）。 | 委譲コマンド / `generic-layers.py` |
+| 4 | **既存レイヤ + reviews** — プロジェクト固有のドキュメントチェック（または組込み generic fallback）、boundary コマンド、続いて設定された `/code-review low|medium|high` と `/security-review` を自律実行。 | 委譲コマンド / `generic-layers.py` |
 | 5 | **Gate + report + anchor** — 単一 verdict に集約し、run lock を保持したままレポートを書き、（CONSISTENT のときのみ）anchor を更新。 | `write-template.py` + `decide-verdict.py` |
 
 頭に入れておくべき性質:
@@ -76,7 +75,7 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | 監査ルートが **git リポジトリ** であること | エンジンは git で diff を取る | はい（subdir は §10 参照） |
 | [Python 3](https://www.python.org/)（標準ライブラリのみ） | エンジンのスクリプト。`pip install` 不要 | はい |
 | [`git`](https://git-scm.com/) | diff/anchor | はい |
-| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code 組込みの review スキル（Phase 4）。`/security-review` は監査で実行し、`/code-review` はユーザーに提案（監査自身はまだ起動しない。#66） | 任意 — `/security-review` は利用可能なら実行、`/code-review` は自律実行では想定どおり省略し、対話実行では一度だけ提案 |
+| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code 組込みの review スキル（Phase 4）。設定された `/code-review low|medium|high` は監査が起動する | 任意 — `/code-review` の自律実行には Claude Code 2.1.246 以上が必要。旧版は `not-run`（required なら REFUSED） |
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 で repo 全体を索引 + Phase 3 でチャンク読取り（大きい doc で ~90%+ 削減、upstream ベンチ 97–99%） | 任意 — 在れば自動使用（conditional-force）、非搭載で grep |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 の git diff と Phase 4 の `/code-review`・`/security-review` 出力をサンドボックスで処理（要約だけが context に入る） | 任意 — `ctx_*` ツールが在れば自動使用（conditional-force）、無ければ全文読取り |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: doc-impact-verifier がドキュメントの外部 URL 依存の主張を read-only・GET-only の fetch で照合できるようにする（静的 HTML のみ — JS レンダリングの SPA は非対応） | 任意 — `webExtract` キーで有効化し、キーが存在して無効化されておらず tool が導入済みの場合のみ使用。その他では外部 URL の主張は未検証のまま |
@@ -90,9 +89,26 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 
 エンジンは設計上 **MCP・サーバー非依存**。任意項目はどれも、有用な監査を得るのに必須ではない。なお `mdq` は導入済みなら自動でトークン最適化読取りに使われ（conditional-force）、無ければ grep に degrade する。各 audit は **mdq 状態行**を出力する: mdq 未導入なら 💡 導入を促し、導入済みなのに索引が未発火（`empty-index` / `search-broken` / `probe-error`）なら ⚠ 非ブロッキング WARN を出す。
 
-`context-mode` は mdq の競合ではなく**相補物**: **mdq は Markdown の*読み取り*を、context-mode は*大きな機械出力の処理*を安くする。** `ctx_*` ツールが在るとき、audit は Phase 1 の git diff と Phase 4 の `/security-review` の出力を context-mode のサンドボックスで処理し、要約だけを取り出す — 生バイト列は context に入らない。同じく conditional-force（在れば自動使用、導入済みでも `"contextMode": {"enabled": false}` で opt-out）で、無ければ silent に degrade する。context-mode は場所非依存のグローバルプラグインなので、エンジン側に `bin`/`roots` は不要。各 audit は mdq 行の直後に非ブロッキングの **context-mode 状態行**を出力する: 未導入なら 💡、稼働なら ✓、導入済みだが不健全なら ⚠（verdict は変えない）。
+`context-mode` は mdq の競合ではなく**相補物**: **mdq は Markdown の*読み取り*を、context-mode は*大きな機械出力の処理*を安くする。** `ctx_*` ツールが在るとき、audit は Phase 1 の git diff と Phase 4 の `/code-review`・`/security-review` の出力を context-mode のサンドボックスで処理し、要約だけを取り出す — 生バイト列は context に入らない。同じく conditional-force（在れば自動使用、導入済みでも `"contextMode": {"enabled": false}` で opt-out）で、無ければ silent に degrade する。context-mode は場所非依存のグローバルプラグインなので、エンジン側に `bin`/`roots` は不要。各 audit は mdq 行の直後に非ブロッキングの **context-mode 状態行**を出力する: 未導入なら 💡、稼働なら ✓、導入済みだが不健全なら ⚠（verdict は変えない）。
 
-自律実行では監査自身が `/code-review` を起動しないため想定どおり省略する（自律起動は #66 で追跡）。対話実行では一度だけ実行を確認し、完了後に監査を続行できる。
+### code-review の自律実行と opt-out
+
+`reviewCommands.code` が唯一の設定窓口である。契約形は正確に `/code-review low`、
+`/code-review medium`、`/code-review high` のいずれか。同じ `reviewCommands` object に
+`required:true` を加えると、同じターン内で完走を確認できない場合は REFUSED になる。
+`required` は `code` だけに作用し、`security` には作用しない。自律起動には Claude Code 2.1.246
+以上が必要。旧版、起動失敗、完走未確認は `not-run` と警告し、required なら REFUSED。ターンを
+またいだ中断も `not-run` とし、中断前の会話に残る所見は取り込まない。
+
+opt-out は `reviewCommands.code` を外すか、`permissions.deny: ["Skill(code-review *)"]`
+または `skillOverrides` の `user-invocable-only` を使う。これらは `blocked-by-settings` として
+検出される。`permissions.ask` は承認ゲートとして推奨しない。Claude Code 2.1.251 の実測では、
+headless と対話 auto mode の両方でこの Skill に対して素通りした。
+
+P6 設定では Phase 4 が必要な監査ごとに code-review が走るため、定常コストが気になる場合は effort
+を下げるか上記の block を使う。code-review の所見は code 欠陥でも doc audit を NEEDS_FIX にでき、
+重要度が無い／未知の所見も意図的に blocking とする。codexReview との二重レビューは意図した多層化。
+code-review は LLM サンプリングで再現的でないため、所見を `phase4Runs` と flip 計測には入れない。
 
 `ax` は mdq/context-mode の組とは無関係: read-only の Web/API 抽出 CLI で、docaudit での役割は
 **Phase 3 の `doc-impact-verifier` がドキュメントの外部 URL 依存の主張（upstream ドキュメント・
@@ -210,7 +226,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.16.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.17.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -256,11 +272,13 @@ indexing と contextMode は従来どおり既定有効（トークン消費を�
 
 **v0.16.0 の挙動変更:** plugin engine で config を読む全処理が `--expect-config-sha` を受け取り、実際に読んだ 1 回分の bytes を open 時の封印 SHA と照合する。不一致は exit 7 と `sealed-config-mismatch` で停止し、gate が `configAcceptanceRequired` を記録するため、config を元に戻しても次回は `--accept-config` が必要。installed harness の複製は engine stamp が 0.16.0 と完全一致するときだけ直接実行し、旧版・未来版・欠落・不正・modified は plugin engine へ fallback して警告する。実行中 run がない状態で plugin tree 全体を同期して更新し、部分コピーは行わないこと。0.16.0 より古い gate へ downgrade すると、次の history 書込みで `phase4Runs` が失われ得る。
 
+**v0.17.0 の挙動変更:** docaudit は正確な P6 コマンド（`/code-review low|medium|high`）を自律起動し、同じターン内で確認できた所見を verdict に取り込む。公式名前空間のその他の文字列（`ultra`・`xhigh`・`--fix`・追加 token・空白違いを含む）は全 run REFUSED になるため、対応 effort への 1 行修正が必要（`ultra` は監査外の手動実行では引き続き利用可）。旧 non-invocable state は廃止。`reviewCommands.required` を追加し、作用先は `code` のみで `security` には作用しない。P6 設定の project では進行中の v0.16 run を再開せず fresh run を開始すること。P1/P3 は影響なし。
+
 設定された `docAuditCommands` の所見と project 側 harness 定義は、同じ書込み者が定義自体を変更できるため repo 書込み相当の信頼で扱う。sealed-config の保証は plugin engine の判定経路を完全に覆うが、project 定義コマンドの信頼を引き上げるものではない。run 間の last-run・history・anchor marker は別の安全境界ではなく、検知済み異常を既定で止める運用上の仕組みである。状態欠落は fresh install と区別できず、隔離 marker を両方保存できない障害の後に緊急 lock 解除を行う場合は既知の限界として残る。
 
 **v0.15.1 の挙動変更:** symbolGraph probe は `CODEGRAPH_DIR` を尊重し、`<dir>/codegraph.db` の状態から `init` または `sync` を選ぶため、database を失った索引ディレクトリだけが残っても次回 run で自己回復し、symlink または通常ファイル以外の索引ディレクトリ／database は触らず `index-failed` として、従来 `sync` まで進んだ有効な symlink 構成も codegraph が link 先を上書きし得るため本版から意図的に非対応とし、なお `CODEGRAPH_DIR` で改名した索引ディレクトリは `tree-digest.py` の `.codegraph` 固定の既知 root に含まれず、`digestExclude` でも除外できない（既存の制限であり、本版では未対応）。
 
-`/code-review` の記述を、Claude が自律起動できるという上流の現状に合わせて是正したが、監査の挙動は不変で、自律起動は #66 で追跡する。
+`/code-review` の記述は、docaudit が利用する前に上流の自律起動能力へ合わせていた。自律起動はその後 v0.17.0 で実装された。
 
 ---
 
@@ -290,8 +308,8 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、0.15.0、または 0.15.1 テンプレートは、
-`/docaudit:init --harness --refresh` で 0.16.0 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、0.15.0、0.15.1、または 0.16.0 テンプレートは、
+`/docaudit:init --harness --refresh` で 0.17.0 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
@@ -323,7 +341,7 @@ cd ~/code/my-project
 | `ssotSources` | object[] | いいえ | `{name, value?, liveSource, docsThatCite: [path\|path:line,…]}` — ドキュメント横断の値整合 |
 | `docAuditCommands` | object | いいえ | `{format, existence, semantic}` — Phase 4 を委譲する slash コマンド/スキル名。省略 ⇒ generic fallback。 |
 | `boundaryCommand` | string | いいえ | プロジェクト境界 / 禁止パターンチェックの shell コマンド（例 `make check-boundary`） |
-| `reviewCommands` | object | いいえ | `{code, security}` — effort 込みの review コマンド文字列（例 `"/code-review high"`, `"/security-review"`） |
+| `reviewCommands` | object | いいえ | `{code, security, required}` — `code` の契約は正確な `/code-review low|medium|high`。`required:bool=false` は `code` のみに作用。その他の `/code-review` 名前空間は REFUSED、それ以外の文字列は project 固有 legacy |
 | `reportPath` | string | いいえ | レポート出力テンプレート。`<YYYY-MM-DD>` と `[_NN]` 衝突サフィックスをサポート |
 | `maxImpactedDocs` | number | いいえ | 影響ドキュメント数の上限（既定 200）。超過で `truncated` をセット（必ず表面化、暗黙に捨てない） |
 | `heuristics` | object | いいえ | `{minIdentifierLength:int, excludeBasenames:[string,…], saturationWarnRatio:number=0.5, excludeDocPathTokens:bool=false}` — heuristic の recall ノイズを調整。`0` で飽和 WARN を無効化。 |
@@ -479,6 +497,9 @@ Phase-4 severity の写像:
 | `CRITICAL` | `blocking` ブロッキング所見として扱う |
 | 上記以外の値 | `REFUSED`（`unknown finding severity`） |
 
+例外として `source:"code-review"` だけは、実測した組込み Skill の返却に severity が無いため、
+欠落・未知 severity を REFUSED ではなく blocking 所見として扱う。
+
 **正しい anchor の順序**（anchor が *整合した* 状態を記録するように）:
 1. 指摘を修正して **コミット**。
 2. `--full` を再実行。CONSISTENT になればエンジンが現在の SHA で anchor を書く。
@@ -582,6 +603,7 @@ Phase-4 severity の写像:
 | 「stale 予定」指摘が多数 | 歴史的/ロードマップ文書をスキャン | plan/spec/log ディレクトリを stale スキャンから除外。たいてい正当 |
 | サブディレクトリの変更を incremental が拾わない | サブディレクトリが git ルートでない | full-mode 専用にするか親へ畳み込む（§10） |
 | `/code-review` / `/security-review` が「何もしなかった」 | クリーンで同期済みのツリー（保留 diff なし） | 想定どおり — review 対象の変更を残す/コミットする、または無視 |
+| code-review が `blocked-by-settings` | repository の `skillOverrides` または permission deny が model 起動を block | block または `reviewCommands.code` を外す。`permissions.ask` を承認ゲートに使わない |
 | プラグインを更新したのに挙動が変わらない | グローバルインストールはスナップショット | 再 sync（§3c） |
 | audit open が exit 4 / `locked:true` | 別 run が `.claude/state/docaudit-run/lock` を所有 | holder を確認。確実に stale なら `/docaudit:audit --break-lock` の後、新しい監査を開始 |
 | audit open が exit 6 / `config-change-unaccepted` | 前 run が config 変更を検知 | `git diff .claude/doc-audit.json` を確認し、承認後に `/docaudit:audit --accept-config` |
@@ -596,7 +618,7 @@ Phase-4 severity の写像:
 - [ ] `/docaudit:init` 実行（または `.claude/doc-audit.json` を手書き）し **レビュー済み**
 - [ ] `anchorPath`, `diffGlobs`, `impactMap` がある。`docGlobs` を絞った（vendored/build ツリー除外）
 - [ ] `docAuditCommands` を配線（ドキュメントツールがある場合）または省略（generic fallback）
-- [ ] `reviewCommands` + `reportPath` を設定。レポートのディレクトリが存在
+- [ ] `reviewCommands` + `reportPath` を設定。対応 effort、required/opt-out 方針、レポートのディレクトリを確認
 - [ ] config をコミット
 - [ ] `/docaudit:audit --full` 実行。指摘を **文脈で** triage し外科的に修正
 - [ ] verdict = CONSISTENT。anchor を書いて **コミット**
@@ -622,10 +644,12 @@ doc-audit-harness/
 ├── skills/audit/scripts/codex-dispatch.py
 ├── skills/audit/scripts/codex-probe.sh
 ├── skills/audit/scripts/codex-review-plan.py
+├── skills/audit/scripts/code-review-plan.py
 ├── skills/audit/scripts/compute-baseline.sh
 ├── skills/audit/scripts/decide-verdict.py
 ├── skills/audit/scripts/docaudit_cache.py
 ├── skills/audit/scripts/docaudit_paths.py
+├── skills/audit/scripts/docaudit_review.py
 ├── skills/audit/scripts/fix-scope.py
 ├── skills/audit/scripts/generic-layers.py
 ├── skills/audit/scripts/graphify-probe.sh

@@ -12,6 +12,7 @@ import sys
 import tempfile
 
 from docaudit_paths import list_doc_files, matches_glob, validate_repo_path
+from docaudit_review import classify_review_command
 from sealed_config import SealedConfigMismatch, load_sealed_config
 
 
@@ -247,9 +248,12 @@ def main():
         codex_review = config.get("codexReview", {})
         if not isinstance(codex_review, dict):
             codex_review = {}
+        code_review = classify_review_command(config)
         phase4_required = (bool(paths) or bool(impact.get("ssotRecheck"))
                            or args.mode == "full" or preflight_required
-                           or bool(codex_review.get("required") is True))
+                           or bool(codex_review.get("required") is True)
+                           or (code_review["action"] == "run"
+                               and code_review["required"] is True))
         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
         corpus = list_doc_files(repo, doc_globs)
