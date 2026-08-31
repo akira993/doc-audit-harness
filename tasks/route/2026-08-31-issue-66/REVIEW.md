@@ -148,3 +148,14 @@ grep 0・版数一致・release_handoff 無変更）。§6b 充足。R1・R2 差
 - handoff 派生時の注意: PR #69 本文に `Closes #66` があるためマージ時に #66 は **GitHub が自動 close**
   する。v0.16.0 の release-handoff.sh を派生させる際は `gh issue close` ステップを削除するか
   「既 close 許容」にすること（盲目コピー禁止）。
+
+## route-close 追補（handoff 完了、2026-08-31）
+- main = マージコミット `bf27ad175c2d6a6b18a140617c8fc75da82deddb`（PR #69）。boss 再実測:
+  `Ran 739 tests / OK`（326.570s）・CT `call sites 23／exempt 3／getters 13／scripts 22／observers 20`・
+  `対象 22 本を検査`。
+- `release-handoff.sh`（v0.17.0 派生版: #66 の OPEN 事前チェック撤去・close 冪等化）exit 0。
+- tag `docaudit--v0.17.0` = bf27ad1（local／remote 一致を boss 検証）。
+- GitHub Release 公開（non-draft）: https://github.com/akira993/doc-audit-harness/releases/tag/docaudit--v0.17.0
+- #66 は PR の Closes で自動 close 済み（台本は冪等分岐を通過）。**open Issue 0 件**。
+- `~/.claude/skills/docaudit/` 同期済み（plugin.json 0.17.0・code-review-plan.py／docaudit_review.py 存在・
+  SKILL stamp 0.17.0×2 を boss 検証）。
