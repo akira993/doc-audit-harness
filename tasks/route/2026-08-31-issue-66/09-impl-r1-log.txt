@@ -1,0 +1,179 @@
+[0mdirenv: loading ~/Projects/doc-audit-harness/.envrc
+OpenAI Codex v0.149.0
+--------
+workdir: /Users/akiratakahashi/Projects/doc-audit-harness
+model: gpt-5.6-sol
+provider: openai
+approval: never
+sandbox: workspace-write [workdir, /tmp, $TMPDIR] (network access enabled)
+reasoning effort: medium
+reasoning summaries: none
+session id: 01a055bf-3d0b-77a1-9d74-0f1c25e22e6c
+--------
+user
+boss レビュー（差し戻し R1、軽微 1 件）。boss はフルスイート（Ran 739 tests / OK）・CT 実数・grep・版数を追認済みで、実装本体は承認見込み。以下のみ修正せよ。git 操作はしない。
+
+## R1-1 [Minor] CT-2 の「対象 21 本を検査」が実数と乖離
+- 対象: `tests/test_v016_contracts.py:369` 付近の `print("対象 21 本を検査")`。
+- 問題: CONSUMER_REGISTRY は code-review-plan.py を含む 22 本（+decide-verdict/change-set-sha の扱いは従来どおり）を実際に検査しているのに、表示が旧値 21 のまま。PLAN の「対象 N 件は実数」原則（完了条件 3 と同趣旨）に反する。
+- 修正: リテラルをやめ、検査済み集合から導出して出力する（例: `print(f"対象 {len(checked)} 本を検査")`）。従来の文言形式「対象 N 本を検査」は維持。
+- 検証: `python3 -m unittest tests.test_v016_contracts` を再実行し、出力の N が実数（22）であることと OK を verbatim で報告。他のファイルには触れない。
+
+codex
+R1-1だけを修正します。まず該当検査が保持している「実際に検査済みの集合」を確認し、その集合の件数から表示を生成する最小変更を行います。その後、指定された `tests.test_v016_contracts` のみ再実行します。
+exec
+/bin/zsh -lc "nl -ba tests/test_v016_contracts.py | sed -n '330,380p'" in /Users/akiratakahashi/Projects/doc-audit-harness
+ succeeded in 0ms:
+   330	        self.assertEqual(proc.returncode, expected_code, proc.stdout + proc.stderr)
+   331	        self.assertIn(expected_token, proc.stderr)
+   332	        bad_start = list(start_args)
+   333	        bad_start[bad_start.index(good)] = BAD_SHA
+   334	        bad_start[-1] = json.dumps(bad_evidence)
+   335	        proc = run("start-run.py", *bad_start)
+   336	        expected_code, expected_token = mismatch_contract["start-run.py"]
+   337	        self.assertEqual(proc.returncode, expected_code, proc.stdout + proc.stderr)
+   338	        self.assertIn(expected_token, proc.stderr)
+   339	
+   340	        with open(fx.config_path, "a", encoding="utf-8") as handle:
+   341	            handle.write(" ")
+   342	        proc = run("seal-run.py", "--run-dir", fx.run_dir, "--repo-root", fx.repo,
+   343	                   "--evidence", json.dumps(fx.evidence))
+   344	        expected_code, expected_token = mismatch_contract["seal-run.py"]
+   345	        self.assertEqual(proc.returncode, expected_code, proc.stdout + proc.stderr)
+   346	        self.assertIn(expected_token, proc.stderr)
+   347	
+   348	        gate_ok = RunFixture(self)
+   349	        self.assertEqual(gate_ok.open().returncode, 0)
+   350	        self.assertEqual(gate_ok.plan_start_seal().returncode, 0)
+   351	        self.assertEqual(gate_ok.complete().returncode, 0)
+   352	        self.assertEqual(gate_ok.gate().returncode, 0)
+   353	        checked.add("decide-verdict.py")
+   354	        gate_bad = RunFixture(self)
+   355	        self.assertEqual(gate_bad.open().returncode, 0)
+   356	        self.assertEqual(gate_bad.plan_start_seal().returncode, 0)
+   357	        self.assertEqual(gate_bad.complete().returncode, 0)
+   358	        with open(gate_bad.config_path, "a", encoding="utf-8") as handle:
+   359	            handle.write(" ")
+   360	        refused = gate_bad.gate()
+   361	        expected_code, expected_token = mismatch_contract["decide-verdict.py"]
+   362	        self.assertEqual(refused.returncode, expected_code,
+   363	                         refused.stdout + refused.stderr)
+   364	        self.assertEqual(json.loads(refused.stdout)["reason"], "config-changed")
+   365	        self.assertIn(expected_token, refused.stdout)
+   366	
+   367	        expected = {name for name, _mode, _code, _token in CONSUMER_REGISTRY}
+   368	        self.assertEqual(checked, expected)
+   369	        print("対象 21 本を検査")
+   370	
+   371	    def test_ct_2_shell_consumers_accept_large_sealed_config_via_stdin(self):
+   372	        fx = RunFixture(self)
+   373	        fx.config.update({
+   374	            "impactMap": [
+   375	                {"changed": f"src/generated/{index:05d}.py",
+   376	                 "impacts": ["docs/a.md"], "note": "x" * 96}
+   377	                for index in range(2400)
+   378	            ],
+   379	            "indexing": {"enabled": False},
+   380	            "webExtract": {"enabled": False},
+
+codex
+該当箇所では、実際に検査した名前を `checked` に蓄積し、直前でregistryの期待集合と完全一致まで確認しています。この `checked` の件数をそのまま表示に使えば、今後の追加時にも自動追従します。1行だけ置換します。
+apply patch
+patch: completed
+/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_v016_contracts.py
+diff --git a/tests/test_v016_contracts.py b/tests/test_v016_contracts.py
+index 5dbfeee8f52beb89d8a6333e1f47e26e9364d8ec..d0cc50f9b3f4ecad1a22360ccb01955402f55433
+--- a/tests/test_v016_contracts.py
++++ b/tests/test_v016_contracts.py
+@@ -366,7 +366,7 @@
+ 
+         expected = {name for name, _mode, _code, _token in CONSUMER_REGISTRY}
+         self.assertEqual(checked, expected)
+-        print("対象 21 本を検査")
++        print(f"対象 {len(checked)} 本を検査")
+ 
+     def test_ct_2_shell_consumers_accept_large_sealed_config_via_stdin(self):
+         fx = RunFixture(self)
+
+diff --git a/tests/test_v016_contracts.py b/tests/test_v016_contracts.py
+index 5dbfeee8f52beb89d8a6333e1f47e26e9364d8ec..d0cc50f9b3f4ecad1a22360ccb01955402f55433
+--- a/tests/test_v016_contracts.py
++++ b/tests/test_v016_contracts.py
+@@ -366,7 +366,7 @@
+ 
+         expected = {name for name, _mode, _code, _token in CONSUMER_REGISTRY}
+         self.assertEqual(checked, expected)
+-        print("対象 21 本を検査")
++        print(f"対象 {len(checked)} 本を検査")
+ 
+     def test_ct_2_shell_consumers_accept_large_sealed_config_via_stdin(self):
+         fx = RunFixture(self)
+
+exec
+/bin/zsh -lc 'python3 -m unittest tests.test_v016_contracts' in /Users/akiratakahashi/Projects/doc-audit-harness
+ succeeded in 13604ms:
+................
+----------------------------------------------------------------------
+Ran 17 tests in 13.649s
+
+OK
+call sites 23／exempt 3／getters 13／scripts 22／observers 20
+対象 22 本を検査
+
+diff --git a/tests/test_v016_contracts.py b/tests/test_v016_contracts.py
+index 5dbfeee8f52beb89d8a6333e1f47e26e9364d8ec..d0cc50f9b3f4ecad1a22360ccb01955402f55433
+--- a/tests/test_v016_contracts.py
++++ b/tests/test_v016_contracts.py
+@@ -366,7 +366,7 @@
+ 
+         expected = {name for name, _mode, _code, _token in CONSUMER_REGISTRY}
+         self.assertEqual(checked, expected)
+-        print("対象 21 本を検査")
++        print(f"対象 {len(checked)} 本を検査")
+ 
+     def test_ct_2_shell_consumers_accept_large_sealed_config_via_stdin(self):
+         fx = RunFixture(self)
+
+codex
+R1-1を修正し、表示件数が検査済み集合から自動導出されるようになりました。他のファイルは変更していません。
+
+変更箇所: [tests/test_v016_contracts.py:369](/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_v016_contracts.py:369)
+
+検証結果（verbatim）:
+
+```text
+Ran 17 tests in 13.649s
+
+OK
+call sites 23／exempt 3／getters 13／scripts 22／observers 20
+対象 22 本を検査
+```
+diff --git a/tests/test_v016_contracts.py b/tests/test_v016_contracts.py
+index 5dbfeee8f52beb89d8a6333e1f47e26e9364d8ec..d0cc50f9b3f4ecad1a22360ccb01955402f55433
+--- a/tests/test_v016_contracts.py
++++ b/tests/test_v016_contracts.py
+@@ -366,7 +366,7 @@
+ 
+         expected = {name for name, _mode, _code, _token in CONSUMER_REGISTRY}
+         self.assertEqual(checked, expected)
+-        print("対象 21 本を検査")
++        print(f"対象 {len(checked)} 本を検査")
+ 
+     def test_ct_2_shell_consumers_accept_large_sealed_config_via_stdin(self):
+         fx = RunFixture(self)
+
+tokens used
+84,979
+R1-1を修正し、表示件数が検査済み集合から自動導出されるようになりました。他のファイルは変更していません。
+
+変更箇所: [tests/test_v016_contracts.py:369](/Users/akiratakahashi/Projects/doc-audit-harness/tests/test_v016_contracts.py:369)
+
+検証結果（verbatim）:
+
+```text
+Ran 17 tests in 13.649s
+
+OK
+call sites 23／exempt 3／getters 13／scripts 22／observers 20
+対象 22 本を検査
+```
