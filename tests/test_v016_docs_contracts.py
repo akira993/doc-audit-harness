@@ -64,6 +64,42 @@ class TestV016DocumentContracts(unittest.TestCase):
                 for token in tokens:
                     self.assertIn(token, text, f"{path}: {token}")
 
+    def test_v017_code_review_contract_is_documented_per_file(self):
+        required_by_file = {
+            "README.md": ("autonomously runs configured", "Claude Code 2.1.246"),
+            "docs/ADOPTION.md": (
+                "code-review autonomous execution and opt-out", "permissions.ask",
+                "code-review is LLM-sampled", "excluded from `phase4Runs`"),
+            "docs/ADOPTION.ja.md": (
+                "code-review の自律実行と opt-out", "permissions.ask",
+                "LLM サンプリング", "`phase4Runs` と flip 計測には入れない"),
+            "skills/audit/references/config-schema.md": (
+                "## code-review command contract", "/code-review low|medium|high",
+                "required:true", "excluded from `phase4Runs`"),
+            "skills/audit/SKILL.md": (
+                "code-review-plan.py", "skill=code-review", "blocked-by-settings",
+                "{{GATE_CODE_REVIEW_STATUS}}"),
+        }
+        for path, tokens in required_by_file.items():
+            text = read(path)
+            with self.subTest(path=path):
+                for token in tokens:
+                    self.assertIn(token, text)
+
+    def test_old_code_review_meaning_is_absent(self):
+        forbidden = (
+            "not started by the audit", "audit does not start it",
+            "offer `/code-review`", "offers `/code-review`", "not-model-invocable",
+            "監査自身がまだ起動しない", "監査自身はまだ起動しない",
+            "`/code-review` はユーザーに提案",
+        )
+        for path in ("README.md", "docs/ADOPTION.md", "docs/ADOPTION.ja.md",
+                     "skills/audit/SKILL.md"):
+            text = read(path)
+            with self.subTest(path=path):
+                for phrase in forbidden:
+                    self.assertNotIn(phrase, text)
+
 
 if __name__ == "__main__":
     unittest.main()

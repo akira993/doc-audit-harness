@@ -17,7 +17,7 @@ live here; the plugin ships no project knowledge.
 | `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: (path\|path:line)[]}` — a URL `liveSource` (http/https) is not supported: it is never executed or fetched, and the audit emits a warning |
 | `docAuditCommands` | object | no | `{format, existence, semantic}` slash-command/skill names used by active pre-flight and delegated Phase 4 |
 | `boundaryCommand` | string | no | shell command for project-boundary check |
-| `reviewCommands` | object | no | `{code, security}` review command strings (effort embedded, e.g. `/code-review high`) |
+| `reviewCommands` | object | no | `{code, security, required}`; exact P6 `code` values are `/code-review low`, `/code-review medium`, or `/code-review high`; `required:bool=false` affects `code` only; malformed official-namespace values REFUSE every run, other strings remain legacy project commands |
 | `reportPath` | string | no | output report path template (supports `<YYYY-MM-DD>` and `[_NN]`) |
 | `auditReportsInCorpus` | boolean | no | only literal `true` keeps matching audit reports in corpus scans; omitted, `false`, or an invalid type excludes them (generic layers emit a config WARN for an invalid type) |
 | `maxImpactedDocs` | number | no | cap on impacted docs (default 200); overflow sets `truncated` |
@@ -40,6 +40,22 @@ live here; the plugin ships no project knowledge.
 
 `impacts` entries MUST be doc paths only; put commentary in `note`. `changed`
 accepts a single path or a glob.
+
+## code-review command contract
+
+Classification is lexical and ordered. A missing `reviewCommands` or missing `code` is inactive.
+A non-object `reviewCommands`, non-string/empty/Unicode-whitespace-only `code`, or non-boolean
+`required` is invalid. Exact `/code-review low|medium|high` values are autonomously run; the
+effort is passed as the only Skill argument. `/code-review` alone or followed by any Unicode
+whitespace enters the official namespace, so unsupported effort, `ultra`, `xhigh`, `--fix`,
+double/full-width whitespace, and extra tokens are invalid and make the gate REFUSED. All other
+non-empty strings, including `/code-review-custom` and Unicode project commands, keep the legacy
+behavior. `required:true` is valid only with an exact autonomous command; omission means false.
+
+`reviewCommands.security` is unchanged and never inherits `required`. Autonomous code-review
+requires Claude Code 2.1.246 or newer. Confirmed findings are folded with `source:"code-review"`;
+missing or unknown severity is blocking for that source only. Code-review findings affect the
+verdict but are excluded from `phase4Runs` and flip measurement.
 
 ## Harness adoption state
 

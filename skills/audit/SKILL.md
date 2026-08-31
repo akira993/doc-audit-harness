@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Change-driven documentation audit. Use when the user asks to audit docs since the last audit, check documentation consistency after code/config changes, run a full doc consistency sweep, or verify nothing is stale before a release. Diffs since the anchor, maps changed files to impacted docs, runs /security-review; /code-review is offered for the user to run (not started by the audit itself yet), and emits one CONSISTENT/NEEDS FIX verdict. Report-only.
+description: Change-driven documentation audit. Use when the user asks to audit docs since the last audit, check documentation consistency after code/config changes, run a full doc consistency sweep, or verify nothing is stale before a release. Diffs since the anchor, maps changed files to impacted docs, autonomously runs configured /code-review and /security-review layers, and emits one CONSISTENT/NEEDS FIX verdict. Report-only.
 argument-hint: "[--full] [--break-lock] [--accept-config]"
 ---
 
@@ -63,7 +63,7 @@ inside `EVIDENCE`, not separate transport variables:
 | (d) start-run complete | (c) + dispatch, cached, history, historyStatus, manifest |
 | (e) seal complete | (d) + digest and updated manifest |
 | (f) each Phase-3 attempt complete | (e) + returns, attempt |
-| (g) waiting for `/code-review` | same as (f) |
+| (g) interrupted after starting `/code-review` | same as (f); on resume bind `CODE_REVIEW_STATE=not-run` and do not fold code-review findings left in the conversation |
 | (h) Phase-4 evidence complete | (g) + phase4 |
 
 Phase-5 status lines are rendered from probe-record.py --read (its "rebind" map is authoritative except for the webExtract/codexReview resume re-probe rule below; only the Phase-3 refresh-failure detail comes from the conversation and is omitted after a resume); a line marked unknown prints its "state unknown (probe record unavailable)" form; CODEX_REVIEW_STATE is rebound from rebind.codex-review.reviewState; a failed read marks all lines unknown; none of this changes the verdict. After a resume, do not restore operational webExtract/codexReview availability, reason, or binary values from `rebind`. Re-run `ax-probe.sh` and `codex-probe.sh` against the current config before either consumer, bind each seam's operational availability/reason/bin from that same probe stdout, and re-record that same stdout through `probe-record.py` so the existing upsert overwrites those two seam records while preserving every other seam. If a re-probe cannot start, emits non-JSON, or cannot be parsed, do not use the old rebind values: apply the fresh Phase-0 degrade (`AX_AVAILABLE=false` with `AX_REASON=probe-error`, or `CODEX_REVIEW_AVAILABLE=false`) and continue. If any re-probe or its re-record fails, force that seam's Phase-5 display to its `state unknown` form and never display its old record as current; this remains non-blocking, while `codexReview.required:true` is handled fail-closed by the existing planner and verdict checks.
@@ -314,7 +314,7 @@ For `installed`, first require all three generated files:
 write it to config), bind `PREFLIGHT_STATE=broken`, make pre-flight not required, skip harness
 execution, run `generic-layers.py --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"` only as a non-evidence diagnostic,
 and report `/docaudit:init --harness --refresh`. If all three exist, compare their template stamps
-with the installed plugin version. Only a stamp exactly equal to `0.16.0` may run the target repository's copied engine directly, never through a slash command:
+with the installed plugin version. Only a stamp exactly equal to `0.17.0` may run the target repository's copied engine directly, never through a slash command:
 `python3 "$CLAUDE_PROJECT_DIR/scripts/check-docs.py" --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"`.
 For every other stamp (older, future, missing, invalid, or modified), do not run the copy; run `python3 "$SD/scripts/generic-layers.py" --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"` as the evidence-producing pre-flight engine, add a harness WARN with `/docaudit:init --harness --refresh` guidance, and record the plugin engine and fallback reason in the `script-backed` command entry.
 Record this installed run as one `commands[]` entry `{layer:"all", command:"<the exact engine command run>", kind:"script-backed", ran:true, exitCode:<its exit code>, parsed:<true when its JSON parsed>, skippedReason:null}`; do not list the three configured `docAuditCommands` values for `installed`, because those are Phase-4 names rather than pre-flight commands.
@@ -554,6 +554,12 @@ Re-derive `CONFIG_SHA` from `EVIDENCE` as specified above. Bind the Phase-4 valu
 `DOC_AUDIT_COMMANDS_P4_JSON="$(python3 "$SD/scripts/sealed_config.py" --config "$CFG" --expect-sha "$CONFIG_SHA" --get docAuditCommands --default null)"`.
 `BOUNDARY_COMMAND="$(python3 "$SD/scripts/sealed_config.py" --config "$CFG" --expect-sha "$CONFIG_SHA" --get boundaryCommand --default null --raw)"`.
 `REVIEW_COMMANDS_JSON="$(python3 "$SD/scripts/sealed_config.py" --config "$CFG" --expect-sha "$CONFIG_SHA" --get reviewCommands --default '{}')"`.
+Immediately classify the code review through the sealed consumer, before the global Phase-4 branch:
+`CODE_REVIEW_PLAN="$(python3 "$SD/scripts/code-review-plan.py" --config "$CFG" --expect-config-sha "$CONFIG_SHA")"`.
+Parse its `action`, `state`, `effort`, `required`, `command`, and `reason`; this step binds only the
+plan and initial `CODE_REVIEW_STATE`, and never starts a review command. `REVIEW_COMMANDS_JSON`
+is consumed only for `reviewCommands.security`; the legacy code command comes exclusively
+from `CODE_REVIEW_PLAN.command`.
 Global gate: run this phase's delegated checks **iff** `SEALED_PHASE4_REQUIRED` (parsed from
 `SEALED_MANIFEST.phase4Required`) is true. Do not re-derive this decision from impacted/SSOT/mode
 in the orchestrator. Apply the branch as:
@@ -577,25 +583,32 @@ in the orchestrator. Apply the branch as:
    to non-blocking. A final `VERDICT` line, when present, is a consistency check only; missing,
    ambiguous, or contradictory output adds a non-blocking WARN and `parsed:false`.
 2. If `boundaryCommand` set and gate open, run it.
-3. Handle `reviewCommands.code` (e.g. `/code-review high`) on the working diff, then
-   `reviewCommands.security` (e.g. `/security-review`). Normalize any
-   `/security-audit ...` request to `/security-review`. In an interactive session,
-   before the gate and only once, use AskUserQuestion to offer running the configured
-   `/code-review` command. If the user chooses it, end the turn with: “Run
-   `/code-review <configured effort>` and, when complete, enter ‘continue the audit’.” Write
-   the Phase-5 cross-turn state (`RUNID` and complete `EVIDENCE`) before ending.
-   On resume, fold only findings visibly present in the same conversation into
-   the Phase-4 findings collection, normalizing `high`→`HIGH` and `medium`→`MEDIUM`; fold findings only
-   when they are visibly present. If completion of the review is confirmed, bind
-   `CODE_REVIEW_STATE=ran` even when findings are empty. If completion cannot be
-   confirmed, do not invent findings and use `CODE_REVIEW_STATE=not-model-invocable`.
-   In a non-interactive session, do not offer the question and use that expected
-   state directly. If execution reports the specific `disable-model-invocation`
-   block, bind `CODE_REVIEW_STATE=not-model-invocable` without WARN. Any other
-   unavailable or failed `reviewCommands.code` command (including project-specific
-   commands) is handled as before: skip and WARN. Then run `reviewCommands.security`.
-   `/code-review ultra` is non-blocking — never wait on a cloud run; default to the
-   configured effort. When `CM_AVAILABLE` is true and a review exposes its output as
+3. Handle the classified code review on the working diff, then `reviewCommands.security`
+   (e.g. `/security-review`). `action=refuse` starts nothing, binds the returned invalid state,
+   and continues normally to the gate, which alone emits REFUSED. `action=not-active` starts
+   nothing. When `SEALED_PHASE4_REQUIRED` is false, do not start either a P6 or P8 command;
+   bind `CODE_REVIEW_STATE=phase4-not-required` for P6 and preserve the legacy no-op behavior
+   for P8. When the branch is open, `action=legacy` runs the exact returned `command` with the
+   existing project-specific behavior: an unavailable or failed command is skipped with WARN,
+   and its existing finding/state/evidence/fold behavior is unchanged.
+
+   For `action=run` inside the open branch, invoke the Skill tool with `skill=code-review` and
+   `args=<effort>` only, in both interactive and non-interactive sessions. Do not ask the user
+   first. Without ending the turn, wait for either the synchronous tool result or the background
+   agent completion notice. A confirmed completion binds `CODE_REVIEW_STATE=ran`, including an
+   empty result. An error containing `disabled for model invocation in skillOverrides` or
+   `blocked by permission rules` binds `CODE_REVIEW_STATE=blocked-by-settings`; every other
+   missing skill, launch failure, or unconfirmed completion binds `CODE_REVIEW_STATE=not-run`.
+   An audit resumed after the review was started (checkpoint row (g)) also binds
+   `CODE_REVIEW_STATE=not-run` and never folds findings left in the conversation from before the
+   interruption; an audit resumed before any code-review invocation starts the review normally
+   when Phase 4 is reached.
+
+   Fold only findings visible in the confirmed same-turn result, independent of bullet, line,
+   or fenced-JSON layout, with `source:"code-review"`. Preserve a recognized severity; label a
+   missing or unknown severity `UNSPECIFIED`. The gate treats that label as blocking only for
+   `source:"code-review"`. Normalize any `/security-audit ...` request to `/security-review`,
+   then run `reviewCommands.security` exactly as before. When `CM_AVAILABLE` is true and a review exposes its output as
    capturable text/JSON or a file, do not read that raw output into context: reduce it
    to its FAIL/WARN findings with `ctx_execute`/`ctx_batch_execute` in the sandbox and
    fold only the distilled findings into the verdict (non-blocking; degrade to reading
@@ -657,6 +670,10 @@ in the orchestrator. Apply the branch as:
 **Record Phase-4 evidence for the gate.** When `SEALED_PHASE4_REQUIRED` is true, collect every
 delegated-layer and review finding as
 `{"findings":[{"severity":"...","source":"...","title":"...","file":"... for codex-review"}],"codexReview":{"state":"$CODEX_REVIEW_STATE","promptVariant":"$PROMPT_VARIANT_OR_NULL","carryForwardSha":"$CARRY_FORWARD_SHA"}}`.
+For a P6 code-review plan only, also include
+`"codeReview":{"state":"<ran|blocked-by-settings|not-run>"}`. Never include `codeReview` for
+refuse, not-active, or P8 legacy plans. The gate independently checks this eligibility against
+the sealed config.
 Do not include `required` in evidence; the gate reads it from the sealed config. Use each finding's own
 severity verbatim (`FAIL`/`HIGH`/`CRITICAL` = blocking; `WARN`/`MEDIUM`/`LOW`/`INFO` = non-blocking);
 map review high→`HIGH`, medium→`MEDIUM`. Send the object, even with zero findings, to
@@ -717,6 +734,7 @@ verdict or create separate success and REFUSED templates:
 | `{{GATE_SIBLING_SCAN}}` | 1 | sibling scan; `"n/a"` on REFUSED |
 | `{{GATE_ANCHOR_WRITTEN}}` | 1 | whether the anchor was written |
 | `{{GATE_REPORT_DATE}}` | 2 | sealed date for front matter `created` and `updated` |
+| `{{GATE_CODE_REVIEW_STATUS}}` | 1 | code-review status line rendered by the gate |
 
 `{{GATE_WARNINGS}}` includes only warnings known before report publication. For warnings discovered
 during publication (`reportDurabilityUnknown`, `reportWriteError`, `reportStatusUpdateFailed`, or
@@ -811,9 +829,17 @@ all three values come from `rebind`. A null caller home is displayed as `(null)`
 A `⚠ probe-record: <seam> not recorded` warning earlier in the run explains a later unknown line; do not substitute conversation values.
 
 **code-review status line** — include exactly one immediately after the codex-review line:
-- `CODE_REVIEW_STATE=ran` → `✓ code-review: ran (findings folded into phase4)`
-- `CODE_REVIEW_STATE=not-model-invocable` → `💡 code-review: not run — the audit does not start /code-review itself yet (tracked in #66); run it when offered in an interactive audit, or before the audit, if you want this layer included. (expected)`
-- Any other unavailable or failed command → the existing ⚠ WARN status for the unavailable review command.
+`{{GATE_CODE_REVIEW_STATUS}}`. The gate derives and renders its fixed text from sealed config,
+manifest, and validated Phase-4 evidence; conversation state never renders this report line.
+Its fixed mappings are:
+- `ran` → `✓ code-review: ran (findings folded into phase4)`
+- `blocked-by-settings` → `⚠ code-review: blocked by this repo's own settings (skillOverrides or permission deny) while reviewCommands.code is configured — remove the block or unset reviewCommands.code`
+- `not-run` → `⚠ code-review: configured but could not be run or confirmed this session`
+- `phase4-not-required` → `💡 code-review: not run — Phase 4 not required for this run (expected)`
+- not-active → `code-review: n/a (not configured)`
+- P8 legacy → `code-review: project-specific review command (not contract-verified)`
+- invalid configuration → `✗ code-review: invalid configuration (audit refused)`
+- refusal before classification → `code-review: n/a (audit refused before classification)`
 
 **symbol-graph status line** — always include exactly one, immediately after the code-review line; it is **non-blocking** (never changes the verdict), 6-state:
 - `rebind.symbol-graph.state=unknown` → `⚠ symbol-graph: state unknown (probe record unavailable) [non-blocking]`
@@ -885,7 +911,7 @@ present it is REQUIRED for doc reads (whole-repo index + chunked `mdq search`/`g
 used only when mdq is genuinely absent (conditional-force). The engine still runs fully without
 mdq. MCP servers are optional.
 
-After open, never use the Read tool or an ad-hoc direct JSON file read to inspect `CFG`; every plugin-engine config value must come from `sealed_config.py` using the current `CONFIG_SHA`. Project-defined `docAuditCommands` and their repository-side definitions are trusted only at repository-writer level, while sealed-config completely covers the plugin engine's decision path. A copied harness engine is defense-in-depth: only the exact current `0.16.0` stamp is executed; every older, future, missing, invalid, or modified stamp falls back to the plugin engine with a WARN and refresh guidance.
+After open, never use the Read tool or an ad-hoc direct JSON file read to inspect `CFG`; every plugin-engine config value must come from `sealed_config.py` using the current `CONFIG_SHA`. Project-defined `docAuditCommands` and their repository-side definitions are trusted only at repository-writer level, while sealed-config completely covers the plugin engine's decision path. A copied harness engine is defense-in-depth: only the exact current `0.17.0` stamp is executed; every older, future, missing, invalid, or modified stamp falls back to the plugin engine with a WARN and refresh guidance.
 
 Concurrent audits are excluded mechanically by `RUN_BASE/lock`: `open-run.py` uses exclusive
 creation, the gate holds an exclusive `flock` through its decision, state writes, and report

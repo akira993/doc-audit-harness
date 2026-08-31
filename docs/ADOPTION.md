@@ -8,8 +8,7 @@ from real-world use.
 > 🌐 日本語版: [ADOPTION.ja.md](ADOPTION.ja.md)
 
 > **docaudit is report-only by default.** It maps what changed to the docs that describe it,
-> verifies them, runs `/security-review`, offers `/code-review` for the user to run
-> (the audit does not start it on its own yet; autonomous invocation is tracked in #66), and emits one
+> verifies them, autonomously runs configured `/code-review` and `/security-review` layers, and emits one
 > **CONSISTENT / NEEDS FIX / REFUSED** verdict. The sole documentation-edit exception is
 > a pre-flight FAIL that you explicitly choose to fix; `fix-scope.py` then limits edits
 > to approved doc paths and rejects changes elsewhere. Non-interactive runs never edit.
@@ -53,7 +52,7 @@ running five phases on each audit:
 | 1 | **Baseline + diff** — read the anchor, compute the change set since it (merge-base diff + uncommitted + untracked), filtered by `diffGlobs`. No anchor ⇒ full mode. | `compute-baseline.sh` |
 | 2 | **Impact resolution** — map changed files → impacted docs (explicit `impactMap` ∪ heuristic), plus `ssotSources` to re-verify, plus a `truncated` flag. | `resolve-impact.py` |
 | 3 | **Change-impact verification** — one verifier per impacted doc adversarially checks *"does this doc still match the changed source?"* (PASS/WARN/FAIL). | Workflow fan-out by default; opt-in `codex-dispatch.py` backend |
-| 4 | **Existing layers + reviews** — run your project's doc checks (or the built-in generic fallback), the boundary command, then `/security-review`; offer `/code-review` once in interactive runs because the audit does not start it itself yet (#66). | delegated commands / `generic-layers.py` |
+| 4 | **Existing layers + reviews** — run your project's doc checks (or the built-in generic fallback), the boundary command, then autonomously run a configured `/code-review low|medium|high` and `/security-review`. | delegated commands / `generic-layers.py` |
 | 5 | **Gate + report + anchor** — roll up to one verdict, write the report while holding the run lock, and (only if CONSISTENT) update the anchor. | `write-template.py` + `decide-verdict.py` |
 
 Key properties to internalize:
@@ -77,7 +76,7 @@ Key properties to internalize:
 | A **git repository** at the audit root | the engine diffs with git | yes (see §10 for sub-dirs) |
 | [Python 3](https://www.python.org/) (standard library only) | the engine scripts; no `pip install` needed | yes |
 | [`git`](https://git-scm.com/) | diff/anchor | yes |
-| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code built-in review skills (Phase 4); `/security-review` runs in the audit, while `/code-review` is offered to the user (not started by the audit yet; #66) | optional — `/security-review` runs when available; autonomous runs skip `/code-review` as expected and interactive runs offer it once |
+| [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code built-in review skills (Phase 4); configured `/code-review low|medium|high` is started by the audit | optional — autonomous `/code-review` requires Claude Code ≥ 2.1.246; older versions produce `not-run` (or REFUSED when required) |
 | [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 whole-repo index + Phase 3 chunked doc reads (~90%+ savings on large docs; upstream bench 97–99%) | optional — auto-used when present (conditional-force); grep when absent |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 git diff + Phase 4 `/code-review`·`/security-review` output processed in its sandbox (only distilled summaries enter context) | optional — auto-used when its `ctx_*` tools are present (conditional-force); read in full when absent |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: lets doc-impact-verifier corroborate a doc's external-URL-dependent claims via a read-only, GET-only fetch (static HTML only — no JS-rendered SPA support) | optional — key-gated by `webExtract`; used only when the key exists, is not disabled, and the tool is installed; external-URL claims go unverified otherwise |
@@ -98,15 +97,37 @@ Every audit prints an **mdq status line**: a 💡 install nudge when mdq is abse
 
 `context-mode` is mdq's complement, not a competitor: **mdq optimizes Markdown *reads*,
 context-mode optimizes the *processing of large machine output*.** When its `ctx_*` tools are
-present, the audit runs the Phase-1 git diff and the Phase-4 `/security-review`; `/code-review`
-is not started by the audit itself during autonomous runs (tracked in #66). Interactive
-runs ask once whether to run it before continuing. The resulting review output flows
+present, the audit runs the Phase-1 git diff and the Phase-4 `/code-review` and
+`/security-review` output through context-mode. The resulting review output flows
 through context-mode's sandbox and pulls back only distilled summaries — the raw bytes
 never enter context. It is conditional-force the same way (auto-used when available; opt out with
 `"contextMode": {"enabled": false}` even when installed) and degrades silently when absent — the
 engine needs no `bin`/`roots` for it because context-mode is a location-independent global plugin.
 Every audit prints a non-blocking **context-mode status line** immediately after the mdq one:
 💡 when not active, ✓ when active, ⚠ when installed but degraded (it never changes the verdict).
+
+### code-review autonomous execution and opt-out
+
+`reviewCommands.code` is the single control point. The contract form is exactly
+`/code-review low`, `/code-review medium`, or `/code-review high`; add `required:true` in the
+same `reviewCommands` object to make any unconfirmed run REFUSED. `required` affects `code` only,
+never `security`. Claude Code 2.1.246 or newer can start this Skill autonomously. On older versions,
+or when launch/completion cannot be confirmed in the same turn, docaudit records `not-run` and
+warns; a required configuration is REFUSED. A review interrupted across turns is also `not-run`,
+and old conversation findings are not folded.
+
+To opt out, remove `reviewCommands.code`, or block it with
+`permissions.deny: ["Skill(code-review *)"]` or `skillOverrides` set to
+`user-invocable-only`. Those blocks are detected as `blocked-by-settings`. Do not use
+`permissions.ask` as an approval gate: Claude Code 2.1.251 testing showed it was bypassed for this
+Skill in headless and interactive auto mode.
+
+Operationally, a P6 configuration runs code-review for every audit whose Phase 4 is required;
+lower the effort or use a documented block if that steady cost is undesirable. Any code-review
+finding can make the documentation audit NEEDS_FIX, including findings without a recognized
+severity, which are intentionally treated as blocking. Running both code-review and codexReview
+is intentional layered review. Because code-review is LLM-sampled, it is not reproducible and its
+findings are deliberately excluded from `phase4Runs` and flip measurement.
 
 `ax` is unrelated to the mdq/context-mode pair: it's a read-only web/API extraction CLI whose
 **only** role in docaudit is letting Phase 3's `doc-impact-verifier` corroborate a doc's claim
@@ -233,7 +254,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.16.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.17.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -283,11 +304,13 @@ indexing and contextMode keep their enabled-by-default behavior (intentional: th
 
 **v0.16.0 behavior changes:** every plugin-engine config consumer receives `--expect-config-sha` and verifies the exact bytes it reads against the open-time sealed SHA. A mismatch exits 7 with `sealed-config-mismatch`, the gate records `configAcceptanceRequired`, and a later run still requires `--accept-config` even if the file was restored. Installed harness copies run directly only when their engine stamp is exactly 0.16.0; older, future, missing, invalid, or modified stamps fall back to the plugin engine with a warning. Upgrade the entire plugin tree together with no run in flight; partial copies are unsupported. Downgrading to a gate older than 0.16.0 can discard `phase4Runs` on its next history write.
 
+**v0.17.0 behavior changes:** docaudit now autonomously starts exact P6 commands (`/code-review low|medium|high`) and folds confirmed same-turn findings into the verdict. Other strings in the official namespace—including `ultra`, `xhigh`, `--fix`, extra tokens, or whitespace variants—now REFUSE every run; migrate with a one-line change to a supported effort (`ultra` remains available for manual use outside the audit). The former non-invocable state is removed. `reviewCommands.required` is new and applies only to `code`, not `security`. Projects with P6 config must start a fresh run instead of resuming an in-progress v0.16 run; P1/P3 configs are unaffected.
+
 Configured `docAuditCommands` findings and project-side harness definitions have repository-writer trust because the same writer can change those definitions directly. Sealed-config completely covers the plugin engine decision path; it does not claim to make project-defined commands more trustworthy. Across runs, last-run, history, and anchor markers are operational fail-closed aids rather than a separate security boundary: missing state is indistinguishable from a fresh install, and the documented quarantine-marker persistence failure followed by emergency lock breaking remains a known limit.
 
 **v0.15.1 behavior changes:** the symbolGraph probe chooses `init` or `sync` from the state of `<dir>/codegraph.db`, honoring `CODEGRAPH_DIR`, so a leftover index directory without the database self-recovers on the next run; symlinked or non-regular index directories or databases are left untouched and report `index-failed`—valid symlink configurations that previously reached `sync` are intentionally unsupported because codegraph may overwrite the link target—and a renamed index directory selected by `CODEGRAPH_DIR` remains outside `tree-digest.py`'s fixed `.codegraph` known root and cannot be excluded with `digestExclude` (an existing limitation not addressed in this release).
 
-The `/code-review` wording now reflects the upstream capability for Claude to invoke it autonomously; audit behavior is unchanged, and autonomous invocation remains tracked in #66.
+The `/code-review` wording reflected the upstream capability before docaudit used it; autonomous invocation was subsequently implemented in v0.17.0.
 
 ---
 
@@ -319,7 +342,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, or 0.15.1 templates can be updated directly to 0.16.0 with
+Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, 0.15.1, or 0.16.0 templates can be updated directly to 0.17.0 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
@@ -351,7 +374,7 @@ This table is an excerpt of the main keys. See `skills/audit/references/config-s
 | `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: [path\|path:line,…]}` — cross-doc value consistency |
 | `docAuditCommands` | object | no | `{format, existence, semantic}` — slash-command/skill names to delegate Phase 4 to. Omit ⇒ generic fallback. |
 | `boundaryCommand` | string | no | shell command for a project-boundary / forbidden-pattern check (e.g. `make check-boundary`) |
-| `reviewCommands` | object | no | `{code, security}` — review command strings with effort embedded (e.g. `"/code-review high"`, `"/security-review"`) |
+| `reviewCommands` | object | no | `{code, security, required}` — exact `code` contract is `/code-review low|medium|high`; `required:bool=false` applies only to `code`; other `/code-review` namespace forms REFUSE, while other strings remain project-specific legacy commands |
 | `reportPath` | string | no | report output template; supports `<YYYY-MM-DD>` and a `[_NN]` collision suffix |
 | `maxImpactedDocs` | number | no | cap on impacted docs (default 200); overflow sets `truncated` (surfaced, never silent) |
 | `heuristics` | object | no | `{minIdentifierLength:int, excludeBasenames:[string,…], saturationWarnRatio:number=0.5, excludeDocPathTokens:bool=false}` — tune heuristic recall noise; `0` disables the saturation warning. |
@@ -516,6 +539,9 @@ Phase-4 severity mapping:
 | `CRITICAL` | `blocking` contributes a blocking finding |
 | any other value | `REFUSED` with `unknown finding severity` |
 
+Exception: only `source:"code-review"` treats a missing or unknown severity as a blocking
+finding instead of REFUSED, because the built-in Skill's observed result layouts omit severity.
+
 **Correct anchor ordering** (so the anchor records the *consistent* state):
 1. Fix findings and **commit** them.
 2. Re-run `--full`; on CONSISTENT the engine writes the anchor at the now-current SHA.
@@ -629,6 +655,7 @@ point.
 | Many "stale 予定" findings | scanning historical/roadmap docs | exclude plan/spec/log dirs from the stale scan; these are usually legitimate |
 | Incremental misses changes in a sub-dir | sub-dir is not a git root | use full-mode-only or fold into the parent (§10) |
 | `/code-review` / `/security-review` "did nothing" | clean, synced tree (no pending diff) | expected — commit/leave changes to review, or ignore |
+| code-review is `blocked-by-settings` | repository `skillOverrides` or permission deny blocks model invocation | remove the block or remove `reviewCommands.code`; do not rely on `permissions.ask` as an approval gate |
 | Updated the plugin but behavior unchanged | global install is a snapshot | re-sync (§3c) |
 | Audit open exits 4 / reports `locked:true` | another run owns `.claude/state/docaudit-run/lock` | inspect the reported holder; if it is definitely stale, run `/docaudit:audit --break-lock`, then start a new audit |
 | Audit open exits 6 / `config-change-unaccepted` | a prior run detected a config change | inspect `git diff .claude/doc-audit.json`; after approving it, run `/docaudit:audit --accept-config` |
@@ -643,7 +670,7 @@ point.
 - [ ] `/docaudit:init` run (or `.claude/doc-audit.json` written by hand) and **reviewed**
 - [ ] `anchorPath`, `diffGlobs`, `impactMap` present; `docGlobs` scoped (no vendored/build trees)
 - [ ] `docAuditCommands` wired (if the project has doc tools) or omitted (generic fallback)
-- [ ] `reviewCommands` + `reportPath` set; report dir exists
+- [ ] `reviewCommands` + `reportPath` set; supported code effort, required/opt-out policy, and report dir reviewed
 - [ ] config committed
 - [ ] `/docaudit:audit --full` run; findings triaged **in context** and fixed surgically
 - [ ] verdict = CONSISTENT; anchor written and **committed**
@@ -669,10 +696,12 @@ doc-audit-harness/
 ├── skills/audit/scripts/codex-dispatch.py
 ├── skills/audit/scripts/codex-probe.sh
 ├── skills/audit/scripts/codex-review-plan.py
+├── skills/audit/scripts/code-review-plan.py
 ├── skills/audit/scripts/compute-baseline.sh
 ├── skills/audit/scripts/decide-verdict.py
 ├── skills/audit/scripts/docaudit_cache.py
 ├── skills/audit/scripts/docaudit_paths.py
+├── skills/audit/scripts/docaudit_review.py
 ├── skills/audit/scripts/fix-scope.py
 ├── skills/audit/scripts/generic-layers.py
 ├── skills/audit/scripts/graphify-probe.sh

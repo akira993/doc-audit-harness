@@ -16,7 +16,7 @@
   "indexFiles": ["docs/README.md"],
   "maxImpactedDocs": 80,
   "heuristics": { "minIdentifierLength": 6, "excludeBasenames": ["index.md", "config.json"] },
-  "reviewCommands": { "code": "/code-review high", "security": "/security-review" },
+  "reviewCommands": { "code": "/code-review high", "security": "/security-review", "required": false },
   "reportPath": "docs/audit/doc_audit_<YYYY-MM-DD>[_NN].md",
   "ssotSources": [
     { "name": "app_version", "value": "1.0.0", "liveSource": "package.json", "docsThatCite": ["README.md", "docs/install.md"] }
