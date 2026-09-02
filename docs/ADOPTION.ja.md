@@ -76,7 +76,7 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | [Python 3](https://www.python.org/)（標準ライブラリのみ） | エンジンのスクリプト。`pip install` 不要 | はい |
 | [`git`](https://git-scm.com/) | diff/anchor | はい |
 | [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code 組込みの review スキル（Phase 4）。設定された `/code-review low|medium|high` は監査が起動する | 任意 — `/code-review` の自律実行には Claude Code 2.1.246 以上が必要。旧版は `not-run`（required なら REFUSED） |
-| [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 で repo 全体を索引 + Phase 3 でチャンク読取り（大きい doc で ~90%+ 削減、upstream ベンチ 97–99%） | 任意 — 在れば自動使用（conditional-force）、非搭載で grep。現行 mdq は依存物・ビルド成果物のツリー（`node_modules` `dist` `.venv*` …）を常に除外する — 下記 v0.18.0 参照 |
+| [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 で repo ルートから索引 + Phase 3 でチャンク読取り（大きい doc で ~90%+ 削減、upstream ベンチ 97–99%） | 任意 — 在れば自動使用（conditional-force）、非搭載で grep。現行 mdq は依存物・ビルド成果物のツリー（`node_modules` `dist` `.venv*` …）を常に除外する — 下記 v0.18.0 参照 |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 の git diff と Phase 4 の `/code-review`・`/security-review` 出力をサンドボックスで処理（要約だけが context に入る） | 任意 — `ctx_*` ツールが在れば自動使用（conditional-force）、無ければ全文読取り |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: doc-impact-verifier がドキュメントの外部 URL 依存の主張を read-only・GET-only の fetch で照合できるようにする（静的 HTML のみ — JS レンダリングの SPA は非対応） | 任意 — `webExtract` キーで有効化し、キーが存在して無効化されておらず tool が導入済みの場合のみ使用。その他では外部 URL の主張は未検証のまま |
 | [`codex`](https://github.com/openai/codex)（`@openai/codex` CLI） | 任意の Phase-3 文書別 backend と Phase 4 の第4敵対的レビュー。どちらも `codex exec -s read-only` | 任意 — Phase 3 は `phase3Backend:"codex"` の明示指定が必要。Phase 4 review は `codexReview` キーで有効化。**完走した `critical`/`high` review 所見は verdict をブロックし得る**（下記参照） |

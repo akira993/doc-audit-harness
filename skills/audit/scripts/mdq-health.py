@@ -56,7 +56,8 @@ def _probe(out, bin_, db):
     """Fill `out` in place. May raise; main() catches and keeps status=probe-error."""
     # `--db` is an explicit override only (tests / special setups). When omitted, mdq
     # resolves its own default DB relative to the CWD — `.mdq/index-<lang>-<strategy>.sqlite`
-    # (`_resolve_db` is byte-identical in mdq 78edaabc and c559e767; the bare
+    # (`_resolve_db` is the same implementation in mdq 78edaabc and c559e767 — the
+    # installs differ only in line endings; the bare
     # `.mdq/index.sqlite` is a legacy layout reached only via an explicit path) — so the
     # probe inspects the SAME DB the Phase-0 indexer wrote. Run it from the repo root.
     db_args = ["--db", db] if db else []

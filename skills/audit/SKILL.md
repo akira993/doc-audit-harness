@@ -90,7 +90,7 @@ health does not affect Phase-3 dispatch.
 mode — the engine is fully functional without mdq. When `mdqAvailable:true`, the
 repo's Markdown is now indexed under `$CLAUDE_PROJECT_DIR/.mdq/` (from the repo root,
 minus the dependency and build trees mdq always skips) (mdq's own default DB
-resolution — e.g. `index-<lang>-<strategy>.sqlite` on current mdq); indexing runs in a subprocess,
+resolution — `index-<lang>-<strategy>.sqlite`); indexing runs in a subprocess,
 so doc bodies never enter context — only this JSON summary does. This probe always runs first
 inside Phase 0 (both incremental and `--full`), after `open-run.py` has acquired the run lock.
 When invoked directly, an unreadable, absent, omitted, invalid-JSON, or non-object config exits 2

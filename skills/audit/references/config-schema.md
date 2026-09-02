@@ -229,19 +229,26 @@ works while `build/` under `--root .` does not. Older mdq had no such rule, so r
 existing repository with current mdq can shrink the corpus substantially — that is expected,
 not a failure. `.mdq/` itself is on the list, so the index never indexes itself.
 
-**Narrowing `--paths` to a single short document can return 0 hits in the default
-(BM25) mode**, even when the term is present in that document. mdq applies `path_globs`
-before ranking; if the term then occurs in every surviving chunk, BM25's IDF collapses to
-zero and the hit is dropped. This is not a regression — mdq 78edaabc behaves the same way.
-Use `--mode grep` for a single document (the verifier agents already do this for exact
-identifiers), or widen `--paths` to the parent directory glob.
+**The default (BM25) mode can return 0 hits for a term that is present**, and narrowing
+`--paths` makes it far more likely. mdq applies `path_globs` before ranking, so `N` is the
+number of *surviving* chunks, and it then keeps only strictly positive scores. A term's IDF
+is `log(N - df + 0.5) - log(df + 0.5)`, which is exactly zero when the term appears in half
+the surviving chunks — measured at `N` = 2, 4, 6, 8 and 10, so this is **not** a
+small-corpus effect and no chunk count is immune. Appearing in *more* than half gives a
+negative IDF, which is floored to a quarter of the corpus's average IDF; that rescues the
+term only while the average is positive, which it is not on a one- or two-chunk corpus.
+mdq 78edaabc behaves identically, so none of this is a regression. Use `--mode grep` for a
+narrow search (the verifier agents already do this for exact identifiers), or widen
+`--paths` to the parent directory glob.
 
-The same collapse reaches the Phase-0 health probe on a **very small corpus**: an index
-holding a single chunk makes every smoke term occur in every chunk, so the probe's search
-returns nothing and the run reports `search-broken` with a ⚠ status line. Measured on both
-mdq 78edaabc and c559e767, so it is not a regression — but note that the status line's
-"run `mdq index`" advice does not apply here. Re-indexing cannot fix it; the index is
-correct and simply too small to rank. Two or more chunks are enough.
+**On a one- or two-chunk index this stops the audit, not just the status line.** The
+Phase-0 health probe derives its smoke terms from the index itself, so every term it can
+try is dropped and it reports `search-broken`. That leaves `MDQ_AVAILABLE` true and
+`MDQ_HEALTHY` false — the pair the Phase-0 confirmation gate fires on — so an interactive
+run stops before Phase 1 and asks the operator to fix mdq, and a non-interactive run
+continues under an UNCONFIRMED-degrade banner. The status line's "run `mdq index`" advice
+does not apply: the index is correct and simply has too few chunks to rank. Approving the
+degrade is the right answer until the corpus grows.
 
 ## context-mode (Phase 0/2/3/4)
 

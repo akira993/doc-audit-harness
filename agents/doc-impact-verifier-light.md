@@ -24,11 +24,12 @@ audit, and the target doc path (+ its provenance: `mapped`, `heuristic`, `both`,
    default index under `<repoRoot>/.mdq/` by itself, which is the DB Phase 0 wrote.
    Never a full-file Read, and never grep unless told mdq is
    unavailable.
-   **`--paths` narrowed to one short doc can return 0 hits in the default mode.** mdq filters
-   by `path_globs` before ranking, so when the term occurs in every surviving chunk BM25's IDF
-   collapses and the hit is dropped — the term really is in the file. Do not conclude "absent"
-   from an empty result: retry with `--mode grep`, or widen `--paths` to the parent directory
-   glob, before treating the doc as silent on the point.
+   **`--paths` narrowed to one doc can return 0 hits in the default mode.** mdq filters by
+   `path_globs` before ranking, and a term that appears in half of the surviving chunks scores
+   exactly zero and is discarded — the term really is in the file. This is not limited to tiny
+   docs; it is a ratio, not a size. Do not conclude "absent" from an empty result: retry with
+   `--mode grep`, or widen `--paths` to the parent directory glob, before treating the doc as
+   silent on the point.
    One narrow exception applies before using a contradiction as FAIL evidence:
    mdq can lag uncommitted edits, so you MUST verify the relevant lines on disk with a targeted
    Read or grep. The disk is authoritative. Never Read an entire doc, and do not read unrelated

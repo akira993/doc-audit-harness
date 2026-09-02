@@ -179,8 +179,7 @@ class TestMdqHealthStale(unittest.TestCase):
 
     def test_stale_false_on_non_json_and_non_dict_stderr(self):
         # A plain-text notice and a JSON line that decodes to a *string* must both be
-        # skipped. A substring match would fire on the second; a bare `.get()` would
-        # raise on it and (via main's blanket except) corrupt status to probe-error.
+        # skipped. A substring match would fire on the second.
         out = run_health({
             "STUB_STATS": HEALTHY_STATS,
             "STUB_LIST": HEALTHY_LIST,
@@ -191,6 +190,32 @@ class TestMdqHealthStale(unittest.TestCase):
         self.assertFalse(out["stale"])
         self.assertEqual(out["status"], "ok")
         self.assertTrue(out["healthy"])
+
+    def test_non_dict_json_line_does_not_hide_a_later_stale_warning(self):
+        # The poison line comes FIRST and a real warning follows. Without the
+        # isinstance(dict) guard, `"stale".get(...)` raises, the helper's own
+        # except swallows it, and the later genuine warning is never reached —
+        # so this arm, unlike the one above, actually pins the guard.
+        out = run_health({
+            "STUB_STATS": HEALTHY_STATS,
+            "STUB_LIST": HEALTHY_LIST,
+            "STUB_SEARCH": HEALTHY_HIT,
+            "STUB_SEARCH_ERR": '"stale"\n' + STALE_LINE,
+        })
+        self.assertTrue(out["stale"])
+        self.assertEqual(out["status"], "ok")
+
+    def test_a_different_warning_is_not_reported_as_stale(self):
+        # Pins `== "stale"` rather than `"warning" in parsed`: a well-formed JSON
+        # warning of another kind must not be counted.
+        out = run_health({
+            "STUB_STATS": HEALTHY_STATS,
+            "STUB_LIST": HEALTHY_LIST,
+            "STUB_SEARCH": HEALTHY_HIT,
+            "STUB_SEARCH_ERR": '{"warning": "fusion-disabled", "detail": "no provider"}',
+        })
+        self.assertFalse(out["stale"])
+        self.assertEqual(out["status"], "ok")
 
     def test_stale_aggregated_across_search_calls(self):
         # Call 1 warns stale but returns no hit; call 2 is clean and hits, ending the
@@ -209,6 +234,24 @@ class TestMdqHealthStale(unittest.TestCase):
         self.assertTrue(out["stale"])
         self.assertEqual(out["status"], "ok")
         self.assertTrue(out["healthy"])
+
+    def test_stale_aggregated_when_only_the_later_call_warns(self):
+        # Mirror of the arm above: the warning is on call 2. An implementation that
+        # inspected only the FIRST search call would report stale:false here, so the
+        # pair of arms pins aggregation itself rather than one direction of it.
+        counter = os.path.join(tempfile.mkdtemp(), "n.txt")
+        out = run_health({
+            "STUB_STATS": HEALTHY_STATS,
+            "STUB_LIST": HEALTHY_LIST,
+            "STUB_COUNTER": counter,
+            "STUB_SEARCH": "",
+            "STUB_SEARCH_ERR_2": STALE_LINE,
+            "STUB_SEARCH_2": HEALTHY_HIT,
+        })
+        with open(counter) as f:
+            self.assertEqual(f.read().strip(), "2", "expected exactly two search calls")
+        self.assertTrue(out["stale"])
+        self.assertEqual(out["status"], "ok")
 
     def test_stale_key_present_on_empty_index(self):
         # The key must exist on every path, including the ones that never search.

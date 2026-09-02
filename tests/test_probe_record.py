@@ -252,7 +252,15 @@ class TestProbeRecord(unittest.TestCase):
             self.assertIs(self.read()["seams"]["mdqHealth"]["stale"], False)
             # `stale` is deliberately NOT carried into the Phase-5 rebind line
             # (make_rebind copies only known keys) — that is what "observation only" means.
-            self.assertNotIn("stale", json.dumps(self.read()["rebind"]))
+            # make_rebind only populates the mdq entry when BOTH indexing and mdqDegrade
+            # are present, so write them: without this the assertion below would inspect
+            # the all-null unknown_rebind() entry and could never fail.
+            self.write("indexing", probes()["indexing"])
+            self.write("mdqDegrade", probes()["mdqDegrade"])
+            rebind = self.read()["rebind"]["mdq"]
+            self.assertEqual(rebind["state"], "complete")
+            self.assertEqual(rebind["status"], "ok")
+            self.assertNotIn("stale", rebind)
 
     def test_read_absent_corrupt_and_rebind_completeness(self):
         absent = self.read()
