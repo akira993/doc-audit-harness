@@ -236,19 +236,23 @@ is `log(N - df + 0.5) - log(df + 0.5)`, which is exactly zero when the term appe
 the surviving chunks — measured at `N` = 2, 4, 6, 8 and 10, so this is **not** a
 small-corpus effect and no chunk count is immune. Appearing in *more* than half gives a
 negative IDF, which is floored to a quarter of the corpus's average IDF; that rescues the
-term only while the average is positive, which it is not on a one- or two-chunk corpus.
+term only while the average is positive, and on a small or vocabulary-poor corpus it is not.
 mdq 78edaabc behaves identically, so none of this is a regression. Use `--mode grep` for a
 narrow search (the verifier agents already do this for exact identifiers), or widen
 `--paths` to the parent directory glob.
 
-**On a one- or two-chunk index this stops the audit, not just the status line.** The
-Phase-0 health probe derives its smoke terms from the index itself, so every term it can
-try is dropped and it reports `search-broken`. That leaves `MDQ_AVAILABLE` true and
-`MDQ_HEALTHY` false — the pair the Phase-0 confirmation gate fires on — so an interactive
-run stops before Phase 1 and asks the operator to fix mdq, and a non-interactive run
-continues under an UNCONFIRMED-degrade banner. The status line's "run `mdq index`" advice
-does not apply: the index is correct and simply has too few chunks to rank. Approving the
-degrade is the right answer until the corpus grows.
+**On a small index this stops the audit, not just the status line.** The Phase-0 health
+probe derives its smoke terms from the index's own heading paths and file paths, so when
+every term it can try is dropped it reports `search-broken`. That leaves `MDQ_AVAILABLE`
+true and `MDQ_HEALTHY` false — the pair the Phase-0 confirmation gate fires on — so an
+interactive run stops before Phase 1 and asks the operator to fix mdq, while a
+non-interactive run continues under an UNCONFIRMED-degrade banner. **There is no chunk
+count that is reliably safe**, because the threshold depends on how much vocabulary the
+probe's terms share, not on size alone: with distinct headings and filenames it was
+measured at one and two chunks, and with repeated ones (`# Overview` in several files, or
+several `README.md`) it reached three here and five on another corpus. The status line's
+"run `mdq index`" advice does not apply — the index is correct and simply too small to
+rank — so approving the degrade is the right answer until the corpus grows.
 
 ## context-mode (Phase 0/2/3/4)
 
