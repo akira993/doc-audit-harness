@@ -77,7 +77,7 @@ Key properties to internalize:
 | [Python 3](https://www.python.org/) (standard library only) | the engine scripts; no `pip install` needed | yes |
 | [`git`](https://git-scm.com/) | diff/anchor | yes |
 | [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code built-in review skills (Phase 4); configured `/code-review low|medium|high` is started by the audit | optional — autonomous `/code-review` requires Claude Code ≥ 2.1.246; older versions produce `not-run` (or REFUSED when required) |
-| [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 whole-repo index + Phase 3 chunked doc reads (~90%+ savings on large docs; upstream bench 97–99%) | optional — auto-used when present (conditional-force); grep when absent |
+| [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 whole-repo index + Phase 3 chunked doc reads (~90%+ savings on large docs; upstream bench 97–99%) | optional — auto-used when present (conditional-force); grep when absent. Current mdq always skips dependency/build trees (`node_modules`, `dist`, `.venv*`, …) — see v0.18.0 below |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 git diff + Phase 4 `/code-review`·`/security-review` output processed in its sandbox (only distilled summaries enter context) | optional — auto-used when its `ctx_*` tools are present (conditional-force); read in full when absent |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: lets doc-impact-verifier corroborate a doc's external-URL-dependent claims via a read-only, GET-only fetch (static HTML only — no JS-rendered SPA support) | optional — key-gated by `webExtract`; used only when the key exists, is not disabled, and the tool is installed; external-URL claims go unverified otherwise |
 | [`codex`](https://github.com/openai/codex) (`@openai/codex` CLI) | optional Phase-3 per-document backend, and Phase 4's fourth adversarial review, both via `codex exec -s read-only` | optional — Phase 3 requires explicit `phase3Backend:"codex"`; Phase 4 review is key-gated by `codexReview`; **completed `critical`/`high` review findings CAN block the verdict** — see below |
@@ -93,7 +93,9 @@ required to get a useful audit — and `mdq`, when installed, is auto-applied fo
 token-optimized doc reads (conditional-force) but degrades to grep when absent.
 Every audit prints an **mdq status line**: a 💡 install nudge when mdq is absent, or a
 ⚠ non-blocking WARN when mdq is installed but its index isn't firing (`empty-index` /
-`search-broken` / `probe-error`).
+`search-broken` / `probe-error`). Since v0.18.0 the probe also records whether mdq called its
+own index stale; that is recorded for inspection only and never changes the status line or the
+verdict.
 
 `context-mode` is mdq's complement, not a competitor: **mdq optimizes Markdown *reads*,
 context-mode optimizes the *processing of large machine output*.** When its `ctx_*` tools are
@@ -254,7 +256,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.17.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.18.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -306,6 +308,8 @@ indexing and contextMode keep their enabled-by-default behavior (intentional: th
 
 **v0.17.0 behavior changes:** docaudit now autonomously starts exact P6 commands (`/code-review low|medium|high`) and folds confirmed same-turn findings into the verdict. Other strings in the official namespace—including `ultra`, `xhigh`, `--fix`, extra tokens, or whitespace variants—now REFUSE every run; migrate with a one-line change to a supported effort (`ultra` remains available for manual use outside the audit). The former non-invocable state is removed. `reviewCommands.required` is new and applies only to `code`, not `security`. Projects with P6 config must start a fresh run instead of resuming an in-progress v0.16 run; P1/P3 configs are unaffected.
 
+**v0.18.0 behavior changes:** the Phase-0 mdq health probe now also reports `stale` — true when mdq warned that its index is behind the working tree. It is **observation only**: it is recorded in `$RUN_DIR/phase0-probes.json` and never reaches `healthy`, `status`, the Phase-0 confirmation gate, or the Phase-5 status line, because current mdq can report a standing `stale` on repositories it indexes incrementally, and gating on it would stop every audit. The four `status` values are unchanged. Independently of docaudit, current mdq excludes dependency and build trees from indexing unconditionally — `.git`, `.mdq`, `.cq`, `.toolsearch`, `node_modules`, `__pycache__`, `dist`, `build`, `.next`, `.cache`, `venv`, and any directory whose name starts with `.venv` — regardless of `indexing.roots`, so re-indexing an existing repository with it can shrink the corpus substantially (a directory named *as a root* is still indexed). The mdq install nudge no longer points at `./setup/setup-markdown-query.sh`, which no longer exists upstream; it links the repository instead.
+
 Configured `docAuditCommands` findings and project-side harness definitions have repository-writer trust because the same writer can change those definitions directly. Sealed-config completely covers the plugin engine decision path; it does not claim to make project-defined commands more trustworthy. Across runs, last-run, history, and anchor markers are operational fail-closed aids rather than a separate security boundary: missing state is indistinguishable from a fresh install, and the documented quarantine-marker persistence failure followed by emergency lock breaking remains a known limit.
 
 **v0.15.1 behavior changes:** the symbolGraph probe chooses `init` or `sync` from the state of `<dir>/codegraph.db`, honoring `CODEGRAPH_DIR`, so a leftover index directory without the database self-recovers on the next run; symlinked or non-regular index directories or databases are left untouched and report `index-failed`—valid symlink configurations that previously reached `sync` are intentionally unsupported because codegraph may overwrite the link target—and a renamed index directory selected by `CODEGRAPH_DIR` remains outside `tree-digest.py`'s fixed `.codegraph` known root and cannot be excluded with `digestExclude` (an existing limitation not addressed in this release).
@@ -342,7 +346,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, 0.15.1, or 0.16.0 templates can be updated directly to 0.17.0 with
+Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, 0.15.1, 0.16.0, or 0.17.0 templates can be updated directly to 0.18.0 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so

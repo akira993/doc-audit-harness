@@ -4,33 +4,64 @@
 # exits 0 (a probe failure must never break the audit) — main() wraps the probe in a
 # blanket try/except so any unexpected error degrades to status "probe-error".
 #
-#   {"files": F, "chunks": C, "searchSmoke": bool, "healthy": bool, "status": S}
+#   {"files": F, "chunks": C, "searchSmoke": bool, "healthy": bool, "status": S,
+#    "stale": bool}
 #   status in {ok, empty-index, search-broken, probe-error}
 #   healthy == (files > 0 and chunks > 0 and searchSmoke)
+#   stale   == observation only (v0.18.0): mdq warned that the index is behind the
+#              working tree. It NEVER feeds healthy or status — the new indexer can
+#              report a permanent stale, so gating on it would stop every audit.
 import argparse, json, os, re, subprocess
 
 
 def run(bin_, *args):
-    """Run `<bin> <args...>`; return (rc, stdout). rc=127 if the binary can't run."""
+    """Run `<bin> <args...>`; return (rc, stdout, stderr). rc=127 if it can't run."""
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     try:
         p = subprocess.run([bin_, *args], capture_output=True, text=True, env=env)
-        return p.returncode, p.stdout
+        return p.returncode, p.stdout, p.stderr
     except Exception:
-        return 127, ""
+        return 127, "", ""
+
+
+def _has_stale_warning(text):
+    """True if any stderr line is mdq's `{"warning": "stale", ...}` freshness notice.
+
+    mdq mixes JSON warnings (freshness.py) with plain-text ones
+    (`[mdq:search] fusion disabled (...)`) on the same stream, and a JSON line need
+    not decode to a dict — so unparseable and non-dict lines are skipped rather than
+    matched by substring. Never raises: a parse problem must degrade to False, not
+    reach main()'s blanket except, which would flip status to probe-error and turn
+    an observation-only field into something that stops the audit.
+    """
+    try:
+        for line in (text or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except Exception:
+                continue
+            if isinstance(parsed, dict) and parsed.get("warning") == "stale":
+                return True
+    except Exception:
+        return False
+    return False
 
 
 def _probe(out, bin_, db):
     """Fill `out` in place. May raise; main() catches and keeps status=probe-error."""
     # `--db` is an explicit override only (tests / special setups). When omitted, mdq
-    # resolves its own default DB relative to the CWD (new mdq:
-    # .mdq/index-<lang>-<strategy>.sqlite, old mdq: .mdq/index.sqlite), so the probe
-    # inspects the SAME DB the Phase-0 indexer wrote — run it from the repo root.
+    # resolves its own default DB relative to the CWD — `.mdq/index-<lang>-<strategy>.sqlite`
+    # (`_resolve_db` is byte-identical in mdq 78edaabc and c559e767; the bare
+    # `.mdq/index.sqlite` is a legacy layout reached only via an explicit path) — so the
+    # probe inspects the SAME DB the Phase-0 indexer wrote. Run it from the repo root.
     db_args = ["--db", db] if db else []
     # 1) stats — files/chunks. Unparseable or nonzero rc => probe-error (status unchanged).
-    rc, so = run(bin_, "stats", *db_args)
+    rc, so, _ = run(bin_, "stats", *db_args)
     st = None
     if rc == 0 and so.strip():
         try:
@@ -49,7 +80,7 @@ def _probe(out, bin_, db):
         return
 
     # 3) self-derived search smoke: take real terms from the index itself, search one.
-    rc, lo = run(bin_, "list", *db_args, "--limit", "5")
+    rc, lo, _ = run(bin_, "list", *db_args, "--limit", "5")
     cand = []
     for line in lo.splitlines():
         line = line.strip()
@@ -77,13 +108,17 @@ def _probe(out, bin_, db):
         if len(terms) >= 8:
             break
 
-    smoke = False
+    smoke, stale = False, False
     for w in terms:
-        rc, so = run(bin_, "search", *db_args, "--q", w, "--top-k", "1")
+        rc, so, se = run(bin_, "search", *db_args, "--q", w, "--top-k", "1")
+        # Aggregate before the break: the loop stops at the first hit, so a stale
+        # warning from an earlier term would be lost if only the last call were read.
+        stale = stale or _has_stale_warning(se)
         if rc == 0 and any(ln.strip() for ln in so.splitlines()):
             smoke = True
             break
 
+    out["stale"] = stale
     out["searchSmoke"] = smoke
     out["healthy"] = bool(smoke)  # files>0 and chunks>0 already hold here
     out["status"] = "ok" if smoke else "search-broken"
@@ -96,7 +131,8 @@ def main():
                     help="explicit DB override; omit to let mdq resolve its own default DB")
     a = ap.parse_args()
 
-    out = {"files": 0, "chunks": 0, "searchSmoke": False, "healthy": False, "status": "probe-error"}
+    out = {"files": 0, "chunks": 0, "searchSmoke": False, "healthy": False,
+           "status": "probe-error", "stale": False}
     try:
         _probe(out, a.bin, a.db)
     except Exception:

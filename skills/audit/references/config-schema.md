@@ -200,8 +200,9 @@ explicit `codexReview.model`; otherwise light uses `gpt-5.6-luna` and standard u
 
 `indexing` is optional and conditional-force. With `mdq` on `PATH` (or `bin` pointed at a
 vendored binary), Phase 0 builds the index under `.mdq/` (mdq's own default DB resolution —
-e.g. `index-<lang>-<strategy>.sqlite` on current mdq, `index.sqlite` on older) and Phase 3 reads
-impacted docs as token-optimized chunks (`mdq search --paths <doc>` / `mdq get`). By
+`index-<lang>-<strategy>.sqlite`; the bare `index.sqlite` is a legacy layout reached only via an
+explicit path) and Phase 3 reads impacted docs as token-optimized chunks
+(`mdq search --paths <doc>` / `mdq get`). By
 default it indexes the whole repo (`--root .`) — mdq's own default roots (`docs`,
 `knowledge`, …) would miss `README.md`, `skills/**`, and `agents/**`; set `roots` to
 narrow the scope. When `indexing.enabled` is `false`, the audit silently degrades to grep
@@ -214,6 +215,25 @@ tool-independent overall. Add
 `.mdq/` to `.gitignore` (it may also contain a `usage.jsonl` that logs query text verbatim).
 `tool` is reserved for future multi-backend support; the runtime currently reads only
 `bin` (to locate the executable), plus `enabled` and `roots` — `tool` itself is not consumed.
+
+**`bin` does not reach every mdq caller.** It is honored by `mdq-index.sh` and
+`mdq-health.py` only. The Phase-3 `doc-impact-verifier` agents invoke the fixed name `mdq`
+from the repo root, so a `bin` pointing at a vendored binary makes Phase 0 and Phase 3 use
+*different* executables. Keep `bin` at `"mdq"` unless the same name also resolves on `PATH`.
+
+**Current mdq excludes dependency and build trees unconditionally.** Regardless of `roots`,
+its indexer skips any path that lies below `.git`, `.mdq`, `.cq`, `.toolsearch`, `node_modules`, `__pycache__`, `dist`, `build`, `.next`, `.cache`, `venv`, and any directory whose name starts with `.venv`. A directory named
+*as a root* is still indexed (the check starts below the requested root), so `"roots": ["build"]`
+works while `build/` under `--root .` does not. Older mdq had no such rule, so re-indexing an
+existing repository with current mdq can shrink the corpus substantially — that is expected,
+not a failure. `.mdq/` itself is on the list, so the index never indexes itself.
+
+**Narrowing `--paths` to a single short document can return 0 hits in the default
+(BM25) mode**, even when the term is present in that document. mdq applies `path_globs`
+before ranking; if the term then occurs in every surviving chunk, BM25's IDF collapses to
+zero and the hit is dropped. This is not a regression — mdq 78edaabc behaves the same way.
+Use `--mode grep` for a single document (the verifier agents already do this for exact
+identifiers), or widen `--paths` to the parent directory glob.
 
 ## context-mode (Phase 0/2/3/4)
 

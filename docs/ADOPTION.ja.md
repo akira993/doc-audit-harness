@@ -76,7 +76,7 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | [Python 3](https://www.python.org/)（標準ライブラリのみ） | エンジンのスクリプト。`pip install` 不要 | はい |
 | [`git`](https://git-scm.com/) | diff/anchor | はい |
 | [`/code-review`, `/security-review`](https://code.claude.com/docs) | Claude Code 組込みの review スキル（Phase 4）。設定された `/code-review low|medium|high` は監査が起動する | 任意 — `/code-review` の自律実行には Claude Code 2.1.246 以上が必要。旧版は `not-run`（required なら REFUSED） |
-| [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 で repo 全体を索引 + Phase 3 でチャンク読取り（大きい doc で ~90%+ 削減、upstream ベンチ 97–99%） | 任意 — 在れば自動使用（conditional-force）、非搭載で grep |
+| [`markdown-query` (mdq)](https://github.com/dahatake/skills) | Phase 0 で repo 全体を索引 + Phase 3 でチャンク読取り（大きい doc で ~90%+ 削減、upstream ベンチ 97–99%） | 任意 — 在れば自動使用（conditional-force）、非搭載で grep。現行 mdq は依存物・ビルド成果物のツリー（`node_modules` `dist` `.venv*` …）を常に除外する — 下記 v0.18.0 参照 |
 | [`context-mode`](https://github.com/mksglu/context-mode) | Phase 1 の git diff と Phase 4 の `/code-review`・`/security-review` 出力をサンドボックスで処理（要約だけが context に入る） | 任意 — `ctx_*` ツールが在れば自動使用（conditional-force）、無ければ全文読取り |
 | [`ax`](https://ax.yusuke.run/) | Phase 3: doc-impact-verifier がドキュメントの外部 URL 依存の主張を read-only・GET-only の fetch で照合できるようにする（静的 HTML のみ — JS レンダリングの SPA は非対応） | 任意 — `webExtract` キーで有効化し、キーが存在して無効化されておらず tool が導入済みの場合のみ使用。その他では外部 URL の主張は未検証のまま |
 | [`codex`](https://github.com/openai/codex)（`@openai/codex` CLI） | 任意の Phase-3 文書別 backend と Phase 4 の第4敵対的レビュー。どちらも `codex exec -s read-only` | 任意 — Phase 3 は `phase3Backend:"codex"` の明示指定が必要。Phase 4 review は `codexReview` キーで有効化。**完走した `critical`/`high` review 所見は verdict をブロックし得る**（下記参照） |
@@ -87,7 +87,7 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 | プロジェクトのドキュメントツール（`/check-docs`, `doc-lint` …） | 委譲で Phase 4 をリッチ化 | 任意 — 無ければ generic fallback |
 | [`skill-creator`](https://github.com/anthropics/skills) / [`superpowers:writing-skills`](https://github.com/obra/superpowers) | `--scaffold` のレイヤスキルの生成・作り込み | 任意 — `/docaudit:init --scaffold` 使用時のみ |
 
-エンジンは設計上 **MCP・サーバー非依存**。任意項目はどれも、有用な監査を得るのに必須ではない。なお `mdq` は導入済みなら自動でトークン最適化読取りに使われ（conditional-force）、無ければ grep に degrade する。各 audit は **mdq 状態行**を出力する: mdq 未導入なら 💡 導入を促し、導入済みなのに索引が未発火（`empty-index` / `search-broken` / `probe-error`）なら ⚠ 非ブロッキング WARN を出す。
+エンジンは設計上 **MCP・サーバー非依存**。任意項目はどれも、有用な監査を得るのに必須ではない。なお `mdq` は導入済みなら自動でトークン最適化読取りに使われ（conditional-force）、無ければ grep に degrade する。各 audit は **mdq 状態行**を出力する: mdq 未導入なら 💡 導入を促し、導入済みなのに索引が未発火（`empty-index` / `search-broken` / `probe-error`）なら ⚠ 非ブロッキング WARN を出す。v0.18.0 以降は mdq 自身が索引を stale と判断したかどうかも記録するが、これは確認用の記録に留まり、状態行にも verdict にも影響しない。
 
 `context-mode` は mdq の競合ではなく**相補物**: **mdq は Markdown の*読み取り*を、context-mode は*大きな機械出力の処理*を安くする。** `ctx_*` ツールが在るとき、audit は Phase 1 の git diff と Phase 4 の `/code-review`・`/security-review` の出力を context-mode のサンドボックスで処理し、要約だけを取り出す — 生バイト列は context に入らない。同じく conditional-force（在れば自動使用、導入済みでも `"contextMode": {"enabled": false}` で opt-out）で、無ければ silent に degrade する。context-mode は場所非依存のグローバルプラグインなので、エンジン側に `bin`/`roots` は不要。各 audit は mdq 行の直後に非ブロッキングの **context-mode 状態行**を出力する: 未導入なら 💡、稼働なら ✓、導入済みだが不健全なら ⚠（verdict は変えない）。
 
@@ -226,7 +226,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.17.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.18.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -276,6 +276,8 @@ indexing と contextMode は従来どおり既定有効（トークン消費を�
 
 設定された `docAuditCommands` の所見と project 側 harness 定義は、同じ書込み者が定義自体を変更できるため repo 書込み相当の信頼で扱う。sealed-config の保証は plugin engine の判定経路を完全に覆うが、project 定義コマンドの信頼を引き上げるものではない。run 間の last-run・history・anchor marker は別の安全境界ではなく、検知済み異常を既定で止める運用上の仕組みである。状態欠落は fresh install と区別できず、隔離 marker を両方保存できない障害の後に緊急 lock 解除を行う場合は既知の限界として残る。
 
+**v0.18.0 の挙動変更:** Phase-0 の mdq health probe が `stale` も報告するようになった（mdq が「索引が作業ツリーより古い」と警告したとき true）。これは**観測のみ**である: `$RUN_DIR/phase0-probes.json` に記録されるだけで、`healthy`・`status`・Phase-0 の確認ゲート・Phase-5 の状態行のいずれにも到達しない。現行 mdq は増分索引したリポジトリで `stale` を出し続けることがあり、これを判定に使うと全 audit が止まるためである。`status` の 4 値は不変。なお docaudit とは独立に、現行 mdq は依存物・ビルド成果物のツリーを `indexing.roots` に関わらず常に索引対象から外す（`.git` `.mdq` `.cq` `.toolsearch` `node_modules` `__pycache__` `dist` `build` `.next` `.cache` `venv`、および `.venv` で始まる名前のディレクトリすべて）。そのため既存リポジトリを現行 mdq で索引し直すとコーパスが大幅に縮むことがある（root として明示指名したディレクトリは索引される）。mdq 導入を促す行が案内していた `./setup/setup-markdown-query.sh` は upstream に存在しなくなったため、リポジトリの URL のみを示すよう改めた。
+
 **v0.15.1 の挙動変更:** symbolGraph probe は `CODEGRAPH_DIR` を尊重し、`<dir>/codegraph.db` の状態から `init` または `sync` を選ぶため、database を失った索引ディレクトリだけが残っても次回 run で自己回復し、symlink または通常ファイル以外の索引ディレクトリ／database は触らず `index-failed` として、従来 `sync` まで進んだ有効な symlink 構成も codegraph が link 先を上書きし得るため本版から意図的に非対応とし、なお `CODEGRAPH_DIR` で改名した索引ディレクトリは `tree-digest.py` の `.codegraph` 固定の既知 root に含まれず、`digestExclude` でも除外できない（既存の制限であり、本版では未対応）。
 
 `/code-review` の記述は、docaudit が利用する前に上流の自律起動能力へ合わせていた。自律起動はその後 v0.17.0 で実装された。
@@ -308,8 +310,8 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、0.15.0、0.15.1、または 0.16.0 テンプレートは、
-`/docaudit:init --harness --refresh` で 0.17.0 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、0.15.0、0.15.1、0.16.0、または 0.17.0 テンプレートは、
+`/docaudit:init --harness --refresh` で 0.18.0 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、

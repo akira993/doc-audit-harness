@@ -314,7 +314,7 @@ For `installed`, first require all three generated files:
 write it to config), bind `PREFLIGHT_STATE=broken`, make pre-flight not required, skip harness
 execution, run `generic-layers.py --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"` only as a non-evidence diagnostic,
 and report `/docaudit:init --harness --refresh`. If all three exist, compare their template stamps
-with the installed plugin version. Only a stamp exactly equal to `0.17.0` may run the target repository's copied engine directly, never through a slash command:
+with the installed plugin version. Only a stamp exactly equal to `0.18.0` may run the target repository's copied engine directly, never through a slash command:
 `python3 "$CLAUDE_PROJECT_DIR/scripts/check-docs.py" --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"`.
 For every other stamp (older, future, missing, invalid, or modified), do not run the copy; run `python3 "$SD/scripts/generic-layers.py" --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"` as the evidence-producing pre-flight engine, add a harness WARN with `/docaudit:init --harness --refresh` guidance, and record the plugin engine and fallback reason in the `script-backed` command entry.
 Record this installed run as one `commands[]` entry `{layer:"all", command:"<the exact engine command run>", kind:"script-backed", ran:true, exitCode:<its exit code>, parsed:<true when its JSON parsed>, skippedReason:null}`; do not list the three configured `docAuditCommands` values for `installed`, because those are Phase-4 names rather than pre-flight commands.
@@ -790,7 +790,7 @@ this suffix contract inside its lock-held report publication interval.
 **mdq status line** — always include exactly one; it is **non-blocking** (never changes the verdict). If Phase 0's confirmation gate fired, append the matching `MDQ_DEGRADE` suffix below to whichever base line applies (omit the suffix when `MDQ_DEGRADE` is `n/a`):
 - `rebind.mdq.state=unknown` → `⚠ mdq: state unknown (probe record unavailable) [non-blocking]`
 - `MDQ_REASON=invalid-config` → `⚠ mdq: doc-audit.json indexing is invalid — mdq not probed this run; fix the key. [non-blocking]`
-- `MDQ_AVAILABLE` false → `💡 mdq: not active — docs read in full. Install mdq for Phase-0 indexed, chunked reads (~90%+ token savings on large docs): clone github.com/dahatake/skills and run its ./setup/setup-markdown-query.sh`
+- `MDQ_AVAILABLE` false → `💡 mdq: not active — docs read in full. Install mdq for Phase-0 indexed, chunked reads (~90%+ token savings on large docs): see github.com/dahatake/skills`
 - `MDQ_AVAILABLE` true and `MDQ_HEALTHY` true → `✓ mdq: active (indexed <MDQ_CHUNKS> chunks; chunked reads on)`
 - `MDQ_AVAILABLE` true and `MDQ_HEALTHY` false → `⚠ mdq: installed but NOT firing (<MDQ_STATUS>) — not getting token savings; run mdq index --root . (or check indexing.roots). [non-blocking]`
 - `MDQ_DEGRADE` suffix: `user-approved` → append ` [user-approved degrade]`; `non-interactive` → append ` [UNCONFIRMED degrade — non-interactive session]` and lead the line with `⚠` regardless of the base glyph, so it cannot be mistaken for the routine nudge.
@@ -911,7 +911,7 @@ present it is REQUIRED for doc reads (whole-repo index + chunked `mdq search`/`g
 used only when mdq is genuinely absent (conditional-force). The engine still runs fully without
 mdq. MCP servers are optional.
 
-After open, never use the Read tool or an ad-hoc direct JSON file read to inspect `CFG`; every plugin-engine config value must come from `sealed_config.py` using the current `CONFIG_SHA`. Project-defined `docAuditCommands` and their repository-side definitions are trusted only at repository-writer level, while sealed-config completely covers the plugin engine's decision path. A copied harness engine is defense-in-depth: only the exact current `0.17.0` stamp is executed; every older, future, missing, invalid, or modified stamp falls back to the plugin engine with a WARN and refresh guidance.
+After open, never use the Read tool or an ad-hoc direct JSON file read to inspect `CFG`; every plugin-engine config value must come from `sealed_config.py` using the current `CONFIG_SHA`. Project-defined `docAuditCommands` and their repository-side definitions are trusted only at repository-writer level, while sealed-config completely covers the plugin engine's decision path. A copied harness engine is defense-in-depth: only the exact current `0.18.0` stamp is executed; every older, future, missing, invalid, or modified stamp falls back to the plugin engine with a WARN and refresh guidance.
 
 Concurrent audits are excluded mechanically by `RUN_BASE/lock`: `open-run.py` uses exclusive
 creation, the gate holds an exclusive `flock` through its decision, state writes, and report

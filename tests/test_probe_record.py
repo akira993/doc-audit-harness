@@ -15,7 +15,7 @@ CASES = {
     "upsert", "overwrite", "atomic_invalid", "fixed_seams", "bad_indexing",
     "bad_mdq_health", "bad_mdq_degrade", "bad_context", "bad_ax", "bad_codex",
     "bad_codex_state", "bad_symbol", "bad_doc", "bad_semantic", "conflict",
-    "extra_keys", "health_probe_error", "health_ok", "stdin_non_object", "read_absent",
+    "extra_keys", "health_probe_error", "health_ok", "health_stale", "stdin_non_object", "read_absent",
     "read_corrupt", "complete_rebind", "mdq_health_missing_available", "mdq_health_missing_inactive",
     "partial_missing", "display_boundary", "middle_symlink", "run_symlink", "file_symlink",
     "run_dir_mismatch", "invalid_runid", "symlink_repo_root", "codex_state_only",
@@ -96,12 +96,12 @@ class TestProbeRecord(unittest.TestCase):
         return json.loads(proc.stdout)
 
     def test_case_ids_are_fixed_and_complete(self):
-        self.assertEqual(len(CASES), 33)
+        self.assertEqual(len(CASES), 34)
         self.assertEqual(CASES, {
             "upsert", "overwrite", "atomic_invalid", "fixed_seams", "bad_indexing",
             "bad_mdq_health", "bad_mdq_degrade", "bad_context", "bad_ax", "bad_codex",
             "bad_codex_state", "bad_symbol", "bad_doc", "bad_semantic", "conflict",
-            "extra_keys", "health_probe_error", "health_ok", "stdin_non_object", "read_absent",
+            "extra_keys", "health_probe_error", "health_ok", "health_stale", "stdin_non_object", "read_absent",
             "read_corrupt", "complete_rebind", "mdq_health_missing_available", "mdq_health_missing_inactive",
             "partial_missing", "display_boundary", "middle_symlink", "run_symlink", "file_symlink",
             "run_dir_mismatch", "invalid_runid", "symlink_repo_root", "codex_state_only",
@@ -236,6 +236,23 @@ class TestProbeRecord(unittest.TestCase):
         self.assertEqual(self.read()["seams"]["mdqHealth"], healthy)
         proc = self.command("--seam", "mdqHealth", "--stdin", input="[]")
         self.assertEqual(proc.returncode, 2)
+
+    def test_mdq_health_stale_round_trip(self):
+        # v0.18.0 adds an observation-only `stale` key. validate_probe checks the
+        # mdqHealth seam by presence+type and does not reject unknown keys, so the
+        # field must survive the write/read round trip unchanged — and must not
+        # disturb the four status values that the Confirmation gate reads.
+        with self.subTest(case_id="health_stale"):
+            stale = {"files": 3, "chunks": 10, "searchSmoke": True, "healthy": True,
+                     "status": "ok", "stale": True}
+            self.write("mdqHealth", stale)
+            self.assertEqual(self.read()["seams"]["mdqHealth"], stale)
+            fresh = dict(stale, stale=False)
+            self.write("mdqHealth", fresh)
+            self.assertIs(self.read()["seams"]["mdqHealth"]["stale"], False)
+            # `stale` is deliberately NOT carried into the Phase-5 rebind line
+            # (make_rebind copies only known keys) — that is what "observation only" means.
+            self.assertNotIn("stale", json.dumps(self.read()["rebind"]))
 
     def test_read_absent_corrupt_and_rebind_completeness(self):
         absent = self.read()
