@@ -236,6 +236,13 @@ zero and the hit is dropped. This is not a regression — mdq 78edaabc behaves t
 Use `--mode grep` for a single document (the verifier agents already do this for exact
 identifiers), or widen `--paths` to the parent directory glob.
 
+The same collapse reaches the Phase-0 health probe on a **very small corpus**: an index
+holding a single chunk makes every smoke term occur in every chunk, so the probe's search
+returns nothing and the run reports `search-broken` with a ⚠ status line. Measured on both
+mdq 78edaabc and c559e767, so it is not a regression — but note that the status line's
+"run `mdq index`" advice does not apply here. Re-indexing cannot fix it; the index is
+correct and simply too small to rank. Two or more chunks are enough.
+
 ## context-mode (Phase 0/2/3/4)
 
 `contextMode` is optional and conditional-force, complementary to `indexing` (mdq): mdq
