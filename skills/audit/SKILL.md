@@ -87,8 +87,9 @@ When it is `codex`, Phase 3 always uses grep-degrade and never uses mdq, so mdq 
 health does not affect Phase-3 dispatch.
 `mdqAvailable:false` is EXPECTED, not an error (`reason` is `not-installed` /
 `disabled-by-config` / `index-failed` / `invalid-config`): record the reason and proceed in grep-degrade
-mode — the engine is fully functional without mdq. When `mdqAvailable:true`, the whole
-repo's Markdown is now indexed under `$CLAUDE_PROJECT_DIR/.mdq/` (mdq's own default DB
+mode — the engine is fully functional without mdq. When `mdqAvailable:true`, the
+repo's Markdown is now indexed under `$CLAUDE_PROJECT_DIR/.mdq/` (from the repo root,
+minus the dependency and build trees mdq always skips) (mdq's own default DB
 resolution — e.g. `index-<lang>-<strategy>.sqlite` on current mdq); indexing runs in a subprocess,
 so doc bodies never enter context — only this JSON summary does. This probe always runs first
 inside Phase 0 (both incremental and `--full`), after `open-run.py` has acquired the run lock.
@@ -907,7 +908,7 @@ Report-only. Never rewrite ADRs or `docs/logs/`; surface fixes as proposals. The
 is a Phase-0.5 FAIL whose user explicitly chose “修正して監査”, and then only documentation paths
 allowed by `fix-scope.py`, under the run lock and before `seal-run.py`; snapshot/verify is
 mandatory and no other audit phase may edit existing docs. mdq is auto-detected in Phase 0; when
-present it is REQUIRED for doc reads (whole-repo index + chunked `mdq search`/`get`), with grep
+present it is REQUIRED for doc reads (repo-root index + chunked `mdq search`/`get`), with grep
 used only when mdq is genuinely absent (conditional-force). The engine still runs fully without
 mdq. MCP servers are optional.
 

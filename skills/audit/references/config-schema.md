@@ -203,9 +203,10 @@ vendored binary), Phase 0 builds the index under `.mdq/` (mdq's own default DB r
 `index-<lang>-<strategy>.sqlite`; the bare `index.sqlite` is a legacy layout reached only via an
 explicit path) and Phase 3 reads impacted docs as token-optimized chunks
 (`mdq search --paths <doc>` / `mdq get`). By
-default it indexes the whole repo (`--root .`) — mdq's own default roots (`docs`,
-`knowledge`, …) would miss `README.md`, `skills/**`, and `agents/**`; set `roots` to
-narrow the scope. When `indexing.enabled` is `false`, the audit silently degrades to grep
+default it indexes from the repo root (`--root .`) — mdq's own default roots (`docs`,
+`users-guide`, which a repository's own `mdq.toml` may override) would miss `README.md`,
+`skills/**`, and `agents/**`; set `roots` to narrow the scope. A `.` root is not literally
+every file: mdq still applies the unconditional exclusions described below. When `indexing.enabled` is `false`, the audit silently degrades to grep
 (an explicit opt-out). When `mdq` is absent, indexing fails, or the Phase-0 health probe
 finds it installed but unhealthy, the audit's Phase-0 confirmation gate asks the user
 (`AskUserQuestion`) to fix mdq first or explicitly approve continuing in grep-degrade mode

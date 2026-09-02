@@ -4,9 +4,13 @@
 # token-optimized chunks. If mdq is absent / disabled / indexing fails, emit
 # mdqAvailable:false and let the audit degrade to grep. Output: single-line JSON.
 #
-# IMPORTANT: mdq's own `index` default --root is a fixed dir list (docs, knowledge, …)
-# that MISSES README.md, skills/**, agents/**. So we index the WHOLE repo by default
-# (--root .), overridable via config indexing.roots[]. This honors "index all docs".
+# IMPORTANT: mdq's own `index` default --root is a short list (docs, users-guide — and
+# a repo's own mdq.toml can override it) that MISSES README.md, skills/**, agents/**. So
+# we index from the repo ROOT by default (--root .), overridable via config
+# indexing.roots[]. This honors "index all docs". Note it is not literally every file:
+# mdq unconditionally skips dependency and build trees (.git .mdq .cq .toolsearch
+# node_modules __pycache__ dist build .next .cache venv and .venv*) at every depth below
+# the root it was given, so a `.` root indexes the repo minus those.
 #
 # NOTE: no `set -e` — failures are handled explicitly; we ALWAYS emit JSON + exit 0
 # (except on bad CLI args → exit 2, like compute-baseline.sh). If a `mdq watch` is
@@ -72,7 +76,7 @@ if ! command -v -- "$BIN" >/dev/null 2>&1; then
   exit 0
 fi
 
-# indexing.roots[] override; default to the whole repo (--root .).
+# indexing.roots[] override; default to the repo root (--root .).
 ROOTS=()
 if [[ "$CONFIG_SET" == "1" ]]; then
   if ! ROOTS_TEXT="$(printf '%s' "$CONFIG_JSON" | python3 -c '
@@ -98,7 +102,8 @@ else
 fi
 
 # Index the corpus. No --db: mdq resolves its own default DB under .mdq/ at the repo
-# root (new mdq: index-<lang>-<strategy>.sqlite, old mdq: index.sqlite) — the health
+# root (index-<lang>-<strategy>.sqlite; the bare index.sqlite is a legacy layout that
+# no supported mdq resolves to on its own) — the health
 # probe and the Phase-3 verifiers also omit --db, so all three see the same file. Doc
 # bodies never enter the model context (only this JSON summary does). Incremental:
 # mdq skips files whose content hash is unchanged.

@@ -119,9 +119,10 @@ Build a `doc-audit.json` draft from the inventory:
 - `frontMatterFields`: include `suggestedFrontMatterFields` ONLY if the user wants
   front-matter enforced (ask). `boundaryCommand`: `boundaryCommandGuess` if present.
 - `indexing`: if `mdq` was detected in Step 1, propose
-  `"indexing": { "enabled": true, "tool": "mdq", "bin": "mdq" }` so Phase 0 indexes the whole repo and
-  Phase 3 reads chunks (big token savings); tell the user `enabled:false` opts out and
-  `roots` narrows the scope. If `mdq` was NOT detected, OMIT the key — the audit already
+  `"indexing": { "enabled": true, "tool": "mdq", "bin": "mdq" }` so Phase 0 indexes from the
+  repo root (minus the dependency and build trees mdq always skips) and Phase 3 reads
+  chunks (big token savings); tell the user `enabled:false` opts out and `roots` narrows
+  the scope. If `mdq` was NOT detected, OMIT the key — the audit already
   degrades to grep by default.
 - `contextMode`: if the `ctx_*` tools (context-mode) were detected in Step 1, propose
   `"contextMode": { "enabled": true }` so the audit processes large outputs (git diff,
