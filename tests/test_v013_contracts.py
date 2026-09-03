@@ -236,6 +236,8 @@ class TestV013Contracts(unittest.TestCase):
             or path == "README.md")]
         unexpected = []
         for path in shipped_paths:
+            if not os.path.exists(os.path.join(ROOT, path)):
+                continue
             with open(os.path.join(ROOT, path), encoding="utf-8", errors="replace") as handle:
                 for line_number, line in enumerate(handle, 1):
                     if old_version not in line:

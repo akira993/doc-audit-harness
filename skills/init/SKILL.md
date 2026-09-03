@@ -136,7 +136,7 @@ Build a `doc-audit.json` draft from the inventory:
   `not-configured` and never runs the tool.
 - `codexReview`: if `codex` was detected in Step 1, propose
   `"codexReview": { "enabled": true, "bin": "codex" }` so Phase 4 runs a fourth, adversarial
-  Codex review after `/code-review`/`/security-review`; tell the user its `critical`/`high`
+  Codex review after `/security-review`; tell the user its `critical`/`high`
   findings CAN affect the verdict (unlike `webExtract`/`indexing`/`contextMode`, which are
   purely advisory) and `enabled:false` opts out. If `codex` was NOT detected, OMIT the key;
   absent key ⇒ the audit reports `not-configured` and never runs the tool.
@@ -164,7 +164,7 @@ Build a `doc-audit.json` draft from the inventory:
   `semanticSearch` block. If `ccc` was NOT detected at all, OMIT the key. This seam is purely
   advisory (never affects the verdict), like `webExtract`/`docGraph`; absent key ⇒ the audit reports
   `not-configured` and never runs the tool.
-- `reviewCommands`: `{code:"/code-review high", security:"/security-review", required:false}` (`required` applies only to `code`).
+- `reviewCommands`: `{security:"/security-review"}`.
   `reportPath`: `docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md` (or repo-root if no docs/logs).
   `maxImpactedDocs`: 60.
 - `docAuditCommands`: if `existingDocTools` found project doc commands, wire them

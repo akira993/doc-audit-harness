@@ -47,7 +47,6 @@ CONSUMER_REGISTRY = (
     ("start-run.py", "required", 7, "sealed-config-mismatch"),
     ("seal-run.py", "evidence", 7, "sealed-config-mismatch"),
     ("codex-review-plan.py", "required", 7, "sealed-config-mismatch"),
-    ("code-review-plan.py", "required", 7, "sealed-config-mismatch"),
     ("decide-verdict.py", "evidence", 3, "config-changed"),
     ("change-set-sha.py", "required", 7, "sealed-config-mismatch"),
 )
@@ -79,7 +78,7 @@ OBSERVERS = (
     "generic-layers.py", "check-docs.py", "fix-scope.py", "compute-baseline.sh",
     "resolve-impact.py", "impact-supplement.py", "classify-run.py",
     "plan-dispatch.py", "start-run.py", "seal-run.py", "codex-review-plan.py",
-    "sealed_config.py", "code-review-plan.py",
+    "sealed_config.py",
 )
 
 
@@ -134,7 +133,7 @@ class TestV016Contracts(unittest.TestCase):
                           or '--expect-config-sha "$PRECHECK_CONFIG_SHA"' in line)]
         cfg_lines = [line for line in skill.splitlines() if '"$CFG"' in line]
         exemptions = [line for line in cfg_lines if "CONFIG_SHA" not in line]
-        self.assertEqual(len(call_lines), 23)
+        self.assertEqual(len(call_lines), 22)
         self.assertEqual(len(exemptions), 3)
         self.assertIn("ANCHOR_PATH=", exemptions[0])
         self.assertTrue(any("import-audit-scope.py" in line and "--check" in line
@@ -159,9 +158,15 @@ class TestV016Contracts(unittest.TestCase):
             self.assertEqual("--raw" in matches[0], raw)
             assignments = re.findall(rf'(?m)^.*\b{re.escape(variable)}=', skill)
             self.assertEqual(len(assignments), 1, variable)
-        review_assignment = skill.index('REVIEW_COMMANDS_JSON="$(python3')
-        review_consumption = skill.index("REVIEW_COMMANDS_JSON", review_assignment + 1)
-        self.assertIn("security", skill[review_consumption:review_consumption + 200])
+        phase4 = skill.split("## Phase 4 —", 1)[1].split("## Phase 5", 1)[0]
+        review_assignment = phase4.index('REVIEW_COMMANDS_JSON="$(python3')
+        normalized_phase4 = " ".join(phase4.split())
+        security_instruction = (
+            "Normalize any `/security-audit ...` request to `/security-review`, then run "
+            "`reviewCommands.security` exactly as before."
+        )
+        self.assertEqual(normalized_phase4.count(security_instruction), 1)
+        self.assertLess(review_assignment, phase4.index("3. Normalize any", review_assignment))
 
         for name in SHELL_CONSUMERS:
             with open(script(name), encoding="utf-8") as handle:
@@ -180,8 +185,8 @@ class TestV016Contracts(unittest.TestCase):
         self.assertEqual(observed, OBSERVERS)
         counts = (len(call_lines), len(exemptions), len(GETTER_REGISTRY),
                   len(CONSUMER_REGISTRY), len(observed))
-        self.assertEqual(counts, (23, 3, 13, 22, 20))
-        print("call sites 23／exempt 3／getters 13／scripts 22／observers 20")
+        self.assertEqual(counts, (22, 3, 13, 21, 19))
+        print("call sites 22／exempt 3／getters 13／scripts 21／observers 19")
 
     def _base_args(self, fx, impact_path):
         good = file_sha(fx.config_path)
@@ -219,8 +224,6 @@ class TestV016Contracts(unittest.TestCase):
                                      "--baseline-ok", "true", "--history", history,
                                      "--expect-history-sha", "none",
                                      "--worktree-digest", "sha256:" + "1" * 64],
-            "code-review-plan.py": ["--config", fx.config_path,
-                                     "--expect-config-sha", good],
             "change-set-sha.py": ["--repo-root", fx.repo, "--baseline-sha", fx.head,
                                   "--config", fx.config_path, "--expect-config-sha", good],
         }
@@ -237,7 +240,7 @@ class TestV016Contracts(unittest.TestCase):
 
         for name in (*SHELL_CONSUMERS, "generic-layers.py", "fix-scope.py",
                      "resolve-impact.py", "impact-supplement.py", "classify-run.py",
-                     "codex-review-plan.py", "code-review-plan.py", "change-set-sha.py"):
+                     "codex-review-plan.py", "change-set-sha.py"):
             with self.subTest(name=name, seal="match"):
                 proc = run(name, *args_by_name[name], input_text="")
                 self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
@@ -518,7 +521,7 @@ class TestV016Contracts(unittest.TestCase):
             args_by_name = self._base_args(fx, impact_path)
             direct = (*SHELL_CONSUMERS, "generic-layers.py", "fix-scope.py",
                       "resolve-impact.py", "impact-supplement.py",
-                      "codex-review-plan.py", "code-review-plan.py", "change-set-sha.py")
+                      "codex-review-plan.py", "change-set-sha.py")
             measured = set()
             for name in direct:
                 with self.subTest(name=name, kind="direct"):

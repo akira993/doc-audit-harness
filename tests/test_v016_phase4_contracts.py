@@ -270,6 +270,17 @@ class TestV016Phase4Contracts(unittest.TestCase):
             {"file": "docs/a.md", "severity": "HIGH"},
         ])
 
+    def test_phase4_runs_keep_only_codex_review_findings(self):
+        fx = RunFixture(self, config_extra={"codexReview": {"required": True}})
+        self._prepare_full(fx)
+        self._complete_and_gate(fx, [
+            {"source": "codex-review", "file": "docs/a.md", "severity": "HIGH"},
+            {"source": "security-review", "file": "docs/b.md", "severity": "HIGH"},
+        ])
+        with open(fx.history, encoding="utf-8") as handle:
+            findings = json.load(handle)["phase4Runs"][-1]["findings"]
+        self.assertEqual(findings, [{"file": "docs/a.md", "severity": "HIGH"}])
+
     def test_ct_5_flip_requires_matching_contract_and_config(self):
         module = load_decide_verdict()
         base = phase4_record(

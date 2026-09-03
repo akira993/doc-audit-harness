@@ -64,21 +64,30 @@ class TestV016DocumentContracts(unittest.TestCase):
                 for token in tokens:
                     self.assertIn(token, text, f"{path}: {token}")
 
-    def test_v017_code_review_contract_is_documented_per_file(self):
+    def test_v018_code_review_migration_is_documented_per_file(self):
         required_by_file = {
-            "README.md": ("autonomously runs configured", "Claude Code 2.1.246"),
             "docs/ADOPTION.md": (
-                "code-review autonomous execution and opt-out", "permissions.ask",
-                "code-review is LLM-sampled", "excluded from `phase4Runs`"),
+                "reviewCommands.code is no longer supported (removed in docaudit v0.18.0)",
+                "keep reviewCommands.security", "Phase 4 security review,",
+                "`reviewCommands.security` + `reportPath` set",
+                "Report warnings use those codes",
+                "leaving either key in an object no longer REFUSES a run",
+                "Project-specific legacy command strings are no longer executed",
+                "a non-object `reviewCommands` (`null`, string, array, or number) remains REFUSED"),
             "docs/ADOPTION.ja.md": (
-                "code-review の自律実行と opt-out", "permissions.ask",
-                "LLM サンプリング", "`phase4Runs` と flip 計測には入れない"),
+                "reviewCommands.code は docaudit v0.18.0 で廃止され、無視されました。",
+                "reviewCommands.security はそのまま残します。",
+                "Phase 4 の security review、",
+                "`reviewCommands.security` + `reportPath` を設定",
+                "レポート内の warning はこの code を使う",
+                "どちらかのキーが残っていても run は REFUSED にならず",
+                "project 固有の legacy command 文字列も実行されなくなる",
+                "非オブジェクトの `reviewCommands`（`null`・文字列・配列・数値）は従来どおり REFUSED"),
             "skills/audit/references/config-schema.md": (
-                "## code-review command contract", "/code-review low|medium|high",
-                "required:true", "excluded from `phase4Runs`"),
+                "## reviewCommands", "reviewCommandsCodeRemoved"),
             "skills/audit/SKILL.md": (
-                "code-review-plan.py", "skill=code-review", "blocked-by-settings",
-                "{{GATE_CODE_REVIEW_STATUS}}"),
+                "REVIEW_COMMANDS_JSON", "reviewCommands.security",
+                "gate stdout keeps the fixed code only"),
         }
         for path, tokens in required_by_file.items():
             text = read(path)

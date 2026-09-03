@@ -431,24 +431,28 @@ class TestCodexRequiredPhase4(unittest.TestCase):
                     self.assertIs(manifest["phase4Required"], expected)
 
 
-class TestCodeReviewRequiredPhase4(unittest.TestCase):
-    def test_p6_required_forces_phase4_with_empty_incremental_impact(self):
-        fx = RunFixture(self, docs=(), config_extra={
-            "reviewCommands": {"code": "/code-review high", "required": True}})
+class TestRemovedReviewCommandsPhase4(unittest.TestCase):
+    def test_removed_code_and_required_do_not_force_phase4_but_codex_required_does(self):
+        legacy = {
+            "reviewCommands": {
+                "code": "/code-review high", "required": True,
+                "security": "/security-review",
+            },
+        }
+        fx = RunFixture(self, docs=(), config_extra=legacy)
         self.assertEqual(fx.open().returncode, 0)
-        proc = fx.plan_start_seal(impacted=[])
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
-            self.assertTrue(json.load(handle)["phase4Required"])
-
-    def test_p6_optional_does_not_force_phase4_with_empty_incremental_impact(self):
-        fx = RunFixture(self, docs=(), config_extra={
-            "reviewCommands": {"code": "/code-review low", "required": False}})
-        self.assertEqual(fx.open().returncode, 0)
-        proc = fx.plan_start_seal(impacted=[])
+        proc = fx.plan_start_seal(impacted=[], mode="incremental")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
             self.assertFalse(json.load(handle)["phase4Required"])
+
+        strict = dict(legacy, codexReview={"required": True})
+        fx = RunFixture(self, docs=(), config_extra=strict)
+        self.assertEqual(fx.open().returncode, 0)
+        proc = fx.plan_start_seal(impacted=[], mode="incremental")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
+            self.assertTrue(json.load(handle)["phase4Required"])
 
 
 class TestEndToEnd(unittest.TestCase):
