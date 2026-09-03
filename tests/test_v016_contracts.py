@@ -838,7 +838,7 @@ class TestV016Contracts(unittest.TestCase):
     def test_ct_4b_harness_compatibility_contract(self):
         with open(SKILL, encoding="utf-8") as handle:
             skill = handle.read()
-        self.assertIn("Only a stamp exactly equal to `0.18.0`", skill)
+        self.assertIn("Only a stamp exactly equal to `0.19.0`", skill)
         self.assertIn("older, future, missing, invalid, or modified", skill)
         self.assertIn("do not run the copy", skill)
         self.assertIn("--expect-config-sha \"$CONFIG_SHA\"", skill)

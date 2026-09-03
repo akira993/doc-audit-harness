@@ -177,7 +177,7 @@ Only `decide-verdict.py` writes `.claude/state/docaudit-history.json`; absent hi
 start, corrupt history disables cache and is quarantined by the gate, and full mode disables
 cache.
 
-The v0.16.0 history document is `{"entries":[...],"phase4Runs":[...]}`. The shared parser always returns `(entries, phase4Runs, warnings)`: old top-level entry arrays and objects without `phase4Runs` remain valid, invalid `entries` make the document corrupt, and an invalid `phase4Runs` degrades only that array to empty with a warning. A Phase-4 record contains `runid`, `ts`, `worktreeDigest`, `contractVersion`, `configSha`, `carryForwardSha`, `unresolvedFileCount`, `truncated`, and canonical `{file,severity}` findings. It stores at most 500 findings, keeps the newest five records plus at most one latest different-worktree carry-forward source, and reports `phase4FlipsUnchangedContent` by comparing blocking paths only when worktreeDigest, contractVersion, configSha, and carryForwardSha all match. Carry-forward uses at most 50 currently valid non-symlink repository files and includes only `file` plus `severity`; it never changes the verdict by itself.
+The v0.16.0 history document is `{"entries":[...],"phase4Runs":[...]}`. The shared parser always returns `(entries, phase4Runs, warnings)`: old top-level entry arrays and objects without `phase4Runs` remain valid, invalid `entries` make the document corrupt, and an invalid `phase4Runs` degrades only that array to empty with a warning. A Phase-4 record contains `runid`, `ts`, `worktreeDigest`, `contractVersion`, `configSha`, `carryForwardSha`, `unresolvedFileCount`, `truncated`, and canonical `{file,severity}` findings. It stores at most 500 findings, keeps the newest five records plus at most one latest different-worktree carry-forward source, and reports `phase4FlipsUnchangedContent` by comparing paths reported as `CRITICAL`/`HIGH` only when worktreeDigest, contractVersion, configSha, and carryForwardSha all match. Carry-forward uses at most 50 currently valid non-symlink repository files and includes only `file` plus `severity`; it never changes the verdict by itself.
 
 `classify-run.py` deterministically selects `light` or `standard`. Full mode, disabled light
 routing, threshold overflow, a non-CONSISTENT previous run, or a changed path containing a
@@ -314,7 +314,16 @@ internal verdict. With `required:true`, any state other than `completed`, missin
 `enabled:false` makes the gate REFUSED. A non-boolean `required` makes the gate REFUSED regardless
 of its value. Enabling `required` after the
 first baseline is established is recommended. A completed run's `critical`/`high` findings fold
-into `phase4.json` as blocking; `medium`/`low` remain non-blocking.
+into `phase4.json`; each becomes blocking only when its claim record is effectively `confirmed`.
+`medium`/`low` remain non-blocking.
+
+Claim adjudication records live at `${RUN_DIR}/claims/<findingId>.json`. The identifier is the
+SHA-256 of canonical JSON containing the persisted finding's verbatim `file`, normalized
+`severity`, and NFC-trimmed `title`. Records require `runid`, `findingId`, `state`, and string
+`rationale`. States are `confirmed`, `refuted`, `unverified`, and `not-adjudicable`;
+`confirmed`/`refuted` require a resolvable `evidenceFile` and existing `evidenceLine`, while only
+`not-adjudicable` has a `reason`, exactly `path-unresolved`. Missing or invalid records become
+non-blocking `unverified` with a warning. Adjudication failures never make a run REFUSED.
 
 ## codegraph (symbolGraph, Phase 0/3)
 

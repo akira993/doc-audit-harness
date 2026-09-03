@@ -315,7 +315,7 @@ For `installed`, first require all three generated files:
 write it to config), bind `PREFLIGHT_STATE=broken`, make pre-flight not required, skip harness
 execution, run `generic-layers.py --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"` only as a non-evidence diagnostic,
 and report `/docaudit:init --harness --refresh`. If all three exist, compare their template stamps
-with the installed plugin version. Only a stamp exactly equal to `0.18.0` may run the target repository's copied engine directly, never through a slash command:
+with the installed plugin version. Only a stamp exactly equal to `0.19.0` may run the target repository's copied engine directly, never through a slash command:
 `python3 "$CLAUDE_PROJECT_DIR/scripts/check-docs.py" --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"`.
 For every other stamp (older, future, missing, invalid, or modified), do not run the copy; run `python3 "$SD/scripts/generic-layers.py" --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"` as the evidence-producing pre-flight engine, add a harness WARN with `/docaudit:init --harness --refresh` guidance, and record the plugin engine and fallback reason in the `script-backed` command entry.
 Record this installed run as one `commands[]` entry `{layer:"all", command:"<the exact engine command run>", kind:"script-backed", ran:true, exitCode:<its exit code>, parsed:<true when its JSON parsed>, skippedReason:null}`; do not list the three configured `docAuditCommands` values for `installed`, because those are Phase-4 names rather than pre-flight commands.
@@ -629,8 +629,9 @@ in the orchestrator. Apply the branch as:
    `-m gpt-5.6-terra` and the same medium effort; a
    standard default failure is not retried. If the final allowed attempt fails, bind
    `CODEX_REVIEW_STATE=execution-failed` and fold no findings — never a FAIL basis by itself;
-   Otherwise parse `findings[]` and map `critical`→`CRITICAL`, `high`→`HIGH`
-   (blocking), `medium`→`MEDIUM`, `low`→`LOW` (non-blocking), each with
+   Otherwise parse `findings[]` and map `critical`→`CRITICAL`, `high`→`HIGH`,
+   `medium`→`MEDIUM`, `low`→`LOW`; `CRITICAL`/`HIGH` become blocking only after the
+   claim-adjudication step below confirms them, while `MEDIUM`/`LOW` remain non-blocking. Each has
    `source:"codex-review"`, `file:"<finding.file>"`, and `title` formatted as `"<finding.title> (<finding.file>)"`;
    bind `CODEX_REVIEW_STATE=completed` and fold these into the Phase-4 findings collection
    exactly like `/security-review` findings.
@@ -647,6 +648,23 @@ map review high→`HIGH`, medium→`MEDIUM`. Send the object, even with zero fin
 and replace `EVIDENCE` with stdout. Immediately after the successful Phase-4 evidence write and
 `EVIDENCE` replacement, record the review state:
 `printf '{"state":"%s"}' "$CODEX_REVIEW_STATE" | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam codexReviewState --stdin >/dev/null || echo "⚠ probe-record: codexReviewState not recorded [non-blocking]"`.
+Then adjudicate only persisted `source:"codex-review"` findings whose
+`severity.strip().upper()` is `CRITICAL` or `HIGH`. First count those findings directly from the
+just-written `phase4.json`; when the count is zero, do not invoke `plan-claims.py`, Workflow, or
+inspect any `claims/` path. Otherwise run
+`CLAIMS_JSON="$(python3 "$SD/scripts/plan-claims.py" --run-dir "$RUN_DIR" --runid "$RUNID" --repo-root "$CLAUDE_PROJECT_DIR" --phase4-json "$RUN_DIR/phase4.json")"`.
+The planner assigns deterministic finding IDs, records unresolved paths as non-blocking
+`not-adjudicable`, and returns only claims without an already-valid record. If the returned array
+is non-empty, invoke Workflow once with
+`scriptPath:"$SD/references/claim-adjudication-workflow.js"` and
+`args:{repoRoot:"$CLAUDE_PROJECT_DIR",claims:<parsed CLAIMS_JSON>,runId:"$RUNID",runDir:"$RUN_DIR",scriptsDir:"$SD/scripts"}`.
+Run the planner again and retry Workflow at most twice more while claims remain (three total
+attempts). Missing, damaged, or unresolved adjudication is non-blocking and is surfaced by the
+gate as `codexClaimsUnadjudicated`; never synthesize a record and never turn an adjudication
+failure into REFUSED. On every resume from checkpoint (h), run this same planner sequence; an
+empty result means checkpoint (i) is already complete and existing records must not be
+overwritten. If a report template already exists after this resumed adjudication, regenerate it
+with `write-template.py --replace`; otherwise use the normal template creation step.
 The gate REFUSES if required evidence is absent. When `SEALED_PHASE4_REQUIRED` is false, do not
 write the file and retain the lifecycle's `phase4:"none"` sentinel unchanged; in that branch record
 `printf '{"state":"phase4-not-required"}' | python3 "$SD/scripts/probe-record.py" --repo-root "$CLAUDE_PROJECT_DIR" --runid "$RUNID" --evidence "$EVIDENCE" --seam codexReviewState --stdin >/dev/null || echo "⚠ probe-record: codexReviewState not recorded [non-blocking]"`.
@@ -698,6 +716,7 @@ verdict or create separate success and REFUSED templates:
 | `{{GATE_HISTORY_STATUS}}` | 1 | history status; `"n/a"` on REFUSED |
 | `{{GATE_WARNINGS}}` | 1 | report warning entries (fixed codes, except the retired-config warning described below) |
 | `{{GATE_SIBLING_SCAN}}` | 1 | sibling scan; `"n/a"` on REFUSED |
+| `{{GATE_CODEX_CLAIMS}}` | 1 when adjudication targets exist; otherwise 0 or 1 | verified claim payload; `"n/a"` on REFUSED or when no targets exist |
 | `{{GATE_ANCHOR_WRITTEN}}` | 1 | whether the anchor was written |
 | `{{GATE_REPORT_DATE}}` | 2 | sealed date for front matter `created` and `updated` |
 
@@ -725,7 +744,7 @@ and publishes the report while holding the lock, then releases the lock. Parse s
 `{{GATE_VERDICT}}` as `CONSISTENT (codex-review did not run: <state>)` while keeping stdout
 `verdict` equal to `CONSISTENT`;
 include `counts.verdictFlipsUnchangedContent` and
-`counts.verdictFlipsUnchangedContentSameChangeSet` and `counts.phase4FlipsUnchangedContent` in the existing report counts line. The Phase-4 counter compares only records with the same worktreeDigest, contractVersion, configSha, and carryForwardSha and is a warning, never a verdict input;
+`counts.verdictFlipsUnchangedContentSameChangeSet` and `counts.phase4FlipsUnchangedContent` in the existing report counts line. The Phase-4 counter compares CRITICAL/HIGH reporting paths only for records with the same worktreeDigest, contractVersion, configSha, and carryForwardSha and is a warning, never a verdict input;
 never replace any of them with an orchestrator judgment. Report stdout `reportPath`, `warnings`,
 and `reportStatus` to the user. `reportPath` exists only after successful publication, and
 `reportStatus` is omitted when a pre-lock or non-owned REFUSED path wrote no `last_run` state.
@@ -866,7 +885,7 @@ present it is REQUIRED for doc reads (repo-root index + chunked `mdq search`/`ge
 used only when mdq is genuinely absent (conditional-force). The engine still runs fully without
 mdq. MCP servers are optional.
 
-After open, never use the Read tool or an ad-hoc direct JSON file read to inspect `CFG`; every plugin-engine config value must come from `sealed_config.py` using the current `CONFIG_SHA`. Project-defined `docAuditCommands` and their repository-side definitions are trusted only at repository-writer level, while sealed-config completely covers the plugin engine's decision path. A copied harness engine is defense-in-depth: only the exact current `0.18.0` stamp is executed; every older, future, missing, invalid, or modified stamp falls back to the plugin engine with a WARN and refresh guidance.
+After open, never use the Read tool or an ad-hoc direct JSON file read to inspect `CFG`; every plugin-engine config value must come from `sealed_config.py` using the current `CONFIG_SHA`. Project-defined `docAuditCommands` and their repository-side definitions are trusted only at repository-writer level, while sealed-config completely covers the plugin engine's decision path. A copied harness engine is defense-in-depth: only the exact current `0.19.0` stamp is executed; every older, future, missing, invalid, or modified stamp falls back to the plugin engine with a WARN and refresh guidance.
 
 Concurrent audits are excluded mechanically by `RUN_BASE/lock`: `open-run.py` uses exclusive
 creation, the gate holds an exclusive `flock` through its decision, state writes, and report
@@ -909,7 +928,7 @@ baseline ref (codex itself won't catch a bad ref and silently self-falls-back). 
 its `-m` model and medium reasoning explicitly through `"$CODEX_REVIEW_BIN"`; an explicit config
 model is never retried, and only a default light/Luna failure may retry once with Terra. A non-zero exit,
 timeout, or schema-mismatched result is WARN, never a FAIL basis by itself. But a *completed*
-codex-review run's `critical`/`high` findings DO block the verdict — this is a deliberate exception to the rule that probe-style seams
+codex-review run's `critical`/`high` findings block only when their persisted claim adjudication has effective state `confirmed`. Missing, invalid, or unavailable adjudication degrades to non-blocking `unverified` with a warning and never makes the verdict REFUSED. This is a deliberate exception to the rule that probe-style seams
 (mdq/context-mode/ax) never affect the verdict.
 codegraph, graphify, and CocoIndex (`symbolGraph`/`docGraph`/`semanticSearch`), when available, are
 ALL report-only and NEVER participate in the verdict — none of the three writes to `phase4.json`;

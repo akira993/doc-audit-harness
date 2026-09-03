@@ -108,6 +108,12 @@ engine needs no `bin`/`roots` for it because context-mode is a location-independ
 Every audit prints a non-blocking **context-mode status line** immediately after the mdq one:
 💡 when not active, ✓ when active, ⚠ when installed but degraded (it never changes the verdict).
 
+### v0.19.0 migration note
+
+Upgrade the complete plugin tree with no audit in flight. Runs paused after Phase-4 evidence but
+before the gate resume through the new claim planner; valid existing claim records are preserved,
+and an existing report template is regenerated before continuing.
+
 ### v0.18.0 migration note
 
 reviewCommands.code is no longer supported (removed in docaudit v0.18.0) and was ignored. Delete reviewCommands.code and reviewCommands.required from .claude/doc-audit.json; keep reviewCommands.security. Run /code-review as a separate PR-time step if you want it.
@@ -236,7 +242,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.18.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.19.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -291,6 +297,8 @@ indexing and contextMode keep their enabled-by-default behavior (intentional: th
 **v0.18.0 behavior changes:** the Phase-0 mdq health probe now also reports `stale` — true when mdq warned that its index is behind the working tree. It is **observation only**: it is recorded in `$RUN_DIR/phase0-probes.json` and never reaches `healthy`, `status`, the Phase-0 confirmation gate, or the Phase-5 status line, because current mdq can report a standing `stale` on repositories it indexes incrementally, and gating on it would stop every audit. The four `status` values are unchanged. Independently of docaudit, current mdq excludes dependency and build trees from indexing unconditionally — `.git`, `.mdq`, `.cq`, `.toolsearch`, `node_modules`, `__pycache__`, `dist`, `build`, `.next`, `.cache`, `venv`, and any directory whose name starts with `.venv` — regardless of `indexing.roots`, so re-indexing an existing repository with it can shrink the corpus substantially (a directory named *as a root* is still indexed). The mdq install nudge no longer points at `./setup/setup-markdown-query.sh`, which no longer exists upstream; it links the repository instead.
 This release also removes the `/code-review` layer: `reviewCommands.code` and `reviewCommands.required` are deprecated and ignored; leaving either key in an object no longer REFUSES a run and emits exactly one `reviewCommandsCodeRemoved` warning instead. Project-specific legacy command strings are no longer executed. `reviewCommands.security` (`/security-review`) and `codexReview` are unchanged, while a non-object `reviewCommands` (`null`, string, array, or number) remains REFUSED as before. Follow the v0.18.0 migration note above.
 
+**v0.19.0 behavior changes:** codex-review `critical` and `high` findings are blocking only when a cited per-claim adjudication has effective state `confirmed`. If adjudication does not run or its record or evidence is missing, damaged, or invalid, the claim becomes non-blocking `unverified` and the gate emits a warning; this remains true with `codexReview.required:true`, whose fail-closed effect still applies to the codex review itself but no longer to adjudication availability. Adjudication is not monotonic across runs because carry-forward retains only file and severity: a claim may be `refuted` in one run and independently become `confirmed`, and therefore NEEDS FIX, in the next. Repository text is treated as quoted data and confirmed/refuted results require `file:line` evidence, but prompt injection remains a residual risk that can still bias an adjudicator toward `refuted`.
+
 Configured `docAuditCommands` findings and project-side harness definitions have repository-writer trust because the same writer can change those definitions directly. Sealed-config completely covers the plugin engine decision path; it does not claim to make project-defined commands more trustworthy. Across runs, last-run, history, and anchor markers are operational fail-closed aids rather than a separate security boundary: missing state is indistinguishable from a fresh install, and the documented quarantine-marker persistence failure followed by emergency lock breaking remains a known limit.
 
 **v0.15.1 behavior changes:** the symbolGraph probe chooses `init` or `sync` from the state of `<dir>/codegraph.db`, honoring `CODEGRAPH_DIR`, so a leftover index directory without the database self-recovers on the next run; symlinked or non-regular index directories or databases are left untouched and report `index-failed`—valid symlink configurations that previously reached `sync` are intentionally unsupported because codegraph may overwrite the link target—and a renamed index directory selected by `CODEGRAPH_DIR` remains outside `tree-digest.py`'s fixed `.codegraph` known root and cannot be excluded with `digestExclude` (an existing limitation not addressed in this release).
@@ -327,7 +335,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, 0.15.1, 0.16.0, or 0.17.0 templates can be updated directly to 0.18.0 with
+Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, 0.15.1, 0.16.0, 0.17.0, or 0.18.0 templates can be updated directly to 0.19.0 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
@@ -514,6 +522,10 @@ cross-cutting complementary layers. The Codex review prompt explicitly checks th
 
 Phase-4 severity mapping:
 
+This table is the default for Phase-4 sources. For `source:"codex-review"` only, `HIGH` and
+`CRITICAL` do not block by severity alone; the matching claim must have effective state
+`confirmed`. Every other source keeps the mapping below unchanged.
+
 | severity | gate effect |
 |---|---|
 | `PASS` | `non-blocking` accepted without blocking the verdict |
@@ -678,6 +690,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/codex-dispatch.py
 ├── skills/audit/scripts/codex-probe.sh
 ├── skills/audit/scripts/codex-review-plan.py
+├── skills/audit/scripts/claim_record.py
 ├── skills/audit/scripts/compute-baseline.sh
 ├── skills/audit/scripts/decide-verdict.py
 ├── skills/audit/scripts/docaudit_cache.py
@@ -692,6 +705,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/mdq-health.py
 ├── skills/audit/scripts/mdq-index.sh
 ├── skills/audit/scripts/open-run.py
+├── skills/audit/scripts/plan-claims.py
 ├── skills/audit/scripts/plan-dispatch.py
 ├── skills/audit/scripts/probe-record.py
 ├── skills/audit/scripts/read-manifest.py
@@ -704,17 +718,20 @@ doc-audit-harness/
 ├── skills/audit/scripts/start-run.py
 ├── skills/audit/scripts/tree-digest.py
 ├── skills/audit/scripts/write-anchor.sh
+├── skills/audit/scripts/write-claim.py
 ├── skills/audit/scripts/write-evidence.py
 ├── skills/audit/scripts/write-template.py
 ├── skills/audit/scripts/write-verdict.py
 ├── skills/audit/references/codex-phase3-verdict.schema.json
 ├── skills/audit/references/codex-review-output.schema.json
+├── skills/audit/references/claim-adjudication-workflow.js
 ├── skills/audit/references/config-schema.md
 ├── skills/audit/references/default-heuristics.md
 ├── skills/audit/references/engine-shas.json
 ├── skills/audit/references/workflow-template.js
 ├── agents/doc-impact-verifier-light.md
 ├── agents/doc-impact-verifier.md
+├── agents/doc-claim-adjudicator.md
 ├── docs/ADOPTION.md
 ├── docs/ADOPTION.ja.md
 ├── docs/examples/doc-audit.example.json
