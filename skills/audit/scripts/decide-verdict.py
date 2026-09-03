@@ -718,16 +718,16 @@ def render_report(template, verdict, report_date, *, reason=None, counts=None,
         "{{GATE_ANCHOR_WRITTEN}}": "true" if anchor_written else "false",
         "{{GATE_REPORT_DATE}}": report_date,
     }
-    without_claims = TOKEN_RE.sub(
-        lambda match: (match.group(0) if match.group(0) == "{{GATE_CODEX_CLAIMS}}"
-                       else values[match.group(0)]), template)
-    if "{{GATE_CODEX_CLAIMS}}" in found:
+    claim_token = "{{GATE_CODEX_CLAIMS}}"
+    if claim_token in found:
         if refused or not claim_target_count:
             claim_payload = "n/a"
             claim_value = safe_json(claim_payload)
         else:
-            base_size = len(without_claims.replace(
-                "{{GATE_CODEX_CLAIMS}}", "").encode("utf-8"))
+            without_claims = TOKEN_RE.sub(
+                lambda match: "" if match.group(0) == claim_token
+                else values[match.group(0)], template)
+            base_size = len(without_claims.encode("utf-8"))
             claim_payload = bounded_claim_payload(
                 claim_items or [], max(0, MAX_REPORT_BYTES - base_size))
             claim_value = safe_json(claim_payload)
@@ -735,9 +735,8 @@ def render_report(template, verdict, report_date, *, reason=None, counts=None,
             claim_payload_result.clear()
             if isinstance(claim_payload, dict):
                 claim_payload_result.update(claim_payload)
-        rendered = without_claims.replace("{{GATE_CODEX_CLAIMS}}", claim_value)
-    else:
-        rendered = without_claims
+        values[claim_token] = claim_value
+    rendered = TOKEN_RE.sub(lambda match: values[match.group(0)], template)
     raw = rendered.encode("utf-8")
     if len(raw) > MAX_REPORT_BYTES:
         raise TemplateInvalid("rendered report exceeds 4 MiB")
@@ -942,13 +941,18 @@ def finalize_report(repo, run_dir, rule, report_date, last_run_path, base_state,
                     verdict, *, reason=None, counts=None, history_status=None,
                     sibling=None, anchor_written=False, claim_items=None,
                     claim_target_count=None):
-    claim_payload = bounded_claim_payload(claim_items or [], MAX_REPORT_BYTES)
-    if rule is None:
-        return None, base_state["reportStatus"], claim_payload
+    claim_payload = {
+        "items": [],
+        "omittedCount": len(claim_items or []),
+        "omittedByEffectiveState": {},
+    }
     report_path = None
-    status = "failed"
+    status = "failed" if rule is not None else base_state["reportStatus"]
     error_code = None
     try:
+        claim_payload = bounded_claim_payload(claim_items or [], MAX_REPORT_BYTES)
+        if rule is None:
+            return None, base_state["reportStatus"], claim_payload
         template = load_report_template(run_dir)
         rendered = render_report(
             template, verdict, report_date, reason=reason, counts=counts,

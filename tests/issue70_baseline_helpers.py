@@ -41,7 +41,7 @@ def prepare_fixture(owner, kind, env=None):
     if kind == "incremental-preflight":
         config = dict(REPORT, harness={"state": "integrated"})
     elif kind == "codex-zero":
-        config = dict(REPORT, codexReview={})
+        config = dict(REPORT, codexReview={"required": True})
     else:
         config = REPORT
     fx = RunFixture(owner, config_extra=config)
@@ -56,11 +56,11 @@ def prepare_fixture(owner, kind, env=None):
         assert fx.plan_start_seal(mode="full").returncode == 0
         assert fx.complete().returncode == 0
     elif kind == "codex-zero":
-        assert fx.plan_start_seal().returncode == 0
+        assert fx.plan_start_seal(mode="full").returncode == 0
         prior_finding = {"source": "codex-review", "severity": "HIGH",
                          "title": "Prior claim", "file": "docs/a.md"}
         prior = {"findings": [prior_finding], "codexReview": {
-            "state": "completed", "promptVariant": "diff", "carryForwardSha": "none"}}
+            "state": "completed", "promptVariant": "full", "carryForwardSha": "none"}}
         assert fx.complete(phase4=prior).returncode == 0
         target = claim_record.extract_claim_targets(prior)[0][0]
         claim_args = [
@@ -74,9 +74,9 @@ def prepare_fixture(owner, kind, env=None):
         first = run_gate(fx, env or os.environ)
         assert first.returncode == 0
         assert fx.open(runid="20260818T120001Z-abcdef13").returncode == 0
-        assert fx.plan_start_seal().returncode == 0
+        assert fx.plan_start_seal(mode="full").returncode == 0
         completed = {"findings": [], "codexReview": {
-            "state": "completed", "promptVariant": "diff", "carryForwardSha": "none"}}
+            "state": "completed", "promptVariant": "full", "carryForwardSha": "none"}}
         assert fx.complete(phase4=completed).returncode == 0
     else:
         assert fx.plan_start_seal().returncode == 0

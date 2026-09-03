@@ -134,10 +134,10 @@ Phase 5 は中央の2値を同じ未実行 WARN として4分類で表示する�
 baseline を確立してから有効化する。`required:true` と `enabled:false` の併用は REFUSED である。boolean でない
 `required` は値によらず REFUSED である。Phase-4 evidence の `codexReview` が object でない場合、`state` が
 string でない場合、または `CODEX_REVIEW_STATES` 外の場合も、`required` の値によらず REFUSED である。
-完走した review の `critical`/`high` 所見はブロッキング、`medium`/`low`
-は非ブロッキングのままである。
+完走した review の `critical`/`high` 所見は、所見ごとの裁定が実効状態 `confirmed` の場合に限り
+ブロッキングとなり、`medium`/`low` は非ブロッキングのままである。
 
-Phase-4 full review は欠陥候補をサンプリングするため、報告された N 件を直して再実行すれば通るとは保証されない。gate は worktree digest・契約版・config SHA・carry-forward SHA が同じ条件でブロッキング対象ファイルが変わると `phase4FlipsUnchangedContent` を記録する。full prompt には gate が書いた history から、検証済み repo 内 `file` と `severity` だけをデータとして自動で引き継ぐ。title・指示・run ID・時刻は引き継がず、carry-forward 自体は verdict に影響しない。
+Phase-4 full review は欠陥候補をサンプリングするため、報告された N 件を直して再実行すれば通るとは保証されない。gate は worktree digest・契約版・config SHA・carry-forward SHA が同じ条件で `critical`/`high` として報告されたパスの集合が変わると `phase4FlipsUnchangedContent` を記録する。full prompt には gate が書いた history から、検証済み repo 内 `file` と `severity` だけをデータとして自動で引き継ぐ。title・指示・run ID・時刻は引き継がず、carry-forward 自体は verdict に影響しない。
 
 これとは別に、v0.12.0 では Phase 3 を `"phase3Backend":"codex"` で opt-in できる。
 `codex-dispatch.py` が dispatched 文書ごとに read-only の Codex process を起動し、既定値は

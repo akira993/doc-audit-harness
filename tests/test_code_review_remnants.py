@@ -16,29 +16,29 @@ BASELINE = os.path.join(ROOT, "tests", "code_review_remnants_base.json.zlib.b64"
 BASELINE_SHA256 = "ffbe034ad8fb4877a106eb315047217f15a1f7d51965f8801f3e2a0e7d050901"
 
 MIGRATION_ALLOWLIST = {
-    ("docs/ADOPTION.md", 113, "removed-config"),
-    ("docs/ADOPTION.md", 113, "removed-command"),
-    ("docs/ADOPTION.ja.md", 96, "removed-config"),
-    ("docs/ADOPTION.ja.md", 96, "removed-command"),
+    ("docs/ADOPTION.md", 119, "removed-config"),
+    ("docs/ADOPTION.md", 119, "removed-command"),
+    ("docs/ADOPTION.ja.md", 102, "removed-config"),
+    ("docs/ADOPTION.ja.md", 102, "removed-command"),
     ("skills/audit/references/config-schema.md", 46, "removed-config"),
     ("skills/audit/references/config-schema.md", 47, "removed-config"),
 }
 WARNING_ALLOWLIST = {
-    ("skills/audit/scripts/decide-verdict.py", 64, "removed-config"),
-    ("skills/audit/scripts/decide-verdict.py", 65, "removed-config"),
-    ("skills/audit/scripts/decide-verdict.py", 66, "removed-command"),
+    ("skills/audit/scripts/decide-verdict.py", 67, "removed-config"),
+    ("skills/audit/scripts/decide-verdict.py", 68, "removed-config"),
+    ("skills/audit/scripts/decide-verdict.py", 69, "removed-command"),
 }
 HISTORY_ALLOWLIST = {
-    ("docs/ADOPTION.md", 289, "removed-config"),
-    ("docs/ADOPTION.md", 289, "removed-command"),
-    ("docs/ADOPTION.md", 292, "removed-config"),
-    ("docs/ADOPTION.md", 292, "removed-command"),
-    ("docs/ADOPTION.md", 298, "removed-command"),
-    ("docs/ADOPTION.ja.md", 260, "removed-config"),
-    ("docs/ADOPTION.ja.md", 260, "removed-command"),
-    ("docs/ADOPTION.ja.md", 265, "removed-config"),
-    ("docs/ADOPTION.ja.md", 265, "removed-command"),
-    ("docs/ADOPTION.ja.md", 269, "removed-command"),
+    ("docs/ADOPTION.md", 296, "removed-config"),
+    ("docs/ADOPTION.md", 296, "removed-command"),
+    ("docs/ADOPTION.md", 299, "removed-config"),
+    ("docs/ADOPTION.md", 299, "removed-command"),
+    ("docs/ADOPTION.md", 307, "removed-command"),
+    ("docs/ADOPTION.ja.md", 266, "removed-config"),
+    ("docs/ADOPTION.ja.md", 266, "removed-command"),
+    ("docs/ADOPTION.ja.md", 271, "removed-config"),
+    ("docs/ADOPTION.ja.md", 271, "removed-command"),
+    ("docs/ADOPTION.ja.md", 277, "removed-command"),
     ("tests/test_v015_contracts.py", 201, "removed-command"),
     ("tests/test_v015_contracts.py", 205, "removed-command"),
 }
@@ -144,8 +144,8 @@ class TestCodeReviewRemnants(unittest.TestCase):
         for path, line, _symbol in observed_migration:
             migration_lines.setdefault(path, set()).add(line)
         self.assertEqual(migration_lines, {
-            "docs/ADOPTION.md": {113},
-            "docs/ADOPTION.ja.md": {96},
+            "docs/ADOPTION.md": {119},
+            "docs/ADOPTION.ja.md": {102},
             "skills/audit/references/config-schema.md": {46, 47},
         })
 

@@ -154,9 +154,10 @@ warning. With `required:true`, missing or non-`completed` evidence makes the gat
 regardless of its value. If Phase-4 evidence has a non-object `codexReview`, a non-string `state`,
 or a state outside `CODEX_REVIEW_STATES`, the gate is REFUSED regardless of `required`.
 Enable strict mode after establishing the first baseline. A completed review's `critical`/`high`
-findings remain blocking; `medium`/`low` remain non-blocking.
+findings are blocking only when their per-claim adjudication has effective state `confirmed`;
+`medium`/`low` remain non-blocking.
 
-Phase-4 full review samples the defect pool, so fixing N reported findings and rerunning is not guaranteed to pass. The gate records `phase4FlipsUnchangedContent` when blocking-file status changes under the same worktree digest, contract version, config SHA, and carry-forward SHA. Full prompts automatically receive data-only carry-forward from gate-written history: validated repository `file` paths plus `severity`, never titles, instructions, run IDs, or timestamps. Carry-forward does not affect the verdict by itself.
+Phase-4 full review samples the defect pool, so fixing N reported findings and rerunning is not guaranteed to pass. The gate records `phase4FlipsUnchangedContent` when the set of paths reported as `critical`/`high` changes under the same worktree digest, contract version, config SHA, and carry-forward SHA. Full prompts automatically receive data-only carry-forward from gate-written history: validated repository `file` paths plus `severity`, never titles, instructions, run IDs, or timestamps. Carry-forward does not affect the verdict by itself.
 
 Separately, v0.12.0 can opt Phase 3 into `"phase3Backend":"codex"`. This runs one read-only
 Codex process per dispatched document through `codex-dispatch.py`; the default remains

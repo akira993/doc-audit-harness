@@ -5,12 +5,12 @@
   "snapshots": {
     "codex-zero": {
       "artifactSha256": {
-        "anchor": "5771029dda01038b57fa7babf105f31fd801fea456b25ded2cdec6cb31684107",
-        "history": "f6d0253f7ce177aaeb59422be9a17f6bf61b4c1653bdf2cbda366d788f54fe3a",
+        "anchor": "15e4f472185c204b0be0beccac070f74a832b39f59539f06fe2ad4b1905288c3",
+        "history": "86addf4291daa574ddd00ba340d8941db6badf853fa3b5fd9bb6af509c7cec36",
         "lastRun": "f96c1c03c686f233cdd56a08b171b8d0b30eb5fb18a17377d77e6ebbef1a9275",
-        "report": "b91a8d7f629ab950c427e9cf104e57b084ef1d89afda5968b8c1259fc187aa38",
+        "report": "fb74e025f225d89729b7a02b50cd94469674c3954e5e70a8af2a9faf8ffabd7a",
         "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "stdout": "60b948c455b3d65a47f2d3eaff18a489e4adc77f409e0f6aca966fdf0479b76f"
+        "stdout": "ff36517dae2a2c37da543c714910458291611b518960b84f784d8e01d624acbb"
       },
       "exitCode": 0,
       "verdict": "CONSISTENT"

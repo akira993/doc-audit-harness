@@ -1,6 +1,8 @@
 """Contracts and end-to-end checks for v0.19 codex claim adjudication."""
 
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -91,6 +93,10 @@ class TestP1ThroughP7(ClaimWorkspace):
         items, count, _warnings = self.adjudicate(phase([finding()]), "completed")
         self.assertEqual(count, 1)
         self.assertEqual(items[0]["effectiveState"], "unverified")
+        non_codex = finding(source="security-review")
+        items, count, warnings = self.adjudicate(
+            phase([non_codex], "execution-failed"), "execution-failed")
+        self.assertEqual((items, count, warnings), ([], 0, []))
 
     def test_p2_missing_or_invalid_record_and_valid_record(self):
         value = phase([finding()])
@@ -102,6 +108,33 @@ class TestP1ThroughP7(ClaimWorkspace):
         items, _count, warnings = self.adjudicate(value)
         self.assertEqual(items[0]["effectiveState"], "refuted")
         self.assertNotIn("codexClaimsUnadjudicated", warnings)
+
+    def test_p2_rejects_each_identity_shape_and_file_kind_error(self):
+        value = phase([finding()])
+        target = self.target()
+        base = {"runid": "run-1", "findingId": target["findingId"],
+                "state": "unverified", "rationale": "checked"}
+        cases = [
+            dict(base, extra=True),
+            dict(base, runid="other-run"),
+            dict(base, findingId="f" * 64),
+            dict(base, state="future"),
+            dict(base, rationale=None),
+        ]
+        claims = os.path.join(self.run_dir, "claims")
+        os.makedirs(claims)
+        path = os.path.join(claims, target["findingId"] + ".json")
+        for record in cases:
+            with self.subTest(record=record):
+                write(path, json.dumps(record))
+                items, _count, warnings = self.adjudicate(value)
+                self.assertEqual(items[0]["effectiveState"], "unverified")
+                self.assertIn("codexClaimsUnadjudicated", warnings)
+        os.unlink(path)
+        os.makedirs(path)
+        items, _count, warnings = self.adjudicate(value)
+        self.assertEqual(items[0]["effectiveState"], "unverified")
+        self.assertIn("codexClaimsUnadjudicated", warnings)
 
     def test_p3_not_adjudicable_is_rederived_both_branches(self):
         value = phase([finding()])
@@ -135,6 +168,28 @@ class TestP1ThroughP7(ClaimWorkspace):
         self.assertEqual(items[0]["effectiveState"], "confirmed")
         self.assertNotIn("claimEvidenceUnresolved", warnings)
 
+    def test_p4_rejects_each_evidence_shape_boundary(self):
+        target = self.target()
+        base = {"runid": "run-1", "findingId": target["findingId"],
+                "state": "confirmed", "rationale": "checked"}
+        bad_evidence = [
+            {},
+            {"evidenceFile": 7, "evidenceLine": 1},
+            {"evidenceFile": "docs/a.md", "evidenceLine": True},
+            {"evidenceFile": "docs/a.md", "evidenceLine": "1"},
+            {"evidenceFile": "docs/a.md", "evidenceLine": 0},
+            {"evidenceFile": "../outside.md", "evidenceLine": 1},
+            {"evidenceFile": "docs/a.md", "evidenceLine": 99},
+        ]
+        for evidence in bad_evidence:
+            with self.subTest(evidence=evidence):
+                with self.assertRaises(claim_record.ClaimRecordError) as raised:
+                    claim_record.validate_claim_record(
+                        dict(base, **evidence), runid="run-1",
+                        finding_id=target["findingId"], repo_root=self.repo,
+                        finding_file="docs/a.md")
+                self.assertEqual(raised.exception.warning, "claimEvidenceUnresolved")
+
     def test_p5_only_confirmed_blocks_both_branches(self):
         self.assertTrue(DECIDE.codex_claims_block([{"effectiveState": "confirmed"}]))
         for state in ("refuted", "unverified", "not-adjudicable"):
@@ -157,6 +212,35 @@ class TestP1ThroughP7(ClaimWorkspace):
         write(os.path.join(self.run_dir, "claims", "stale.json"), "{}")
         _items, _count, warnings = self.adjudicate(value)
         self.assertIn("claimRecordUnexpected", warnings)
+        os.unlink(os.path.join(self.run_dir, "claims", "stale.json"))
+        write(os.path.join(self.run_dir, "claims", "f" * 64 + ".json"), "{}")
+        _items, _count, warnings = self.adjudicate(value)
+        self.assertIn("claimRecordUnexpected", warnings)
+
+    def test_claims_symlink_is_unusable_and_warning_only(self):
+        target = self.target()
+        real_claims = os.path.join(self.run_dir, "real-claims")
+        self.put_record(target, "confirmed", directory=real_claims)
+        os.symlink(real_claims, os.path.join(self.run_dir, "claims"))
+        items, _count, warnings = self.adjudicate(phase([finding()]))
+        self.assertEqual(items[0]["effectiveState"], "unverified")
+        self.assertIn("claimRecordUnexpected", warnings)
+        self.assertIn("codexClaimsUnadjudicated", warnings)
+
+    def test_missing_title_warns_and_invalid_claim_fields_are_rejected(self):
+        items, count, warnings = self.adjudicate(phase([finding(title="  ")]))
+        self.assertEqual((items, count), ([], 0))
+        self.assertIn("codexFindingTitleMissing", warnings)
+        invalid = [
+            {"file": None, "severity": "HIGH", "title": "claim"},
+            {"file": "docs/a.md", "severity": None, "title": "claim"},
+            {"file": "docs/a.md", "severity": " ", "title": "claim"},
+            {"file": "docs/a.md", "severity": "HIGH", "title": None},
+            {"file": "docs/a.md", "severity": "HIGH", "title": " "},
+        ]
+        for value in invalid:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                claim_record.claim_finding_id(value)
 
     def test_target_extraction_normalizes_identically_and_deduplicates(self):
         value = phase([finding(severity=" high "), finding(severity="HIGH")])
@@ -165,6 +249,13 @@ class TestP1ThroughP7(ClaimWorkspace):
         items, count, _warnings = self.adjudicate(value)
         self.assertEqual(count, 1)
         self.assertEqual(items[0]["findingId"], targets[0]["findingId"])
+        _eligible, _codex, normalized, _unresolved = DECIDE.validate_phase4_contract(
+            self.repo, {"mode": "incremental"}, value)
+        self.assertEqual(normalized, [{"file": "docs/a.md", "severity": "HIGH"}])
+        with self.assertRaises(DECIDE.Refused):
+            DECIDE.validate_phase4_contract(
+                self.repo, {"mode": "incremental"},
+                phase([finding(severity="urgent")]))
         source = (ROOT / "skills/audit/SKILL.md").read_text(encoding="utf-8")
         self.assertIn("severity.strip().upper()", source)
 
@@ -228,6 +319,10 @@ class TestGateOutcomes(unittest.TestCase):
                      for index in range(len(states))]
         expected = "NEEDS_FIX" if "confirmed" in effective else "CONSISTENT"
         self.assertEqual(result["verdict"], expected)
+        self.assertEqual(len(result["codexClaims"]["items"]), len(states))
+        self.assertEqual(
+            [item["effectiveState"] for item in result["codexClaims"]["items"]],
+            effective)
         return result
 
     def test_c3_i_empty_claims_is_consistent_with_warning(self):
@@ -266,6 +361,122 @@ class TestGateOutcomes(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         second = json.loads(fx.gate().stdout)
         self.assertEqual(second["verdict"], "NEEDS_FIX")
+
+
+class TestClaimReportEndToEnd(unittest.TestCase):
+    REPORT_CONFIG = {"codexReview": {},
+                     "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"}
+    BIDI = "\u200e"
+
+    @staticmethod
+    def report_template(fx):
+        return fx.report_template() + "codexClaims: {{GATE_CODEX_CLAIMS}}\n"
+
+    def prepared_claim_report(self, bidi_field=None):
+        bidi_path = "docs/evidence" + self.BIDI + ".md"
+        fx = RunFixture(self, config_extra=self.REPORT_CONFIG)
+        if bidi_field in {"file", "evidenceFile"}:
+            write(os.path.join(fx.repo, bidi_path), "# Evidence\n")
+            subprocess.run(["git", "-C", fx.repo, "add", bidi_path], check=True,
+                           capture_output=True, text=True)
+            fixed_git_env = dict(os.environ, GIT_AUTHOR_DATE="2026-08-18T12:01:00+00:00",
+                                 GIT_COMMITTER_DATE="2026-08-18T12:01:00+00:00")
+            subprocess.run(["git", "-C", fx.repo, "commit", "-m", "add evidence"],
+                           check=True, capture_output=True, text=True, env=fixed_git_env)
+            fx.head = subprocess.run(
+                ["git", "-C", fx.repo, "rev-parse", "HEAD"], check=True,
+                capture_output=True, text=True).stdout.strip()
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        claim = finding(
+            title="Claim" + self.BIDI if bidi_field == "title" else "Claim A",
+            file=bidi_path if bidi_field == "file" else "docs/a.md")
+        phase4 = phase([claim])
+        self.assertEqual(fx.complete(phase4=phase4).returncode, 0)
+        target = claim_record.extract_claim_targets(phase4)[0][0]
+        evidence_file = bidi_path if bidi_field == "evidenceFile" else "docs/a.md"
+        args = [
+            "--run-dir", fx.run_dir,
+            "--out", os.path.join(fx.run_dir, "claims", target["findingId"] + ".json"),
+            "--runid", fx.runid, "--repo-root", fx.repo,
+            "--finding-id", target["findingId"], "--state", "refuted",
+            "--evidence-file", evidence_file, "--evidence-line", "1",
+        ]
+        rationale = "checked" + self.BIDI if bidi_field == "rationale" else "checked"
+        written = fx.call("write-claim.py", *args, input_text=rationale)
+        self.assertEqual(written.returncode, 0, written.stderr)
+        template = self.report_template(fx)
+        self.assertEqual(fx.write_template(body=template).returncode, 0)
+        return fx
+
+    def assert_bidi_report_failure_is_terminally_safe(self, field, refused):
+        fx = self.prepared_claim_report(field)
+        if refused:
+            write(os.path.join(fx.repo, "src", "app.py"), "print('changed')\n")
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 3 if refused else 0, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["verdict"], "REFUSED" if refused else "CONSISTENT")
+        self.assertIn("reportTemplateInvalid", result["warnings"])
+        self.assertEqual(result["reportStatus"], "failed")
+        if not refused:
+            self.assertEqual(result["codexClaims"], {
+                "items": [], "omittedCount": 1, "omittedByEffectiveState": {}})
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+        state = json.loads(Path(fx.last_run).read_text(encoding="utf-8"))
+        self.assertEqual(state["verdict"], result["verdict"])
+
+    def test_bidi_in_each_claim_field_does_not_crash_success_path(self):
+        for field in ("title", "rationale", "file", "evidenceFile"):
+            with self.subTest(field=field):
+                self.assert_bidi_report_failure_is_terminally_safe(field, refused=False)
+
+    def test_bidi_in_each_claim_field_does_not_crash_refused_path(self):
+        for field in ("title", "rationale", "file", "evidenceFile"):
+            with self.subTest(field=field):
+                self.assert_bidi_report_failure_is_terminally_safe(field, refused=True)
+
+    def test_claim_payload_is_rendered_end_to_end_on_success(self):
+        fx = self.prepared_claim_report()
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["verdict"], "CONSISTENT")
+        report = Path(fx.repo, result["reportPath"]).read_text(encoding="utf-8")
+        line = next(value for value in report.splitlines() if value.startswith("codexClaims: "))
+        rendered_payload = json.loads(line.split(": ", 1)[1])
+        self.assertEqual(rendered_payload, result["codexClaims"])
+        self.assertEqual(rendered_payload["items"][0]["effectiveState"], "refuted")
+
+    def test_refused_path_passes_claim_target_count_and_renders_na(self):
+        fx = self.prepared_claim_report()
+        write(os.path.join(fx.repo, "src", "app.py"), "print('changed')\n")
+        module = load_script("decide-verdict.py", "decide_claim_refused_report_test")
+        calls = []
+        original = module.finalize_report
+
+        def tracked_finalize(*args, **kwargs):
+            calls.append(kwargs.get("claim_target_count"))
+            return original(*args, **kwargs)
+
+        argv = [
+            "decide-verdict.py", "--run-dir", fx.run_dir, "--repo-root", fx.repo,
+            "--config", fx.config_path, "--anchor-path", fx.anchor_rel,
+            "--runid", fx.runid, "--expect-json", json.dumps(fx.evidence),
+            "--date", "2026-08-18",
+        ]
+        stdout = io.StringIO()
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(module, "finalize_report", tracked_finalize), \
+             contextlib.redirect_stdout(stdout):
+            code = module.main()
+        result = json.loads(stdout.getvalue())
+        self.assertEqual((code, result["verdict"], calls), (3, "REFUSED", [1]))
+        report = Path(fx.repo, result["reportPath"]).read_text(encoding="utf-8")
+        line = next(value for value in report.splitlines() if value.startswith("codexClaims: "))
+        self.assertEqual(json.loads(line.split(": ", 1)[1]), "n/a")
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
 
 
 class TestPlannerWriterAndContract(ClaimWorkspace):
@@ -309,6 +520,43 @@ class TestPlannerWriterAndContract(ClaimWorkspace):
             capture_output=True, text=True)
         self.assertEqual(len(json.loads(resumed.stdout)), 2)
 
+    def test_unresolved_path_is_persisted_but_not_dispatched_and_temp_stays_outside_claims(self):
+        missing = finding("missing claim", file="docs/missing.md")
+        available = finding("available claim")
+        value = phase([missing, available])
+        phase_path = os.path.join(self.run_dir, "phase4.json")
+        write(phase_path, json.dumps(value))
+        planner = load_script("plan-claims.py", "plan_claims_unresolved_test")
+        created_in = []
+        real_mkstemp = tempfile.mkstemp
+
+        def tracked_mkstemp(*args, **kwargs):
+            created_in.append(kwargs.get("dir"))
+            return real_mkstemp(*args, **kwargs)
+
+        argv = [
+            "plan-claims.py", "--run-dir", self.run_dir, "--runid", "run-1",
+            "--repo-root", self.repo, "--phase4-json", phase_path,
+        ]
+        stdout = io.StringIO()
+        with mock.patch.object(sys, "argv", argv), \
+             mock.patch.object(planner.tempfile, "mkstemp", tracked_mkstemp), \
+             contextlib.redirect_stdout(stdout):
+            self.assertEqual(planner.main(), 0)
+
+        pending = json.loads(stdout.getvalue())
+        self.assertEqual([item["title"] for item in pending], ["available claim"])
+        target = claim_record.extract_claim_targets(phase([missing]))[0][0]
+        claims_dir = os.path.join(self.run_dir, "claims")
+        record_path = os.path.join(claims_dir, target["findingId"] + ".json")
+        stored = json.loads(Path(record_path).read_text(encoding="utf-8"))
+        self.assertEqual(stored["state"], "not-adjudicable")
+        self.assertEqual(stored["reason"], "path-unresolved")
+        self.assertEqual([os.path.realpath(path) for path in created_in],
+                         [os.path.realpath(self.run_dir)])
+        self.assertEqual(sorted(os.listdir(claims_dir)), [target["findingId"] + ".json"])
+        self.assertFalse(any(name.startswith(".claim.") for name in os.listdir(self.run_dir)))
+
     def test_record_limit_exact_and_plus_one_agree_for_planner_writer_gate(self):
         value = phase([finding()])
         target = self.target()
@@ -342,6 +590,17 @@ class TestPlannerWriterAndContract(ClaimWorkspace):
         too_big = subprocess.run(writer_args, input=exact["rationale"] + "x",
                                  capture_output=True, text=True)
         self.assertNotEqual(too_big.returncode, 0)
+        relative_out = list(writer_args)
+        relative_out[relative_out.index("--out") + 1] = os.path.relpath(path, ROOT)
+        rejected_relative = subprocess.run(
+            relative_out, input="checked", capture_output=True, text=True, cwd=ROOT)
+        self.assertNotEqual(rejected_relative.returncode, 0)
+        wrong_absolute = list(writer_args)
+        wrong_absolute[wrong_absolute.index("--out") + 1] = os.path.join(
+            claims, "f" * 64 + ".json")
+        rejected_wrong = subprocess.run(
+            wrong_absolute, input="checked", capture_output=True, text=True)
+        self.assertNotEqual(rejected_wrong.returncode, 0)
         for script_name in ("plan-claims.py", "write-claim.py", "decide-verdict.py"):
             self.assertNotIn("MAX_CLAIM_RECORD_BYTES =",
                              (SCRIPTS / script_name).read_text(encoding="utf-8"))
@@ -377,7 +636,6 @@ class TestPlannerWriterAndContract(ClaimWorkspace):
         self.assertNotIn('"not-adjudicable"', writer)
         planner = (SCRIPTS / "plan-claims.py").read_text(encoding="utf-8")
         self.assertIn("load_valid_claim_record", planner)
-        self.assertIn("not-adjudicable", planner)
 
     def test_output_order_uses_phase4_not_directory_creation_order(self):
         findings = [finding("first"), finding("second", file="docs/b.md")]
@@ -419,8 +677,50 @@ class TestPlannerWriterAndContract(ClaimWorkspace):
             warnings=[], sibling={}, claim_items=items, claim_target_count=len(items),
             claim_payload_result=payload)
         self.assertLessEqual(len(raw), DECIDE.MAX_REPORT_BYTES)
+        self.assertNotIn("{{GATE_CODEX_CLAIMS}}", raw.decode("utf-8"))
+        self.assertEqual(json.loads(raw.decode("utf-8").splitlines()[-1]), payload)
         self.assertGreater(payload["omittedCount"], 0)
+        self.assertGreater(len(payload["items"]), 0)
         self.assertEqual(payload["omittedCount"] + len(payload["items"]), 1000)
+        self.assertEqual(payload["omittedByEffectiveState"],
+                         {"unverified": payload["omittedCount"]})
+
+        without_claim_token = template.replace("{{GATE_CODEX_CLAIMS}}", "")
+        with self.assertRaises(DECIDE.TemplateInvalid):
+            DECIDE.render_report(
+                without_claim_token, "CONSISTENT", "2026-08-18", counts={},
+                history_status="ok", warnings=[], sibling={}, claim_items=items[:1],
+                claim_target_count=1)
+
+        duplicate_optional = template + "\n{{GATE_REASON}}\n{{GATE_REASON}}"
+        with self.assertRaises(DECIDE.TemplateInvalid):
+            DECIDE.render_report(
+                duplicate_optional, "CONSISTENT", "2026-08-18", counts={},
+                history_status="ok", warnings=[], sibling={}, claim_items=items[:1],
+                claim_target_count=1)
+
+        refused = DECIDE.render_report(
+            template, "REFUSED", "2026-08-18", counts={}, history_status="ok",
+            warnings=[], sibling={}, claim_items=items[:1], claim_target_count=1)
+        self.assertEqual(json.loads(refused.decode("utf-8").splitlines()[-1]), "n/a")
+
+    def test_claim_token_in_a_sibling_value_is_not_expanded_a_second_time(self):
+        item = {"findingId": "a" * 64, "title": "claim", "file": "docs/a.md",
+                "severity": "HIGH", "effectiveState": "refuted", "reason": None,
+                "evidenceFile": "docs/a.md", "evidenceLine": 1, "rationale": "checked"}
+        template = "\n".join([
+            "{{GATE_REPORT_DATE}}", "{{GATE_REPORT_DATE}}", "{{GATE_VERDICT}}",
+            "{{GATE_COUNTS}}", "{{GATE_HISTORY_STATUS}}", "{{GATE_WARNINGS}}",
+            "{{GATE_SIBLING_SCAN}}", "{{GATE_ANCHOR_WRITTEN}}",
+            "{{GATE_CODEX_CLAIMS}}",
+        ])
+        marker = "{{GATE_CODEX_CLAIMS}}"
+        rendered = DECIDE.render_report(
+            template, "CONSISTENT", "2026-08-18", counts={}, history_status="ok",
+            warnings=[], sibling={"phrases": [marker]}, claim_items=[item],
+            claim_target_count=1).decode("utf-8").splitlines()
+        self.assertEqual(json.loads(rendered[6]), {"phrases": [marker]})
+        self.assertEqual(json.loads(rendered[-1])["items"], [item])
 
 
 class TestInteractionMatrix(ClaimWorkspace):
@@ -485,35 +785,81 @@ class TestClaimWorkflow(unittest.TestCase):
         self.node = found
         self.source = WORKFLOW.read_text(encoding="utf-8")
 
-    def execute(self, args_value, stringify):
+    def execute(self, args_value, stringify, parallel_null_indexes=()):
         source = self.source.replace("export ", "", 1)
         program = r"""
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 const source = process.env.SOURCE
 const parsed = JSON.parse(process.env.ARGS)
 const delivered = process.env.STRINGIFY === 'yes' ? JSON.stringify(parsed) : parsed
+const parallelNullIndexes = new Set(JSON.parse(process.env.PARALLEL_NULL_INDEXES))
+const agentTypes = []
+const prompts = []
+let index = 0
 const execute = new AsyncFunction('args', 'phase', 'parallel', 'agent', source)
 ;(async () => {
-  const result = await execute(delivered, () => {}, async tasks => Promise.all(tasks.map(t => t())),
-    async (_prompt, opts) => ({findingId: parsed.claims[0]?.findingId, state: 'unverified', rationale: 'x'}))
-  process.stdout.write(JSON.stringify(result))
+  const result = await execute(
+    delivered,
+    () => {},
+    async tasks => {
+      const values = await Promise.all(tasks.map(task => task()))
+      return values.map((value, i) => parallelNullIndexes.has(i) ? null : value)
+    },
+    async (prompt, opts) => {
+      prompts.push(prompt)
+      agentTypes.push(opts.agentType)
+      const claim = parsed.claims[index]
+      index += 1
+      return {findingId: claim.findingId, state: 'unverified', rationale: 'x'}
+    })
+  process.stdout.write(JSON.stringify({result, agentTypes, prompts}))
 })().catch(error => { process.stderr.write(String(error)); process.exitCode = 1 })
 """
         env = dict(os.environ, SOURCE=source, ARGS=json.dumps(args_value),
-                   STRINGIFY="yes" if stringify else "no")
+                   STRINGIFY="yes" if stringify else "no",
+                   PARALLEL_NULL_INDEXES=json.dumps(list(parallel_null_indexes)))
         return subprocess.run([self.node, "-e", program], capture_output=True, text=True, env=env)
 
     def valid_args(self):
         return {"repoRoot": "/repo", "runId": "run-1", "runDir": "/repo/run-1",
                 "scriptsDir": "/plugin/scripts",
                 "claims": [{"findingId": "a" * 64, "file": "docs/a.md",
-                            "severity": "HIGH", "title": "claim"}]}
+                            "severity": "HIGH", "title": "claim a"},
+                           {"findingId": "b" * 64, "file": "docs/b.md",
+                            "severity": "CRITICAL", "title": "claim b"}]}
 
     def test_args_string_and_object_both_execute(self):
         for stringify in (True, False):
             proc = self.execute(self.valid_args(), stringify)
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            self.assertEqual(json.loads(proc.stdout)[0]["state"], "unverified")
+            output = json.loads(proc.stdout)
+            self.assertEqual(output["agentTypes"],
+                             ["docaudit:doc-claim-adjudicator"] * 2)
+            self.assertEqual(
+                [item["assignedFindingId"] for item in output["result"]],
+                ["a" * 64, "b" * 64])
+            self.assertEqual(
+                [item["returnedFindingId"] for item in output["result"]],
+                ["a" * 64, "b" * 64])
+            for prompt, finding_id in zip(output["prompts"], ("a" * 64, "b" * 64)):
+                self.assertIn(
+                    f"--out '/repo/run-1/claims/{finding_id}.json'", prompt)
+            self.assertIn("name: 'docaudit-claim-adjudicate'", self.source)
+
+    def test_parallel_null_result_keeps_the_assigned_finding_and_destination(self):
+        proc = self.execute(self.valid_args(), False, parallel_null_indexes=(1,))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        output = json.loads(proc.stdout)
+        self.assertEqual(output["result"][1], {
+            "assignedFindingId": "b" * 64,
+            "returnedFindingId": None,
+            "state": None,
+            "evidenceFile": None,
+            "evidenceLine": None,
+            "rationale": None,
+        })
+        self.assertIn("/repo/run-1/claims/" + "b" * 64 + ".json",
+                      output["prompts"][1])
 
     def test_missing_runid_rundir_scriptsdir_each_throws(self):
         for key in ("runId", "runDir", "scriptsDir"):
