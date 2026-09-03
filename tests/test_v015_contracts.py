@@ -211,22 +211,6 @@ class TestV015Contracts(unittest.TestCase):
                          if unit.startswith(paragraphs[0].split(" ", 1)[0]))
             self.assertEqual(units[start:start + 2], list(paragraphs), path)
 
-    def test_code_review_autonomous_behavior_contract(self):
-        skill = normalize(read("skills/audit/SKILL.md"))
-        contracts = (
-            "invoke the Skill tool with `skill=code-review` and `args=<effort>` only, in both interactive and non-interactive sessions.",
-            "An audit resumed after the review was started (checkpoint row (g)) also binds `CODE_REVIEW_STATE=not-run` and never folds findings left in the conversation",
-            "an audit resumed before any code-review invocation starts the review normally when Phase 4 is reached.",
-            "`CODE_REVIEW_STATE=blocked-by-settings`",
-            "`CODE_REVIEW_STATE=not-run`",
-            "`{{GATE_CODE_REVIEW_STATUS}}`",
-        )
-        for contract in contracts:
-            with self.subTest(contract=contract):
-                self.assertGreaterEqual(skill.count(normalize(contract)), 1)
-        self.assertNotIn("not-model-invocable", skill)
-        self.assertNotIn("AskUserQuestion to offer running the configured `/code-review`", skill)
-
     def test_minimum_unit_scanner_preserves_enabled_by_default_seams(self):
         old = "conditional" + "-force"
         fixture = (

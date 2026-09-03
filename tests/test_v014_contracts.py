@@ -258,7 +258,7 @@ class TestV014Contracts(unittest.TestCase):
                                  ("rebind.doc-graph.state=unknown", "DOC_GRAPH_REASON=invalid-config"),
                                  ("rebind.semantic-search.state=unknown", "SEMANTIC_SEARCH_REASON=invalid-config")):
             self.assertLess(phase5.index(unknown), phase5.index(invalid))
-        codex = phase5.split("**codex-review status line**", 1)[1].split("**code-review", 1)[0]
+        codex = phase5.split("**codex-review status line**", 1)[1].split("**symbol-graph", 1)[0]
         self.assertLess(codex.index("invalid-config"), codex.index("reviewState=null"))
         self.assertLess(codex.index("reviewState=null"), codex.index("`phase4-not-required` is"))
 
@@ -266,7 +266,7 @@ class TestV014Contracts(unittest.TestCase):
         skill=read("skills/audit/SKILL.md"); p0=skill[skill.index("## Phase 0 "):skill.index("## Phase 0.5")]
         sentence='synthesize `CM_PROBE_JSON` as exactly `{"contextModeAvailable":<CM_AVAILABLE>,"contextModeHealthy":<bool or null>,"status":"<CM_STATUS>"}` (JSON boolean/null values, not quoted text): when `CM_AVAILABLE` is false, `contextModeHealthy` is always `null`; when `CM_AVAILABLE` is true and `CM_HEALTHY` is unbound, normalize to `contextModeHealthy:false` and `status:"probe-error"`; otherwise use the bound values.'
         self.assertEqual(p0.count(sentence),1); self.assertEqual(skill.count('{"contextModeAvailable":'),1)
-        block=skill.split("**codex-review status line**",1)[1].split("**code-review",1)[0]
+        block=skill.split("**codex-review status line**",1)[1].split("**symbol-graph",1)[0]
         clauses=["state=complete` and `rebind.codex-review.reason=invalid-config", "state=complete` and `rebind.codex-review.reviewState=null", "state=unknown` and `rebind.codex-review.reviewState=null", "state=complete` and `rebind.codex-review.reviewState` is non-null", "state=unknown` and `rebind.codex-review.reviewState` is non-null"]
         self.assertEqual([block.index(x) for x in clauses],sorted(block.index(x) for x in clauses))
 

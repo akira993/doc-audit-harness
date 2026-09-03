@@ -162,7 +162,6 @@ reason: {{GATE_REASON}}
 counts: {{GATE_COUNTS}}
 historyStatus: {{GATE_HISTORY_STATUS}}
 siblingScan: {{GATE_SIBLING_SCAN}}
-codeReview: {{GATE_CODE_REVIEW_STATUS}}
 """
 
     def write_template(self, body=None, replace=False):

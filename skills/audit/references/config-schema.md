@@ -17,7 +17,7 @@ live here; the plugin ships no project knowledge.
 | `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: (path\|path:line)[]}` — a URL `liveSource` (http/https) is not supported: it is never executed or fetched, and the audit emits a warning |
 | `docAuditCommands` | object | no | `{format, existence, semantic}` slash-command/skill names used by active pre-flight and delegated Phase 4 |
 | `boundaryCommand` | string | no | shell command for project-boundary check |
-| `reviewCommands` | object | no | `{code, security, required}`; exact P6 `code` values are `/code-review low`, `/code-review medium`, or `/code-review high`; `required:bool=false` affects `code` only; malformed official-namespace values REFUSE every run, other strings remain legacy project commands |
+| `reviewCommands` | object | no | `{security}`; `code` and `required` are ignored with a migration warning |
 | `reportPath` | string | no | output report path template (supports `<YYYY-MM-DD>` and `[_NN]`) |
 | `auditReportsInCorpus` | boolean | no | only literal `true` keeps matching audit reports in corpus scans; omitted, `false`, or an invalid type excludes them (generic layers emit a config WARN for an invalid type) |
 | `maxImpactedDocs` | number | no | cap on impacted docs (default 200); overflow sets `truncated` |
@@ -41,21 +41,11 @@ live here; the plugin ships no project knowledge.
 `impacts` entries MUST be doc paths only; put commentary in `note`. `changed`
 accepts a single path or a glob.
 
-## code-review command contract
+## reviewCommands
 
-Classification is lexical and ordered. A missing `reviewCommands` or missing `code` is inactive.
-A non-object `reviewCommands`, non-string/empty/Unicode-whitespace-only `code`, or non-boolean
-`required` is invalid. Exact `/code-review low|medium|high` values are autonomously run; the
-effort is passed as the only Skill argument. `/code-review` alone or followed by any Unicode
-whitespace enters the official namespace, so unsupported effort, `ultra`, `xhigh`, `--fix`,
-double/full-width whitespace, and extra tokens are invalid and make the gate REFUSED. All other
-non-empty strings, including `/code-review-custom` and Unicode project commands, keep the legacy
-behavior. `required:true` is valid only with an exact autonomous command; omission means false.
-
-`reviewCommands.security` is unchanged and never inherits `required`. Autonomous code-review
-requires Claude Code 2.1.246 or newer. Confirmed findings are folded with `source:"code-review"`;
-missing or unknown severity is blocking for that source only. Code-review findings affect the
-verdict but are excluded from `phase4Runs` and flip measurement.
+`reviewCommands` remains an object because it owns `security`. `reviewCommands.code` and
+`reviewCommands.required` are ignored and emit `reviewCommandsCodeRemoved`; remove both keys.
+`reviewCommands.security` is unchanged.
 
 ## Harness adoption state
 
@@ -259,8 +249,8 @@ rank — so approving the degrade is the right answer until the corpus grows.
 `contextMode` is optional and conditional-force, complementary to `indexing` (mdq): mdq
 optimizes Markdown *reads*, context-mode optimizes the *processing of large machine
 output*. When the `ctx_*` MCP tools are available, the audit's Phase-0 probe calls
-`ctx_doctor`, and Phases 2/3/4 process the big `git diff` and `/code-review` /
-`/security-review` output in context-mode's sandbox (returning only distilled summaries)
+`ctx_doctor`, and Phases 2/3/4 process the big `git diff` and `/security-review`
+output in context-mode's sandbox (returning only distilled summaries)
 instead of reading them in full. It needs no `bin`/`roots` — context-mode is a global
 plugin with nothing to locate, so detection is purely by tool availability (never by
 inspecting `~/.claude` plugin paths). When the tools are absent, `contextMode.enabled`
@@ -291,7 +281,7 @@ multi-backend support; the runtime currently reads only `bin` and `enabled`.
 
 `codexReview` is optional and key-gated: only when the key exists does it mirror `webExtract`'s shape for the
 `codex` CLI (`@openai/codex` npm package) — the fourth, adversarial review in Phase 4, run
-after `/code-review` and `/security-review`. Only the `codex` CLI itself is required; the
+after `/security-review`. Only the `codex` CLI itself is required; the
 openai-codex Claude Code plugin is not a dependency. With `codex` on `PATH` (or `bin` pointed at
 an executable wrapper), Phase 0 runs the local-only commands recorded in `probeCommands`:
 `<bin> --version`, then `<bin> exec --help`. This confirms CLI presence and `exec` reachability

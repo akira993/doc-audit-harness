@@ -18,7 +18,6 @@ from docaudit_cache import (CODEX_REVIEW_STATES, VALID_BACKENDS, cache_qualifica
                             content_sha, json_bytes, parse_history_document, sha256_bytes,
                             trim_history, validate_min_passes)
 from docaudit_paths import normalize_finding_path, validate_repo_path
-from docaudit_review import classify_review_command
 from sealed_config import SealedConfigMismatch, load_sealed_config
 
 
@@ -37,7 +36,7 @@ OBSERVERS = (
     "generic-layers.py", "check-docs.py", "fix-scope.py", "compute-baseline.sh",
     "resolve-impact.py", "impact-supplement.py", "classify-run.py",
     "plan-dispatch.py", "start-run.py", "seal-run.py", "codex-review-plan.py",
-    "sealed_config.py", "code-review-plan.py",
+    "sealed_config.py",
 )
 MAX_TEMPLATE_BYTES = 2 * 1024 * 1024
 MAX_REPORT_BYTES = 4 * 1024 * 1024
@@ -51,7 +50,6 @@ TOKEN_COUNTS = {
     "{{GATE_SIBLING_SCAN}}": 1,
     "{{GATE_ANCHOR_WRITTEN}}": 1,
     "{{GATE_REPORT_DATE}}": 2,
-    "{{GATE_CODE_REVIEW_STATUS}}": 1,
 }
 OPTIONAL_TOKENS = frozenset({"{{GATE_REASON}}"})
 TOKEN_RE = re.compile(r"\{\{GATE_[A-Z0-9_]+\}\}")
@@ -61,23 +59,12 @@ REPORT_WARNING_CODES = frozenset({
 })
 BIDI_CONTROLS = frozenset(chr(value) for value in (
     0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)))
-CODE_REVIEW_STATES = {"ran", "blocked-by-settings", "not-run"}
-DEFAULT_CODE_REVIEW_STATUS = "code-review: n/a (audit refused before classification)"
-CODE_REVIEW_STATUS_LINES = {
-    "ran": "✓ code-review: ran (findings folded into phase4)",
-    "blocked-by-settings": (
-        "⚠ code-review: blocked by this repo's own settings (skillOverrides or permission "
-        "deny) while reviewCommands.code is configured — remove the block or unset "
-        "reviewCommands.code"
-    ),
-    "not-run": "⚠ code-review: configured but could not be run or confirmed this session",
-    "phase4-not-required": (
-        "💡 code-review: not run — Phase 4 not required for this run (expected)"
-    ),
-    "not-active": "code-review: n/a (not configured)",
-    "legacy": "code-review: project-specific review command (not contract-verified)",
-    "refuse": "✗ code-review: invalid configuration (audit refused)",
-}
+REVIEW_COMMANDS_CODE_REMOVED = "reviewCommandsCodeRemoved"
+REVIEW_COMMANDS_CODE_REMOVED_WARNING = (
+    "reviewCommands.code is no longer supported (removed in docaudit v0.18.0) and was ignored. "
+    "Delete reviewCommands.code and reviewCommands.required from .claude/doc-audit.json; "
+    "keep reviewCommands.security. Run /code-review as a separate PR-time step if you want it."
+)
 
 
 class Refused(Exception):
@@ -304,18 +291,12 @@ def findings_fail(value):
             raise Refused("phase finding is not an object")
         raw_severity = finding.get("severity")
         if not isinstance(raw_severity, str) or not raw_severity.strip():
-            if finding.get("source") == "code-review":
-                blocking = True
-                continue
             raise Refused("phase finding severity is missing")
         severity = raw_severity.strip().upper()
         if severity in FAIL_SEVERITIES:
             blocking = True
         elif severity not in {"PASS", "WARN", "MEDIUM", "LOW", "INFO"}:
-            if finding.get("source") == "code-review":
-                blocking = True
-            else:
-                raise Refused(f"unknown finding severity: {severity}")
+            raise Refused(f"unknown finding severity: {severity}")
     if value.get("parsed") is False:
         exit_code = value.get("exitCode", value.get("returncode", 0))
         if isinstance(exit_code, int) and exit_code != 0:
@@ -390,28 +371,16 @@ def validate_phase4_contract(repo, manifest, phase4):
     return PHASE4_ELIGIBILITY[key], codex, ordered, unresolved
 
 
-def validate_code_review_contract(review_plan, phase4):
-    findings = phase4.get("findings", [])
-    if not isinstance(findings, list):
-        raise Refused("phase findings must be an array")
-    code_findings = [finding for finding in findings
-                     if isinstance(finding, dict) and finding.get("source") == "code-review"]
-    if review_plan["action"] != "run":
-        if "codeReview" in phase4:
-            raise Refused(
-                "codeReview evidence invalid: key is not eligible for configured review command")
-        if code_findings:
-            raise Refused("code-review findings are not eligible for configured review command")
+def review_commands_code_warning(config):
+    """Preserve the reviewCommands object contract while retiring code and required."""
+    if "reviewCommands" not in config:
         return None
-    code_review = phase4.get("codeReview")
-    if not isinstance(code_review, dict):
-        raise Refused("codeReview evidence invalid: codeReview must be an object")
-    state = code_review.get("state")
-    if state not in CODE_REVIEW_STATES:
-        raise Refused("codeReview evidence invalid: state is not recognized")
-    if code_findings and state != "ran":
-        raise Refused("code-review findings require codeReview.state=ran")
-    return state
+    review_commands = config["reviewCommands"]
+    if not isinstance(review_commands, dict):
+        raise Refused("reviewCommands must be an object")
+    if "code" in review_commands or "required" in review_commands:
+        return REVIEW_COMMANDS_CODE_REMOVED
+    return None
 
 
 def phase4_flip_count(records, current):
@@ -600,8 +569,7 @@ def safe_json(value):
 
 
 def render_report(template, verdict, report_date, *, reason=None, counts=None,
-                  history_status=None, warnings=None, sibling=None, anchor_written=False,
-                  code_review_status=DEFAULT_CODE_REVIEW_STATUS):
+                  history_status=None, warnings=None, sibling=None, anchor_written=False):
     found = TOKEN_RE.findall(template)
     if any(token not in TOKEN_COUNTS for token in found):
         raise TemplateInvalid("report template contains an unknown gate token")
@@ -611,16 +579,20 @@ def render_report(template, verdict, report_date, *, reason=None, counts=None,
                 or (token not in OPTIONAL_TOKENS and actual_count != count)):
             raise TemplateInvalid(f"report template token count is invalid for {token}")
     refused = verdict == "REFUSED"
+    report_warnings = [
+        f"{code}: {REVIEW_COMMANDS_CODE_REMOVED_WARNING}"
+        if code == REVIEW_COMMANDS_CODE_REMOVED else code
+        for code in (warnings or [])
+    ]
     values = {
         "{{GATE_VERDICT}}": verdict,
         "{{GATE_REASON}}": safe_json(reason if refused else "n/a"),
         "{{GATE_COUNTS}}": safe_json("n/a" if refused else counts),
         "{{GATE_HISTORY_STATUS}}": safe_json("n/a" if refused else history_status),
-        "{{GATE_WARNINGS}}": safe_json(warnings or []),
+        "{{GATE_WARNINGS}}": safe_json(report_warnings),
         "{{GATE_SIBLING_SCAN}}": safe_json("n/a" if refused else sibling),
         "{{GATE_ANCHOR_WRITTEN}}": "true" if anchor_written else "false",
         "{{GATE_REPORT_DATE}}": report_date,
-        "{{GATE_CODE_REVIEW_STATUS}}": code_review_status,
     }
     rendered = TOKEN_RE.sub(lambda match: values[match.group(0)], template)
     raw = rendered.encode("utf-8")
@@ -825,8 +797,7 @@ def add_warning(warnings, code):
 
 def finalize_report(repo, run_dir, rule, report_date, last_run_path, base_state, warnings,
                     verdict, *, reason=None, counts=None, history_status=None,
-                    sibling=None, anchor_written=False,
-                    code_review_status=DEFAULT_CODE_REVIEW_STATUS):
+                    sibling=None, anchor_written=False):
     if rule is None:
         return None, base_state["reportStatus"]
     report_path = None
@@ -837,7 +808,7 @@ def finalize_report(repo, run_dir, rule, report_date, last_run_path, base_state,
         rendered = render_report(
             template, verdict, report_date, reason=reason, counts=counts,
             history_status=history_status, warnings=warnings, sibling=sibling,
-            anchor_written=anchor_written, code_review_status=code_review_status)
+            anchor_written=anchor_written)
         report_path, durability_unknown, cleanup_error = publish_report(
             repo, run_dir, rule, rendered)
         if durability_unknown:
@@ -903,7 +874,6 @@ def main():
     anchor_absolute = (args.anchor_path if os.path.isabs(args.anchor_path)
                        else os.path.join(repo, args.anchor_path))
     codex_review_status = {"state": None, "required": False, "degraded": False}
-    code_review_status_line = DEFAULT_CODE_REVIEW_STATUS
 
     def relative_to_repo(path):
         absolute = os.path.abspath(path)
@@ -930,8 +900,7 @@ def main():
     except ValueError as exc:
         print(json.dumps({"verdict": "REFUSED", "anchorWritten": False,
                           "reason": f"unsafe state path: {exc}",
-                          "codexReview": codex_review_status,
-                          "codeReviewStatus": code_review_status_line}, sort_keys=True))
+                          "codexReview": codex_review_status}, sort_keys=True))
         return 3
     lock_fd = None
     owned = False
@@ -1022,10 +991,9 @@ def main():
                 or backend != config.get("phase3Backend", "workflow")):
             raise Refused("sealed phase3Backend is invalid or does not match config")
         report_trusted = identity_ok
-        code_review_plan = classify_review_command(config)
-        if code_review_plan["action"] == "refuse":
-            code_review_status_line = CODE_REVIEW_STATUS_LINES["refuse"]
-            raise Refused(code_review_plan["reason"])
+        code_removed_warning = review_commands_code_warning(config)
+        if code_removed_warning is not None:
+            add_warning(warnings, code_removed_warning)
         validate_returns(returns)
         if expected.get("attempt") != max((item["attempt"] for item in returns), default=0):
             raise Refused("EVIDENCE attempt does not match returns")
@@ -1089,16 +1057,8 @@ def main():
                 raise Refused("phase4=none sentinel is invalid")
             if codex_review_required:
                 raise Refused("codex-review required but state=missing")
-            if code_review_plan["action"] == "run" and code_review_plan["required"]:
-                raise Refused("code-review-required-not-run")
             if manifest.get("phase4Required"):
                 raise Refused("phase4=none sentinel is invalid")
-            if code_review_plan["action"] == "run":
-                code_review_status_line = CODE_REVIEW_STATUS_LINES["phase4-not-required"]
-            elif code_review_plan["action"] == "legacy":
-                code_review_status_line = CODE_REVIEW_STATUS_LINES["legacy"]
-            else:
-                code_review_status_line = CODE_REVIEW_STATUS_LINES["not-active"]
         else:
             if manifest.get("phase4Required") is False:
                 raise Refused("phase4 evidence conflicts with manifest.phase4Required=false")
@@ -1107,17 +1067,6 @@ def main():
             phase4 = parse_json(raw, "phase4.json")
             (phase4_eligible, codex_review_evidence, phase4_findings,
              phase4_unresolved) = validate_phase4_contract(repo, manifest, phase4)
-            code_review_state = validate_code_review_contract(code_review_plan, phase4)
-            if code_review_plan["action"] == "run":
-                code_review_status_line = CODE_REVIEW_STATUS_LINES[code_review_state]
-                if code_review_plan["required"] and code_review_state != "ran":
-                    raise Refused("code-review-required-not-run")
-                if not code_review_plan["required"] and code_review_state != "ran":
-                    add_warning(warnings, "codeReviewNotRun")
-            elif code_review_plan["action"] == "legacy":
-                code_review_status_line = CODE_REVIEW_STATUS_LINES["legacy"]
-            else:
-                code_review_status_line = CODE_REVIEW_STATUS_LINES["not-active"]
 
         codex_review_state = (codex_review_evidence.get("state")
                               if codex_review_evidence is not None else None)
@@ -1343,7 +1292,7 @@ def main():
             repo, run_dir, report_rule, manifest["reportDate"], last_run_path,
             last_state, warnings, report_verdict, counts=counts,
             history_status=expected["historyStatus"], sibling=sibling,
-            anchor_written=anchor_written, code_review_status=code_review_status_line)
+            anchor_written=anchor_written)
         try:
             release_lock(lock_path, lock_inode)
         except OSError:
@@ -1354,8 +1303,7 @@ def main():
                   "runid": args.runid, "counts": counts,
                   "historyStatus": expected["historyStatus"], "warnings": warnings,
                   "siblingScan": sibling, "reportStatus": report_status,
-                  "codexReview": codex_review_status,
-                  "codeReviewStatus": code_review_status_line}
+                  "codexReview": codex_review_status}
         if report_path is not None:
             result["reportPath"] = report_path
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
@@ -1415,7 +1363,7 @@ def main():
                     report_path, report_status = finalize_report(
                         repo, run_dir, report_rule, manifest["reportDate"], last_run_path,
                         last_state, warnings, "REFUSED", reason=reason,
-                        anchor_written=False, code_review_status=code_review_status_line)
+                        anchor_written=False)
             if lock_fd is not None and not quarantine_failed:
                 try:
                     release_lock(lock_path, lock_inode)
@@ -1423,8 +1371,7 @@ def main():
                     add_warning(warnings, "lockReleaseFailed")
         output_reason = "config-changed" if config_taint else reason
         result = {"verdict": "REFUSED", "anchorWritten": False, "reason": output_reason,
-                  "codexReview": codex_review_status,
-                  "codeReviewStatus": code_review_status_line}
+                  "codexReview": codex_review_status}
         if warnings:
             result["warnings"] = warnings
         if report_status is not None:

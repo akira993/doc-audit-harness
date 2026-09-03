@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -315,7 +316,6 @@ anchor: {{GATE_ANCHOR_WRITTEN}}
 counts: {{GATE_COUNTS}}
 history: {{GATE_HISTORY_STATUS}}
 sibling: {{GATE_SIBLING_SCAN}}
-codeReview: {{GATE_CODE_REVIEW_STATUS}}
 """
 
     def test_invalid_utf8_template_is_rejected_by_gate(self):
@@ -562,6 +562,17 @@ codeReview: {{GATE_CODE_REVIEW_STATUS}}
         self.assertEqual(module.TOKEN_COUNTS["{{GATE_REPORT_DATE}}"], 2)
         self.assertTrue(all(count == 1 for token, count in module.TOKEN_COUNTS.items()
                             if token != "{{GATE_REPORT_DATE}}"))
+        with open(os.path.join(os.path.dirname(os.path.dirname(__file__)),
+                               "skills", "audit", "SKILL.md"), encoding="utf-8") as handle:
+            skill = handle.read()
+        rows = dict(re.findall(
+            r"^\| `(\{\{GATE_[A-Z0-9_]+\}\})` \| ([^|]+?) \|", skill, re.M))
+        self.assertEqual(set(rows), set(module.TOKEN_COUNTS))
+        for token, expected in module.TOKEN_COUNTS.items():
+            if token in module.OPTIONAL_TOKENS:
+                self.assertEqual(rows[token], "0 or 1")
+            else:
+                self.assertEqual(int(rows[token]), expected)
         escaped = module.safe_json("<x>&\u2028")
         self.assertEqual(escaped, '"\\u003cx\\u003e\\u0026\\u2028"')
         with self.assertRaises(module.TemplateInvalid):
@@ -697,13 +708,16 @@ class TestSiblingFailures(GateBase):
         self.assertEqual(json.loads(proc.stdout)["verdict"], "NEEDS_FIX")
 
     def test_phase4_finding_without_severity_is_refused(self):
-        fx = self.prepared(phase4=[{"title": "critical issue"}])
-        proc = fx.gate()
-        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
-        result = json.loads(proc.stdout)
-        self.assertEqual(result["verdict"], "REFUSED")
-        self.assertIn("severity", result["reason"])
-        self.assertNotIn("siblingScan", result)
+        for finding in ({"title": "critical issue"},
+                        {"source": "security-review", "title": "missing"}):
+            with self.subTest(finding=finding):
+                fx = self.prepared(phase4=[finding])
+                proc = fx.gate()
+                self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+                result = json.loads(proc.stdout)
+                self.assertEqual(result["verdict"], "REFUSED")
+                self.assertIn("severity", result["reason"])
+                self.assertNotIn("siblingScan", result)
         with open(fx.last_run, encoding="utf-8") as handle:
             state = json.load(handle)
         self.assertEqual(result["reportStatus"], "not-requested")
@@ -972,6 +986,29 @@ class TestS4aSealedGate(GateBase):
         self.rewrite(impact_path, impact)
         result = json.loads(self.assert_refused(fx).stdout)
         self.assertEqual(result["reason"], "impact sha mismatch")
+
+    def test_phase4_required_type_has_highest_priority(self):
+        for value in (None, 0, 1, "true"):
+            with self.subTest(value=value):
+                fx = self.prepared()
+                write(fx.config_path, "{}\n")
+                path = os.path.join(fx.run_dir, "manifest.json")
+                manifest = self.load(path)
+                manifest["phase4Required"] = value
+                fx.evidence["manifest"] = self.rewrite(path, manifest)
+                result = json.loads(self.assert_refused(fx).stdout)
+                self.assertEqual(result["reason"],
+                                 "manifest.phase4Required must be boolean")
+
+    def test_phase4_evidence_conflict_precedes_finding_validation(self):
+        fx = self.prepared(phase4=[{"title": "missing severity"}])
+        path = os.path.join(fx.run_dir, "manifest.json")
+        manifest = self.load(path)
+        manifest["phase4Required"] = False
+        fx.evidence["manifest"] = self.rewrite(path, manifest)
+        result = json.loads(self.assert_refused(fx).stdout)
+        self.assertEqual(
+            result["reason"], "phase4 evidence conflicts with manifest.phase4Required=false")
 
     def test_manifest_and_impact_provenance_mismatch_has_fixed_reason(self):
         fx = self.prepared()

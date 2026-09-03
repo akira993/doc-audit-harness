@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Change-driven documentation audit. Use when the user asks to audit docs since the last audit, check documentation consistency after code/config changes, run a full doc consistency sweep, or verify nothing is stale before a release. Diffs since the anchor, maps changed files to impacted docs, autonomously runs configured /code-review and /security-review layers, and emits one CONSISTENT/NEEDS FIX verdict. Report-only.
+description: Change-driven documentation audit. Use when the user asks to audit docs since the last audit, check documentation consistency after code/config changes, run a full doc consistency sweep, or verify nothing is stale before a release. Diffs since the anchor, maps changed files to impacted docs, runs the configured /security-review layer, and emits one CONSISTENT/NEEDS FIX verdict. Report-only.
 argument-hint: "[--full] [--break-lock] [--accept-config]"
 ---
 
@@ -63,7 +63,7 @@ inside `EVIDENCE`, not separate transport variables:
 | (d) start-run complete | (c) + dispatch, cached, history, historyStatus, manifest |
 | (e) seal complete | (d) + digest and updated manifest |
 | (f) each Phase-3 attempt complete | (e) + returns, attempt |
-| (g) interrupted after starting `/code-review` | same as (f); on resume bind `CODE_REVIEW_STATE=not-run` and do not fold code-review findings left in the conversation |
+| (g) interrupted during Phase 4 | same as (f); resume Phase 4 from sealed evidence |
 | (h) Phase-4 evidence complete | (g) + phase4 |
 
 Phase-5 status lines are rendered from probe-record.py --read (its "rebind" map is authoritative except for the webExtract/codexReview resume re-probe rule below; only the Phase-3 refresh-failure detail comes from the conversation and is omitted after a resume); a line marked unknown prints its "state unknown (probe record unavailable)" form; CODEX_REVIEW_STATE is rebound from rebind.codex-review.reviewState; a failed read marks all lines unknown; none of this changes the verdict. After a resume, do not restore operational webExtract/codexReview availability, reason, or binary values from `rebind`. Re-run `ax-probe.sh` and `codex-probe.sh` against the current config before either consumer, bind each seam's operational availability/reason/bin from that same probe stdout, and re-record that same stdout through `probe-record.py` so the existing upsert overwrites those two seam records while preserving every other seam. If a re-probe cannot start, emits non-JSON, or cannot be parsed, do not use the old rebind values: apply the fresh Phase-0 degrade (`AX_AVAILABLE=false` with `AX_REASON=probe-error`, or `CODEX_REVIEW_AVAILABLE=false`) and continue. If any re-probe or its re-record fails, force that seam's Phase-5 display to its `state unknown` form and never display its old record as current; this remains non-blocking, while `codexReview.required:true` is handled fail-closed by the existing planner and verdict checks.
@@ -547,20 +547,13 @@ Each `SEALED_DIGEST_EXCLUDE` must be an entry read from `SEALED_DIGEST_EXCLUDES[
 the result to equal `EVIDENCE.digest`. Never broaden those excludes. After three total attempts,
 continue to Phase 4 with incomplete evidence so the deterministic gate can REFUSE it. The Codex
 path likewise continues after its final checker result. Record the final checker arrays for the
-report. (Built-in `/code-review` and `/security-review` cannot run
-inside Workflow; they remain in Phase 4.)
+report. (Built-in `/security-review` cannot run inside Workflow; it remains in Phase 4.)
 
 ## Phase 4 — existing layers + reviews (main loop, sequential)
 Re-derive `CONFIG_SHA` from `EVIDENCE` as specified above. Bind the Phase-4 values only through sealed getters:
 `DOC_AUDIT_COMMANDS_P4_JSON="$(python3 "$SD/scripts/sealed_config.py" --config "$CFG" --expect-sha "$CONFIG_SHA" --get docAuditCommands --default null)"`.
 `BOUNDARY_COMMAND="$(python3 "$SD/scripts/sealed_config.py" --config "$CFG" --expect-sha "$CONFIG_SHA" --get boundaryCommand --default null --raw)"`.
 `REVIEW_COMMANDS_JSON="$(python3 "$SD/scripts/sealed_config.py" --config "$CFG" --expect-sha "$CONFIG_SHA" --get reviewCommands --default '{}')"`.
-Immediately classify the code review through the sealed consumer, before the global Phase-4 branch:
-`CODE_REVIEW_PLAN="$(python3 "$SD/scripts/code-review-plan.py" --config "$CFG" --expect-config-sha "$CONFIG_SHA")"`.
-Parse its `action`, `state`, `effort`, `required`, `command`, and `reason`; this step binds only the
-plan and initial `CODE_REVIEW_STATE`, and never starts a review command. `REVIEW_COMMANDS_JSON`
-is consumed only for `reviewCommands.security`; the legacy code command comes exclusively
-from `CODE_REVIEW_PLAN.command`.
 Global gate: run this phase's delegated checks **iff** `SEALED_PHASE4_REQUIRED` (parsed from
 `SEALED_MANIFEST.phase4Required`) is true. Do not re-derive this decision from impacted/SSOT/mode
 in the orchestrator. Apply the branch as:
@@ -584,32 +577,8 @@ in the orchestrator. Apply the branch as:
    to non-blocking. A final `VERDICT` line, when present, is a consistency check only; missing,
    ambiguous, or contradictory output adds a non-blocking WARN and `parsed:false`.
 2. If `boundaryCommand` set and gate open, run it.
-3. Handle the classified code review on the working diff, then `reviewCommands.security`
-   (e.g. `/security-review`). `action=refuse` starts nothing, binds the returned invalid state,
-   and continues normally to the gate, which alone emits REFUSED. `action=not-active` starts
-   nothing. When `SEALED_PHASE4_REQUIRED` is false, do not start either a P6 or P8 command;
-   bind `CODE_REVIEW_STATE=phase4-not-required` for P6 and preserve the legacy no-op behavior
-   for P8. When the branch is open, `action=legacy` runs the exact returned `command` with the
-   existing project-specific behavior: an unavailable or failed command is skipped with WARN,
-   and its existing finding/state/evidence/fold behavior is unchanged.
-
-   For `action=run` inside the open branch, invoke the Skill tool with `skill=code-review` and
-   `args=<effort>` only, in both interactive and non-interactive sessions. Do not ask the user
-   first. Without ending the turn, wait for either the synchronous tool result or the background
-   agent completion notice. A confirmed completion binds `CODE_REVIEW_STATE=ran`, including an
-   empty result. An error containing `disabled for model invocation in skillOverrides` or
-   `blocked by permission rules` binds `CODE_REVIEW_STATE=blocked-by-settings`; every other
-   missing skill, launch failure, or unconfirmed completion binds `CODE_REVIEW_STATE=not-run`.
-   An audit resumed after the review was started (checkpoint row (g)) also binds
-   `CODE_REVIEW_STATE=not-run` and never folds findings left in the conversation from before the
-   interruption; an audit resumed before any code-review invocation starts the review normally
-   when Phase 4 is reached.
-
-   Fold only findings visible in the confirmed same-turn result, independent of bullet, line,
-   or fenced-JSON layout, with `source:"code-review"`. Preserve a recognized severity; label a
-   missing or unknown severity `UNSPECIFIED`. The gate treats that label as blocking only for
-   `source:"code-review"`. Normalize any `/security-audit ...` request to `/security-review`,
-   then run `reviewCommands.security` exactly as before. When `CM_AVAILABLE` is true and a review exposes its output as
+3. Normalize any `/security-audit ...` request to `/security-review`, then run
+   `reviewCommands.security` exactly as before. When `CM_AVAILABLE` is true and a review exposes its output as
    capturable text/JSON or a file, do not read that raw output into context: reduce it
    to its FAIL/WARN findings with `ctx_execute`/`ctx_batch_execute` in the sandbox and
    fold only the distilled findings into the verdict (non-blocking; degrade to reading
@@ -664,17 +633,13 @@ in the orchestrator. Apply the branch as:
    (blocking), `medium`→`MEDIUM`, `low`→`LOW` (non-blocking), each with
    `source:"codex-review"`, `file:"<finding.file>"`, and `title` formatted as `"<finding.title> (<finding.file>)"`;
    bind `CODEX_REVIEW_STATE=completed` and fold these into the Phase-4 findings collection
-   exactly like `/code-review`/`/security-review` findings.
+   exactly like `/security-review` findings.
 
    Phase-4 full review samples the defect pool and does not guarantee that fixing N findings and re-running will pass. Carry-forward is data-only (`file` plus `severity`) and never changes the verdict by itself.
 
 **Record Phase-4 evidence for the gate.** When `SEALED_PHASE4_REQUIRED` is true, collect every
 delegated-layer and review finding as
 `{"findings":[{"severity":"...","source":"...","title":"...","file":"... for codex-review"}],"codexReview":{"state":"$CODEX_REVIEW_STATE","promptVariant":"$PROMPT_VARIANT_OR_NULL","carryForwardSha":"$CARRY_FORWARD_SHA"}}`.
-For a P6 code-review plan only, also include
-`"codeReview":{"state":"<ran|blocked-by-settings|not-run>"}`. Never include `codeReview` for
-refuse, not-active, or P8 legacy plans. The gate independently checks this eligibility against
-the sealed config.
 Do not include `required` in evidence; the gate reads it from the sealed config. Use each finding's own
 severity verbatim (`FAIL`/`HIGH`/`CRITICAL` = blocking; `WARN`/`MEDIUM`/`LOW`/`INFO` = non-blocking);
 map review high→`HIGH`, medium→`MEDIUM`. Send the object, even with zero findings, to
@@ -731,13 +696,15 @@ verdict or create separate success and REFUSED templates:
 | `{{GATE_REASON}}` | 0 or 1 | REFUSED reason; `"n/a"` on success |
 | `{{GATE_COUNTS}}` | 1 | counts; `"n/a"` on REFUSED |
 | `{{GATE_HISTORY_STATUS}}` | 1 | history status; `"n/a"` on REFUSED |
-| `{{GATE_WARNINGS}}` | 1 | gate warning codes |
+| `{{GATE_WARNINGS}}` | 1 | report warning entries (fixed codes, except the retired-config warning described below) |
 | `{{GATE_SIBLING_SCAN}}` | 1 | sibling scan; `"n/a"` on REFUSED |
 | `{{GATE_ANCHOR_WRITTEN}}` | 1 | whether the anchor was written |
 | `{{GATE_REPORT_DATE}}` | 2 | sealed date for front matter `created` and `updated` |
-| `{{GATE_CODE_REVIEW_STATUS}}` | 1 | code-review status line rendered by the gate |
 
-`{{GATE_WARNINGS}}` includes only warnings known before report publication. For warnings discovered
+`{{GATE_WARNINGS}}` includes only warnings known before report publication. It renders fixed warning
+codes unchanged, except `reviewCommandsCodeRemoved`, which is rendered as
+`reviewCommandsCodeRemoved: <the complete migration message>`; gate stdout keeps the fixed code only.
+For warnings discovered
 during publication (`reportDurabilityUnknown`, `reportWriteError`, `reportStatusUpdateFailed`, or
 `lockReleaseFailed`), the gate stdout and `last_run.reportStatus` are authoritative.
 
@@ -829,20 +796,7 @@ all three values come from `rebind`. A null caller home is displayed as `(null)`
 
 A `⚠ probe-record: <seam> not recorded` warning earlier in the run explains a later unknown line; do not substitute conversation values.
 
-**code-review status line** — include exactly one immediately after the codex-review line:
-`{{GATE_CODE_REVIEW_STATUS}}`. The gate derives and renders its fixed text from sealed config,
-manifest, and validated Phase-4 evidence; conversation state never renders this report line.
-Its fixed mappings are:
-- `ran` → `✓ code-review: ran (findings folded into phase4)`
-- `blocked-by-settings` → `⚠ code-review: blocked by this repo's own settings (skillOverrides or permission deny) while reviewCommands.code is configured — remove the block or unset reviewCommands.code`
-- `not-run` → `⚠ code-review: configured but could not be run or confirmed this session`
-- `phase4-not-required` → `💡 code-review: not run — Phase 4 not required for this run (expected)`
-- not-active → `code-review: n/a (not configured)`
-- P8 legacy → `code-review: project-specific review command (not contract-verified)`
-- invalid configuration → `✗ code-review: invalid configuration (audit refused)`
-- refusal before classification → `code-review: n/a (audit refused before classification)`
-
-**symbol-graph status line** — always include exactly one, immediately after the code-review line; it is **non-blocking** (never changes the verdict), 6-state:
+**symbol-graph status line** — always include exactly one, immediately after the codex-review line; it is **non-blocking** (never changes the verdict), 6-state:
 - `rebind.symbol-graph.state=unknown` → `⚠ symbol-graph: state unknown (probe record unavailable) [non-blocking]`
 - `SYMBOL_GRAPH_REASON=not-configured` → `💡 symbol-graph: not configured — symbolGraph is absent from doc-audit.json, so the tool is not probed; run /docaudit:init to enable it.`
 - `SYMBOL_GRAPH_REASON=invalid-config` → `⚠ symbol-graph: doc-audit.json symbolGraph is invalid — tool not probed this run; fix the key. [non-blocking]`
@@ -955,8 +909,7 @@ baseline ref (codex itself won't catch a bad ref and silently self-falls-back). 
 its `-m` model and medium reasoning explicitly through `"$CODEX_REVIEW_BIN"`; an explicit config
 model is never retried, and only a default light/Luna failure may retry once with Terra. A non-zero exit,
 timeout, or schema-mismatched result is WARN, never a FAIL basis by itself. But a *completed*
-codex-review run's `critical`/`high` findings DO block the verdict, same as `/code-review`'s own
-high-severity findings — this is a deliberate exception to the rule that probe-style seams
+codex-review run's `critical`/`high` findings DO block the verdict — this is a deliberate exception to the rule that probe-style seams
 (mdq/context-mode/ax) never affect the verdict.
 codegraph, graphify, and CocoIndex (`symbolGraph`/`docGraph`/`semanticSearch`), when available, are
 ALL report-only and NEVER participate in the verdict — none of the three writes to `phase4.json`;
