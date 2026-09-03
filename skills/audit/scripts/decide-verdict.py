@@ -19,6 +19,8 @@ from docaudit_cache import (CODEX_REVIEW_STATES, VALID_BACKENDS, cache_qualifica
                             trim_history, validate_min_passes)
 from docaudit_paths import normalize_finding_path, validate_repo_path
 from sealed_config import SealedConfigMismatch, load_sealed_config
+from claim_record import (CLAIM_FILENAME_RE, ClaimRecordError, extract_claim_targets,
+                          load_valid_claim_record)
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -48,6 +50,7 @@ TOKEN_COUNTS = {
     "{{GATE_HISTORY_STATUS}}": 1,
     "{{GATE_WARNINGS}}": 1,
     "{{GATE_SIBLING_SCAN}}": 1,
+    "{{GATE_CODEX_CLAIMS}}": 1,
     "{{GATE_ANCHOR_WRITTEN}}": 1,
     "{{GATE_REPORT_DATE}}": 2,
 }
@@ -294,7 +297,8 @@ def findings_fail(value):
             raise Refused("phase finding severity is missing")
         severity = raw_severity.strip().upper()
         if severity in FAIL_SEVERITIES:
-            blocking = True
+            if finding.get("source") != "codex-review":
+                blocking = True
         elif severity not in {"PASS", "WARN", "MEDIUM", "LOW", "INFO"}:
             raise Refused(f"unknown finding severity: {severity}")
     if value.get("parsed") is False:
@@ -354,7 +358,7 @@ def validate_phase4_contract(repo, manifest, phase4):
         if not isinstance(value, str) or not value:
             raise Refused("codex-review finding file is missing")
         severity = finding.get("severity")
-        if not isinstance(severity, str) or severity.upper() not in PHASE4_SEVERITIES:
+        if not isinstance(severity, str) or severity.strip().upper() not in PHASE4_SEVERITIES:
             raise Refused("codex-review finding severity is invalid")
         try:
             path = normalize_finding_path(repo, value)
@@ -363,12 +367,88 @@ def validate_phase4_contract(repo, manifest, phase4):
         if path is None:
             unresolved += 1
         else:
-            normalized.add((path, severity.upper()))
+            normalized.add((path, severity.strip().upper()))
     rank = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
     ordered = [{"file": path, "severity": severity}
                for path, severity in sorted(normalized,
                                             key=lambda item: (-rank[item[1]], item[0]))]
     return PHASE4_ELIGIBILITY[key], codex, ordered, unresolved
+
+
+def adjudicate_codex_claims(repo, run_dir, runid, phase4, codex_review_state, warnings):
+    """Apply P1-P4, P6, and P7 and return ordered effective claim items."""
+    codex_findings = [finding for finding in phase4.get("findings", [])
+                      if isinstance(finding, dict)
+                      and finding.get("source") == "codex-review"]
+    if codex_findings and codex_review_state != "completed":
+        raise Refused("codex-review findings require state=completed")
+    targets, missing_titles = extract_claim_targets(phase4)
+    if missing_titles:
+        add_warning(warnings, "codexFindingTitleMissing")
+    if not targets:
+        return [], 0
+
+    claims_dir = os.path.join(run_dir, "claims")
+    target_ids = {target["findingId"] for target in targets}
+    claims_usable = False
+    if os.path.isdir(claims_dir) and not os.path.islink(claims_dir):
+        claims_usable = True
+        try:
+            names = os.listdir(claims_dir)
+        except OSError:
+            names = []
+            claims_usable = False
+        for name in names:
+            if (not CLAIM_FILENAME_RE.fullmatch(name)
+                    or name[:-5] not in target_ids):
+                add_warning(warnings, "claimRecordUnexpected")
+    elif os.path.lexists(claims_dir):
+        add_warning(warnings, "claimRecordUnexpected")
+
+    items = []
+    for target in targets:
+        finding_id = target["findingId"]
+        record = None
+        warning = "codexClaimsUnadjudicated"
+        if claims_usable:
+            try:
+                record = load_valid_claim_record(
+                    os.path.join(claims_dir, finding_id + ".json"),
+                    runid=runid, finding_id=finding_id, repo_root=repo,
+                    finding_file=target["file"])
+            except ClaimRecordError as exc:
+                warning = exc.warning
+        if record is None:
+            add_warning(warnings, warning)
+            record = {"state": "unverified", "rationale": ""}
+        item = {
+            "findingId": finding_id,
+            "title": target["title"],
+            "file": target["file"],
+            "severity": target["severity"],
+            "effectiveState": record["state"],
+            "reason": record.get("reason"),
+            "evidenceFile": record.get("evidenceFile"),
+            "evidenceLine": record.get("evidenceLine"),
+            "rationale": record.get("rationale", "")[:2048],
+        }
+        items.append(item)
+    return items, len(targets)
+
+
+def codex_claim_counts(items):
+    counts = {"confirmed": 0, "refuted": 0, "unverified": 0,
+              "notAdjudicable": 0}
+    key_by_state = {"confirmed": "confirmed", "refuted": "refuted",
+                    "unverified": "unverified",
+                    "not-adjudicable": "notAdjudicable"}
+    for item in items:
+        counts[key_by_state[item["effectiveState"]]] += 1
+    return counts
+
+
+def codex_claims_block(items):
+    return any(item["effectiveState"] == "confirmed" for item in items)
 
 
 def review_commands_code_warning(config):
@@ -568,15 +648,59 @@ def safe_json(value):
             .replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"))
 
 
+def bounded_claim_payload(items, byte_budget):
+    """Keep a deterministic prefix whose fully escaped payload fits byte_budget."""
+    encoded_items = [safe_json(item) for item in items]
+    total_by_state = {}
+    for item in items:
+        state = item["effectiveState"]
+        total_by_state[state] = total_by_state.get(state, 0) + 1
+    kept = []
+    kept_by_state = {}
+    for index, encoded in enumerate(encoded_items):
+        state = items[index]["effectiveState"]
+        candidate_kept = kept + [encoded]
+        candidate_counts = dict(kept_by_state)
+        candidate_counts[state] = candidate_counts.get(state, 0) + 1
+        omitted_by_state = {
+            key: count - candidate_counts.get(key, 0)
+            for key, count in sorted(total_by_state.items())
+            if count - candidate_counts.get(key, 0)
+        }
+        candidate = (
+            '{"items":[' + ",".join(candidate_kept) + '],"omittedByEffectiveState":' +
+            safe_json(omitted_by_state) + ',"omittedCount":' +
+            str(len(items) - len(candidate_kept)) + '}'
+        )
+        if len(candidate.encode("utf-8")) > byte_budget:
+            break
+        kept = candidate_kept
+        kept_by_state = candidate_counts
+    omitted_by_state = {
+        key: count - kept_by_state.get(key, 0)
+        for key, count in sorted(total_by_state.items())
+        if count - kept_by_state.get(key, 0)
+    }
+    return {
+        "items": items[:len(kept)],
+        "omittedCount": len(items) - len(kept),
+        "omittedByEffectiveState": omitted_by_state,
+    }
+
+
 def render_report(template, verdict, report_date, *, reason=None, counts=None,
-                  history_status=None, warnings=None, sibling=None, anchor_written=False):
+                  history_status=None, warnings=None, sibling=None, anchor_written=False,
+                  claim_items=None, claim_target_count=None, claim_payload_result=None):
     found = TOKEN_RE.findall(template)
     if any(token not in TOKEN_COUNTS for token in found):
         raise TemplateInvalid("report template contains an unknown gate token")
+    optional_tokens = set(OPTIONAL_TOKENS)
+    if claim_target_count in (None, 0):
+        optional_tokens.add("{{GATE_CODEX_CLAIMS}}")
     for token, count in TOKEN_COUNTS.items():
         actual_count = found.count(token)
-        if ((token in OPTIONAL_TOKENS and actual_count not in (0, count))
-                or (token not in OPTIONAL_TOKENS and actual_count != count)):
+        if ((token in optional_tokens and actual_count not in (0, count))
+                or (token not in optional_tokens and actual_count != count)):
             raise TemplateInvalid(f"report template token count is invalid for {token}")
     refused = verdict == "REFUSED"
     report_warnings = [
@@ -594,6 +718,24 @@ def render_report(template, verdict, report_date, *, reason=None, counts=None,
         "{{GATE_ANCHOR_WRITTEN}}": "true" if anchor_written else "false",
         "{{GATE_REPORT_DATE}}": report_date,
     }
+    claim_token = "{{GATE_CODEX_CLAIMS}}"
+    if claim_token in found:
+        if refused or not claim_target_count:
+            claim_payload = "n/a"
+            claim_value = safe_json(claim_payload)
+        else:
+            without_claims = TOKEN_RE.sub(
+                lambda match: "" if match.group(0) == claim_token
+                else values[match.group(0)], template)
+            base_size = len(without_claims.encode("utf-8"))
+            claim_payload = bounded_claim_payload(
+                claim_items or [], max(0, MAX_REPORT_BYTES - base_size))
+            claim_value = safe_json(claim_payload)
+        if claim_payload_result is not None:
+            claim_payload_result.clear()
+            if isinstance(claim_payload, dict):
+                claim_payload_result.update(claim_payload)
+        values[claim_token] = claim_value
     rendered = TOKEN_RE.sub(lambda match: values[match.group(0)], template)
     raw = rendered.encode("utf-8")
     if len(raw) > MAX_REPORT_BYTES:
@@ -797,18 +939,27 @@ def add_warning(warnings, code):
 
 def finalize_report(repo, run_dir, rule, report_date, last_run_path, base_state, warnings,
                     verdict, *, reason=None, counts=None, history_status=None,
-                    sibling=None, anchor_written=False):
-    if rule is None:
-        return None, base_state["reportStatus"]
+                    sibling=None, anchor_written=False, claim_items=None,
+                    claim_target_count=None):
+    claim_payload = {
+        "items": [],
+        "omittedCount": len(claim_items or []),
+        "omittedByEffectiveState": {},
+    }
     report_path = None
-    status = "failed"
+    status = "failed" if rule is not None else base_state["reportStatus"]
     error_code = None
     try:
+        claim_payload = bounded_claim_payload(claim_items or [], MAX_REPORT_BYTES)
+        if rule is None:
+            return None, base_state["reportStatus"], claim_payload
         template = load_report_template(run_dir)
         rendered = render_report(
             template, verdict, report_date, reason=reason, counts=counts,
             history_status=history_status, warnings=warnings, sibling=sibling,
-            anchor_written=anchor_written)
+            anchor_written=anchor_written, claim_items=claim_items,
+            claim_target_count=claim_target_count,
+            claim_payload_result=claim_payload)
         report_path, durability_unknown, cleanup_error = publish_report(
             repo, run_dir, rule, rendered)
         if durability_unknown:
@@ -838,7 +989,7 @@ def finalize_report(repo, run_dir, rule, report_date, last_run_path, base_state,
     except OSError:
         add_warning(warnings, "reportStatusUpdateFailed")
         persisted_status = base_state["reportStatus"]
-    return report_path, persisted_status
+    return report_path, persisted_status, claim_payload
 
 
 def main():
@@ -917,6 +1068,8 @@ def main():
     report_trusted = False
     report_rule = None
     warnings = []
+    claim_target_count = None
+    claim_items = []
     try:
         expected = json.loads(args.expect_json)
         validate_evidence(expected)
@@ -1074,6 +1227,12 @@ def main():
         if codex_review_required and codex_review_state != "completed":
             raise Refused(f"codex-review required but state={codex_review_state or 'missing'}")
 
+        if phase4 is None:
+            claim_target_count = 0
+        else:
+            claim_items, claim_target_count = adjudicate_codex_claims(
+                repo, run_dir, args.runid, phase4, codex_review_state, warnings)
+
         head = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True,
                               text=True, check=True).stdout.strip()
         if head != manifest.get("head"):
@@ -1179,6 +1338,7 @@ def main():
             has_fail = findings_fail(preflight) or has_fail
         if phase4 is not None:
             has_fail = findings_fail(phase4) or has_fail
+        has_fail = codex_claims_block(claim_items) or has_fail
         verdict = "NEEDS_FIX" if has_fail else "CONSISTENT"
 
         # The sibling scan remains inside the lock and precedes the indivisible barrier.
@@ -1251,7 +1411,7 @@ def main():
             if phase4_flips:
                 add_warning(
                     warnings,
-                    f'Phase-4 instability: {phase4_flips} file(s) changed blocking status with '
+                    f'Phase-4 instability: {phase4_flips} file(s) changed CRITICAL/HIGH reporting status with '
                     'unchanged worktree, contract, config, and carry-forward inputs — the '
                     'codex full review samples '
                     'the defect pool; "fix N and re-run" is not guaranteed to converge '
@@ -1285,14 +1445,17 @@ def main():
                   "verdictFlipsUnchangedContent": flips,
                   "verdictFlipsUnchangedContentSameChangeSet": same_change_set_flips,
                   "phase4FlipsUnchangedContent": phase4_flips}
+        if claim_target_count:
+            counts["codexClaims"] = codex_claim_counts(claim_items)
         report_verdict = verdict
         if verdict == "CONSISTENT" and codex_review_status["degraded"]:
             report_verdict = f"CONSISTENT (codex-review did not run: {codex_review_state})"
-        report_path, report_status = finalize_report(
+        report_path, report_status, claim_payload = finalize_report(
             repo, run_dir, report_rule, manifest["reportDate"], last_run_path,
             last_state, warnings, report_verdict, counts=counts,
             history_status=expected["historyStatus"], sibling=sibling,
-            anchor_written=anchor_written)
+            anchor_written=anchor_written, claim_items=claim_items,
+            claim_target_count=claim_target_count)
         try:
             release_lock(lock_path, lock_inode)
         except OSError:
@@ -1306,6 +1469,8 @@ def main():
                   "codexReview": codex_review_status}
         if report_path is not None:
             result["reportPath"] = report_path
+        if claim_target_count:
+            result["codexClaims"] = claim_payload
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
     except (Refused, HistoryQuarantineFailed, OSError, ValueError, KeyError, json.JSONDecodeError,
@@ -1360,10 +1525,11 @@ def main():
                         reason = "quarantine-marker-unpersisted"
                         print(reason, file=sys.stderr)
                 if can_report and state_written:
-                    report_path, report_status = finalize_report(
+                    report_path, report_status, _claim_payload = finalize_report(
                         repo, run_dir, report_rule, manifest["reportDate"], last_run_path,
                         last_state, warnings, "REFUSED", reason=reason,
-                        anchor_written=False)
+                        anchor_written=False, claim_items=claim_items,
+                        claim_target_count=claim_target_count)
             if lock_fd is not None and not quarantine_failed:
                 try:
                     release_lock(lock_path, lock_inode)

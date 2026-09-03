@@ -47,7 +47,15 @@ class RunFixture:
             write(os.path.join(self.repo, path), "# " + path + "\n")
         write(os.path.join(self.repo, "src", "app.py"), "print('x')\n")
         git(self.repo, "add", "-A")
-        git(self.repo, "commit", "-m", "initial")
+        fixed_git_env = dict(os.environ)
+        fixed_git_env.update({
+            "GIT_AUTHOR_DATE": "2026-08-18T12:00:00+00:00",
+            "GIT_COMMITTER_DATE": "2026-08-18T12:00:00+00:00",
+        })
+        subprocess.run(
+            ["git", "-C", self.repo, "commit", "-m", "initial"],
+            capture_output=True, text=True, check=True, env=fixed_git_env,
+        )
         self.head = git(self.repo, "rev-parse", "HEAD").stdout.strip()
         self.runid = "20260818T120000Z-abcdef12"
         self.run_base = os.path.join(self.repo, ".claude", "state", "docaudit-run")

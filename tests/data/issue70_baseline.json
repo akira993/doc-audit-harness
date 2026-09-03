@@ -1,0 +1,76 @@
+{
+  "baselineCommit": "78d2144",
+  "fixtureCount": 3,
+  "codexZeroFixtureCount": 1,
+  "snapshots": {
+    "codex-zero": {
+      "artifactSha256": {
+        "anchor": "15e4f472185c204b0be0beccac070f74a832b39f59539f06fe2ad4b1905288c3",
+        "history": "86addf4291daa574ddd00ba340d8941db6badf853fa3b5fd9bb6af509c7cec36",
+        "lastRun": "f96c1c03c686f233cdd56a08b171b8d0b30eb5fb18a17377d77e6ebbef1a9275",
+        "report": "fb74e025f225d89729b7a02b50cd94469674c3954e5e70a8af2a9faf8ffabd7a",
+        "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "ff36517dae2a2c37da543c714910458291611b518960b84f784d8e01d624acbb"
+      },
+      "exitCode": 0,
+      "verdict": "CONSISTENT"
+    },
+    "full": {
+      "artifactSha256": {
+        "anchor": "4c19d64401c89572f2624fcbc10a1614601a06d1adca1718e8df4f68e6d95c9a",
+        "history": "30f2dd8196ca59f85cec3a35b3e05ed8d3798229a96c26b87af261ea5b6fae2c",
+        "lastRun": "f991e2fa38f5e3097f6838c0afb2a20b99bd5251b18313563db2fb60687baf9e",
+        "report": "3b11e19e739bdd39b284f2077de054edceb8bcd2643104794b8241fdd00e3119",
+        "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "884394105772b20a309c2eb58dd4a8e12becb8edac1be181f95155e09043cf41"
+      },
+      "exitCode": 0,
+      "verdict": "CONSISTENT"
+    },
+    "incremental": {
+      "artifactSha256": {
+        "anchor": "4c19d64401c89572f2624fcbc10a1614601a06d1adca1718e8df4f68e6d95c9a",
+        "history": "30f2dd8196ca59f85cec3a35b3e05ed8d3798229a96c26b87af261ea5b6fae2c",
+        "lastRun": "f991e2fa38f5e3097f6838c0afb2a20b99bd5251b18313563db2fb60687baf9e",
+        "report": "3b11e19e739bdd39b284f2077de054edceb8bcd2643104794b8241fdd00e3119",
+        "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "884394105772b20a309c2eb58dd4a8e12becb8edac1be181f95155e09043cf41"
+      },
+      "exitCode": 0,
+      "verdict": "CONSISTENT"
+    },
+    "incremental-preflight": {
+      "artifactSha256": {
+        "anchor": "16667d6261c2f1785479e529a699f00648010ec028c38e234c5f5a8ad843ba49",
+        "history": "72aac0f97343e66fc88593811c000fd7a8a1e1ea87f2fc4a5ac7ed2288f48bd7",
+        "lastRun": "f991e2fa38f5e3097f6838c0afb2a20b99bd5251b18313563db2fb60687baf9e",
+        "report": "b6e15f5938b9d347aff3c4f0877cd4af43c3acd0588d85ce32f45d57d36c598d",
+        "stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "stdout": "9806fa73a04ca49859c8670b2878c66866f68c9672866fed761d1b6222073460"
+      },
+      "exitCode": 0,
+      "verdict": "CONSISTENT"
+    }
+  },
+  "runs": [
+    {
+      "findings": [
+        {"file": "docs/a.md", "severity": "CRITICAL"},
+        {"file": "docs/b.md", "severity": "HIGH"}
+      ],
+      "mode": "incremental"
+    },
+    {
+      "findings": [
+        {"file": "docs/a.md", "severity": "HIGH", "knownFalsePositive": true}
+      ],
+      "mode": "incremental-phase4-only"
+    },
+    {
+      "findings": [
+        {"file": "docs/a.md", "severity": "HIGH"}
+      ],
+      "mode": "full"
+    }
+  ]
+}

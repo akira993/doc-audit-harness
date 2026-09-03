@@ -33,7 +33,7 @@ hard-won gotchas. Copy-paste config template: [docs/examples/doc-audit.example.j
 
 Full table with fallbacks → [docs/ADOPTION.md §2](docs/ADOPTION.md).
 
-Since v0.16.0, every plugin-engine config read is checked against the SHA sealed when the run opened. A `sealed-config-mismatch` stops the run and requires explicit `--accept-config` on the next open even if the config was restored. Phase-4 full review is sampling, not a convergence guarantee; gate-written history carries forward only validated `file` plus `severity` data and reports `phase4FlipsUnchangedContent` when blocking status changes under the same worktree, contract, config, and carry-forward inputs. Project-defined `docAuditCommands` remain trusted at repository-writer level.
+Since v0.16.0, every plugin-engine config read is checked against the SHA sealed when the run opened. A `sealed-config-mismatch` stops the run and requires explicit `--accept-config` on the next open even if the config was restored. Phase-4 full review is sampling, not a convergence guarantee; gate-written history carries forward only validated `file` plus `severity` data and reports `phase4FlipsUnchangedContent` when CRITICAL/HIGH reporting status changes under the same worktree, contract, config, and carry-forward inputs. Since v0.19.0, codex-review `critical`/`high` claims block only after a cited adjudication confirms them; missing or invalid adjudication is warning-only and treated as non-blocking `unverified`. Project-defined `docAuditCommands` remain trusted at repository-writer level.
 
 ## Install (Claude Code plugin marketplace)
 

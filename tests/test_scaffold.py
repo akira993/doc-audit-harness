@@ -189,13 +189,13 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         proc = run(self.repo, "--harness", "--refresh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["stampVersion"], "0.18.0")
+        self.assertEqual(out["stampVersion"], "0.19.0")
         text_paths = {paths["check-docs"], paths["doc-lint"]}
         self.assertEqual(text_paths & set(out["created"]), text_paths)
         self.assertIn(paths["check-docs-engine"], out["skipped"])
         for name, relative in paths.items():
             refreshed = read(os.path.join(self.repo, relative))
-            expected_version = "0.15.0" if name == "check-docs-engine" else "0.18.0"
+            expected_version = "0.15.0" if name == "check-docs-engine" else "0.19.0"
             self.assertIn(f"@{expected_version} ", refreshed)
             self.assertEqual(module._normalized_sha(refreshed), before[name])
 
@@ -241,11 +241,11 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         proc = run(self.repo, "--harness", "--refresh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["stampVersion"], "0.18.0")
+        self.assertEqual(out["stampVersion"], "0.19.0")
         self.assertIn("scripts/check-docs.py", out["created"])
         refreshed = read(path)
-        current = json.loads(read(SHAS))["0.18.0"]["check-docs-engine"]
-        self.assertIn(f"# docaudit-template: check-docs-engine@0.18.0 sha256:{current}\n",
+        current = json.loads(read(SHAS))["0.19.0"]["check-docs-engine"]
+        self.assertIn(f"# docaudit-template: check-docs-engine@0.19.0 sha256:{current}\n",
                       refreshed)
         self.assertEqual(module._normalized_sha(refreshed), current)
 
@@ -269,11 +269,11 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         proc = run(self.repo, "--harness", "--refresh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["stampVersion"], "0.18.0")
+        self.assertEqual(out["stampVersion"], "0.19.0")
         self.assertIn("scripts/check-docs.py", out["created"])
         refreshed = read(path)
-        current = json.loads(read(SHAS))["0.18.0"]["check-docs-engine"]
-        self.assertIn(f"# docaudit-template: check-docs-engine@0.18.0 sha256:{current}\n",
+        current = json.loads(read(SHAS))["0.19.0"]["check-docs-engine"]
+        self.assertIn(f"# docaudit-template: check-docs-engine@0.19.0 sha256:{current}\n",
                       refreshed)
         self.assertEqual(module._normalized_sha(refreshed), current)
 
@@ -339,7 +339,7 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         version = json.loads(read(PLUGIN))["version"]
-        self.assertEqual(version, "0.18.0")
+        self.assertEqual(version, "0.19.0")
         shipped = json.loads(read(SHAS))[version]
         actual = {name: module._normalized_sha(text)
                   for name, text in module._harness_sources().items()}

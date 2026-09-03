@@ -571,6 +571,9 @@ sibling: {{GATE_SIBLING_SCAN}}
         for token, expected in module.TOKEN_COUNTS.items():
             if token in module.OPTIONAL_TOKENS:
                 self.assertEqual(rows[token], "0 or 1")
+            elif token == "{{GATE_CODEX_CLAIMS}}":
+                self.assertEqual(rows[token],
+                                 "1 when adjudication targets exist; otherwise 0 or 1")
             else:
                 self.assertEqual(int(rows[token]), expected)
         escaped = module.safe_json("<x>&\u2028")

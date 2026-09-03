@@ -91,6 +91,12 @@ docaudit は、多くのドキュメントツールに欠けているレイヤ�
 
 `context-mode` は mdq の競合ではなく**相補物**: **mdq は Markdown の*読み取り*を、context-mode は*大きな機械出力の処理*を安くする。** `ctx_*` ツールが在るとき、audit は Phase 1 の git diff と Phase 4 の `/security-review` の出力を context-mode のサンドボックスで処理し、要約だけを取り出す — 生バイト列は context に入らない。同じく conditional-force（在れば自動使用、導入済みでも `"contextMode": {"enabled": false}` で opt-out）で、無ければ silent に degrade する。context-mode は場所非依存のグローバルプラグインなので、エンジン側に `bin`/`roots` は不要。各 audit は mdq 行の直後に非ブロッキングの **context-mode 状態行**を出力する: 未導入なら 💡、稼働なら ✓、導入済みだが不健全なら ⚠（verdict は変えない）。
 
+### v0.19.0 の移行注記
+
+実行中の監査がない状態で plugin tree 全体を更新する。Phase-4 evidence の後、gate の前で停止した
+run は新しい claim planner から再開し、有効な既存裁定 record は保持する。既存の report template
+があれば、続行前に再生成する。
+
 ### v0.18.0 の移行注記
 
 reviewCommands.code は docaudit v0.18.0 で廃止され、無視されました。.claude/doc-audit.json から reviewCommands.code と reviewCommands.required を削除してください。reviewCommands.security はそのまま残します。/code-review が必要な場合は PR 時の独立した手順として実行してください。
@@ -128,10 +134,10 @@ Phase 5 は中央の2値を同じ未実行 WARN として4分類で表示する�
 baseline を確立してから有効化する。`required:true` と `enabled:false` の併用は REFUSED である。boolean でない
 `required` は値によらず REFUSED である。Phase-4 evidence の `codexReview` が object でない場合、`state` が
 string でない場合、または `CODEX_REVIEW_STATES` 外の場合も、`required` の値によらず REFUSED である。
-完走した review の `critical`/`high` 所見はブロッキング、`medium`/`low`
-は非ブロッキングのままである。
+完走した review の `critical`/`high` 所見は、所見ごとの裁定が実効状態 `confirmed` の場合に限り
+ブロッキングとなり、`medium`/`low` は非ブロッキングのままである。
 
-Phase-4 full review は欠陥候補をサンプリングするため、報告された N 件を直して再実行すれば通るとは保証されない。gate は worktree digest・契約版・config SHA・carry-forward SHA が同じ条件でブロッキング対象ファイルが変わると `phase4FlipsUnchangedContent` を記録する。full prompt には gate が書いた history から、検証済み repo 内 `file` と `severity` だけをデータとして自動で引き継ぐ。title・指示・run ID・時刻は引き継がず、carry-forward 自体は verdict に影響しない。
+Phase-4 full review は欠陥候補をサンプリングするため、報告された N 件を直して再実行すれば通るとは保証されない。gate は worktree digest・契約版・config SHA・carry-forward SHA が同じ条件で `critical`/`high` として報告されたパスの集合が変わると `phase4FlipsUnchangedContent` を記録する。full prompt には gate が書いた history から、検証済み repo 内 `file` と `severity` だけをデータとして自動で引き継ぐ。title・指示・run ID・時刻は引き継がず、carry-forward 自体は verdict に影響しない。
 
 これとは別に、v0.12.0 では Phase 3 を `"phase3Backend":"codex"` で opt-in できる。
 `codex-dispatch.py` が dispatched 文書ごとに read-only の Codex process を起動し、既定値は
@@ -211,7 +217,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.18.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.19.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -264,6 +270,8 @@ indexing と contextMode は従来どおり既定有効（トークン消費を�
 **v0.18.0 の挙動変更:** Phase-0 の mdq health probe が `stale` も報告するようになった（mdq が「索引が作業ツリーより古い」と警告したとき true）。これは**観測のみ**である: `$RUN_DIR/phase0-probes.json` に記録されるだけで、`healthy`・`status`・Phase-0 の確認ゲート・Phase-5 の状態行のいずれにも到達しない。現行 mdq は増分索引したリポジトリで `stale` を出し続けることがあり、これを判定に使うと全 audit が止まるためである。`status` の 4 値は不変。なお docaudit とは独立に、現行 mdq は依存物・ビルド成果物のツリーを `indexing.roots` に関わらず常に索引対象から外す（`.git` `.mdq` `.cq` `.toolsearch` `node_modules` `__pycache__` `dist` `build` `.next` `.cache` `venv`、および `.venv` で始まる名前のディレクトリすべて）。そのため既存リポジトリを現行 mdq で索引し直すとコーパスが大幅に縮むことがある（root として明示指名したディレクトリは索引される）。mdq 導入を促す行が案内していた `./setup/setup-markdown-query.sh` は upstream に存在しなくなったため、リポジトリの URL のみを示すよう改めた。
 本リリースでは `/code-review` 層も除去した。`reviewCommands.code` と `reviewCommands.required` は廃止され、無視される。オブジェクト形の設定にどちらかのキーが残っていても run は REFUSED にならず、代わりに `reviewCommandsCodeRemoved` 警告がちょうど 1 件出る。project 固有の legacy command 文字列も実行されなくなる。`reviewCommands.security`（`/security-review`）と `codexReview` は不変であり、非オブジェクトの `reviewCommands`（`null`・文字列・配列・数値）は従来どおり REFUSED のままである。移行手順は上記の v0.18.0 移行注記を参照すること。
 
+**v0.19.0 の挙動変更:** codex-review の `critical` / `high` 所見は、所見ごとの裁定が `file:line` 根拠付きで `confirmed` の実効状態になった場合に限り blocking となる。裁定が動かない、または記録や根拠が欠落・破損・不正な場合、その主張は非 blocking の `unverified` となり gate が警告する。この扱いは `codexReview.required:true` でも同じで、`required` は codex review 自体には従来どおり fail-closed だが、裁定の利用可否には適用されない。carry-forward は file と severity しか保持しないため裁定結果は run 間で単調ではなく、ある run の `refuted` が次の run で独立に `confirmed` となり NEEDS FIX へ戻ることがある。repository 内の文章は指示ではなく引用データとして扱い、confirmed/refuted には `file:line` 根拠を必須とするが、裁定を `refuted` 側へ誘導し得る prompt injection は残余リスクとして残る。
+
 **v0.15.1 の挙動変更:** symbolGraph probe は `CODEGRAPH_DIR` を尊重し、`<dir>/codegraph.db` の状態から `init` または `sync` を選ぶため、database を失った索引ディレクトリだけが残っても次回 run で自己回復し、symlink または通常ファイル以外の索引ディレクトリ／database は触らず `index-failed` として、従来 `sync` まで進んだ有効な symlink 構成も codegraph が link 先を上書きし得るため本版から意図的に非対応とし、なお `CODEGRAPH_DIR` で改名した索引ディレクトリは `tree-digest.py` の `.codegraph` 固定の既知 root に含まれず、`digestExclude` でも除外できない（既存の制限であり、本版では未対応）。
 
 `/code-review` の記述は、docaudit が利用する前に上流の自律起動能力へ合わせていた。自律起動はその後 v0.17.0 で実装された。
@@ -296,8 +304,7 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、0.15.0、0.15.1、0.16.0、または 0.17.0 テンプレートは、
-`/docaudit:init --harness --refresh` で 0.18.0 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、0.15.0、0.15.1、0.16.0、0.17.0、または 0.18.0 テンプレートは、`/docaudit:init --harness --refresh` で 0.19.0 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
@@ -474,6 +481,10 @@ gate の sibling scan は横断的な補完層である。codex review のプロ
 
 Phase-4 severity の写像:
 
+この表は Phase-4 source の既定値である。`source:"codex-review"` に限り、`HIGH` と
+`CRITICAL` は severity だけでは blocking にならず、対応する主張の実効状態が `confirmed` で
+なければならない。それ以外の source は次の写像から一切変わらない。
+
 | severity | gate への効果 |
 |---|---|
 | `PASS` | `non-blocking` verdict をブロックせず受理する |
@@ -628,6 +639,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/codex-dispatch.py
 ├── skills/audit/scripts/codex-probe.sh
 ├── skills/audit/scripts/codex-review-plan.py
+├── skills/audit/scripts/claim_record.py
 ├── skills/audit/scripts/compute-baseline.sh
 ├── skills/audit/scripts/decide-verdict.py
 ├── skills/audit/scripts/docaudit_cache.py
@@ -642,6 +654,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/mdq-health.py
 ├── skills/audit/scripts/mdq-index.sh
 ├── skills/audit/scripts/open-run.py
+├── skills/audit/scripts/plan-claims.py
 ├── skills/audit/scripts/plan-dispatch.py
 ├── skills/audit/scripts/probe-record.py
 ├── skills/audit/scripts/read-manifest.py
@@ -654,17 +667,20 @@ doc-audit-harness/
 ├── skills/audit/scripts/start-run.py
 ├── skills/audit/scripts/tree-digest.py
 ├── skills/audit/scripts/write-anchor.sh
+├── skills/audit/scripts/write-claim.py
 ├── skills/audit/scripts/write-evidence.py
 ├── skills/audit/scripts/write-template.py
 ├── skills/audit/scripts/write-verdict.py
 ├── skills/audit/references/codex-phase3-verdict.schema.json
 ├── skills/audit/references/codex-review-output.schema.json
+├── skills/audit/references/claim-adjudication-workflow.js
 ├── skills/audit/references/config-schema.md
 ├── skills/audit/references/default-heuristics.md
 ├── skills/audit/references/engine-shas.json
 ├── skills/audit/references/workflow-template.js
 ├── agents/doc-impact-verifier-light.md
 ├── agents/doc-impact-verifier.md
+├── agents/doc-claim-adjudicator.md
 ├── docs/ADOPTION.md
 ├── docs/ADOPTION.ja.md
 ├── docs/examples/doc-audit.example.json
