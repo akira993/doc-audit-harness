@@ -97,8 +97,9 @@ const verifierModel = a.verifierModel === 'haiku' ? 'haiku' : 'sonnet'
 const agentType = verifierModel === 'haiku'
   ? 'docaudit:doc-impact-verifier-light'
   : 'docaudit:doc-impact-verifier'
-// No hardcoded --db: mdq resolves its own default DB relative to the CWD (new mdq:
-// .mdq/index-<lang>-<strategy>.sqlite, old mdq: .mdq/index.sqlite), so running from
+// No hardcoded --db: mdq resolves its own default DB relative to the CWD
+// (.mdq/index-<lang>-<strategy>.sqlite; the bare .mdq/index.sqlite is a legacy layout
+// that no supported mdq resolves to on its own), so running from
 // repoRoot reads the SAME DB the Phase-0 indexer wrote (which also cd's to the root).
 
 const readInstruction = (docPath) => (mdqAvailable && mdqHealthy)

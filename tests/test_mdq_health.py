@@ -5,15 +5,40 @@ SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "mdq-health.py")
 
 # A fake mdq whose stats/list/search output is controlled by env vars.
 # Set ARGLOG to a file path to capture each invocation's argv.
+# `search` additionally supports PER-CALL output: point STUB_COUNTER at a scratch
+# file and set STUB_SEARCH_<n> / STUB_SEARCH_ERR_<n> to override the n-th call
+# (1-based). Unset/empty falls back to STUB_SEARCH / STUB_SEARCH_ERR. This is what
+# separates "aggregate every search call" from "read only the last one".
 STUB = """#!/usr/bin/env bash
 if [ -n "${ARGLOG:-}" ]; then echo "$@" >> "$ARGLOG"; fi
 case "$1" in
   stats)  [ -n "${STUB_STATS:-}" ] && echo "$STUB_STATS"; exit "${STUB_STATS_RC:-0}";;
   list)   [ -n "${STUB_LIST:-}" ] && echo "$STUB_LIST"; exit 0;;
-  search) [ -n "${STUB_SEARCH:-}" ] && echo "$STUB_SEARCH"; exit 0;;
+  search)
+    n=1
+    if [ -n "${STUB_COUNTER:-}" ]; then
+      n=$(( $(cat "$STUB_COUNTER" 2>/dev/null || echo 0) + 1 ))
+      echo "$n" > "$STUB_COUNTER"
+    fi
+    ovar="STUB_SEARCH_$n"; evar="STUB_SEARCH_ERR_$n"
+    out="${!ovar:-${STUB_SEARCH:-}}"
+    err="${!evar:-${STUB_SEARCH_ERR:-}}"
+    [ -n "$err" ] && echo "$err" >&2
+    [ -n "$out" ] && echo "$out"
+    exit 0;;
   *) exit 0;;
 esac
 """
+
+# Real mdq emits this on stderr when the index is behind the working tree
+# (freshness.py emit_warning). Verbatim from an observed run of mdq c559e767.
+STALE_LINE = ('{"warning": "stale", "changed": 1, '
+              '"hint": "run `python -m mdq index` to refresh the index"}')
+# Real mdq also writes NON-JSON notices to the same stream (search.py fusion guard).
+FUSION_LINE = "[mdq:search] fusion disabled (embedding provider unavailable: boom)"
+HEALTHY_STATS = '{"files":3,"chunks":10}'
+HEALTHY_LIST = '{"path":"README.md","heading_path":"docaudit Modes"}'
+HEALTHY_HIT = '{"chunk_id":"x","path":"README.md"}'
 
 
 def make_stub():
@@ -126,6 +151,125 @@ class TestMdqHealth(unittest.TestCase):
         })
         self.assertTrue(out["healthy"])
         self.assertEqual(out["status"], "ok")
+
+
+class TestMdqHealthStale(unittest.TestCase):
+    """v0.18.0: `stale` is OBSERVATION ONLY — it must never move healthy/status."""
+
+    def test_stale_true_when_search_warns(self):
+        out = run_health({
+            "STUB_STATS": HEALTHY_STATS,
+            "STUB_LIST": HEALTHY_LIST,
+            "STUB_SEARCH": HEALTHY_HIT,
+            "STUB_SEARCH_ERR": STALE_LINE,
+        })
+        self.assertTrue(out["stale"])
+        # The whole point of D6/U2: a stale index still audits.
+        self.assertEqual(out["status"], "ok")
+        self.assertTrue(out["healthy"])
+
+    def test_stale_false_when_fresh(self):
+        out = run_health({
+            "STUB_STATS": HEALTHY_STATS,
+            "STUB_LIST": HEALTHY_LIST,
+            "STUB_SEARCH": HEALTHY_HIT,
+        })
+        self.assertFalse(out["stale"])
+        self.assertEqual(out["status"], "ok")
+
+    def test_stale_false_on_non_json_and_non_dict_stderr(self):
+        # A plain-text notice and a JSON line that decodes to a *string* must both be
+        # skipped. A substring match would fire on the second.
+        out = run_health({
+            "STUB_STATS": HEALTHY_STATS,
+            "STUB_LIST": HEALTHY_LIST,
+            "STUB_SEARCH": HEALTHY_HIT,
+            "STUB_SEARCH_ERR": FUSION_LINE,
+            "STUB_SEARCH_ERR_1": FUSION_LINE + '\n"stale"',
+        })
+        self.assertFalse(out["stale"])
+        self.assertEqual(out["status"], "ok")
+        self.assertTrue(out["healthy"])
+
+    def test_non_dict_json_line_does_not_hide_a_later_stale_warning(self):
+        # The poison line comes FIRST and a real warning follows. Without the
+        # isinstance(dict) guard, `"stale".get(...)` raises, the helper's own
+        # except swallows it, and the later genuine warning is never reached —
+        # so this arm, unlike the one above, actually pins the guard.
+        out = run_health({
+            "STUB_STATS": HEALTHY_STATS,
+            "STUB_LIST": HEALTHY_LIST,
+            "STUB_SEARCH": HEALTHY_HIT,
+            "STUB_SEARCH_ERR": '"stale"\n' + STALE_LINE,
+        })
+        self.assertTrue(out["stale"])
+        self.assertEqual(out["status"], "ok")
+
+    def test_a_different_warning_is_not_reported_as_stale(self):
+        # Pins `== "stale"` rather than `"warning" in parsed`: a well-formed JSON
+        # warning of another kind must not be counted.
+        out = run_health({
+            "STUB_STATS": HEALTHY_STATS,
+            "STUB_LIST": HEALTHY_LIST,
+            "STUB_SEARCH": HEALTHY_HIT,
+            "STUB_SEARCH_ERR": '{"warning": "fusion-disabled", "detail": "no provider"}',
+        })
+        self.assertFalse(out["stale"])
+        self.assertEqual(out["status"], "ok")
+
+    def test_stale_aggregated_across_search_calls(self):
+        # Call 1 warns stale but returns no hit; call 2 is clean and hits, ending the
+        # loop. Reading only the last call would report stale:false.
+        counter = os.path.join(tempfile.mkdtemp(), "n.txt")
+        out = run_health({
+            "STUB_STATS": HEALTHY_STATS,
+            "STUB_LIST": HEALTHY_LIST,
+            "STUB_COUNTER": counter,
+            "STUB_SEARCH": "",          # default: no hit
+            "STUB_SEARCH_ERR_1": STALE_LINE,
+            "STUB_SEARCH_2": HEALTHY_HIT,
+        })
+        with open(counter) as f:
+            self.assertEqual(f.read().strip(), "2", "expected exactly two search calls")
+        self.assertTrue(out["stale"])
+        self.assertEqual(out["status"], "ok")
+        self.assertTrue(out["healthy"])
+
+    def test_stale_aggregated_when_only_the_later_call_warns(self):
+        # Mirror of the arm above: the warning is on call 2. An implementation that
+        # inspected only the FIRST search call would report stale:false here, so the
+        # pair of arms pins aggregation itself rather than one direction of it.
+        counter = os.path.join(tempfile.mkdtemp(), "n.txt")
+        out = run_health({
+            "STUB_STATS": HEALTHY_STATS,
+            "STUB_LIST": HEALTHY_LIST,
+            "STUB_COUNTER": counter,
+            "STUB_SEARCH": "",
+            "STUB_SEARCH_ERR_2": STALE_LINE,
+            "STUB_SEARCH_2": HEALTHY_HIT,
+        })
+        with open(counter) as f:
+            self.assertEqual(f.read().strip(), "2", "expected exactly two search calls")
+        self.assertTrue(out["stale"])
+        self.assertEqual(out["status"], "ok")
+
+    def test_stale_key_present_on_empty_index(self):
+        # The key must exist on every path, including the ones that never search.
+        out = run_health({"STUB_STATS": '{"files":0,"chunks":0}'})
+        self.assertIn("stale", out)
+        self.assertFalse(out["stale"])
+        self.assertEqual(out["status"], "empty-index")
+
+    def test_stale_reported_alongside_search_broken(self):
+        out = run_health({
+            "STUB_STATS": HEALTHY_STATS,
+            "STUB_LIST": HEALTHY_LIST,
+            "STUB_SEARCH": "",
+            "STUB_SEARCH_ERR": STALE_LINE,
+        })
+        self.assertTrue(out["stale"])
+        self.assertEqual(out["status"], "search-broken")
+        self.assertFalse(out["healthy"])
 
 
 if __name__ == "__main__":

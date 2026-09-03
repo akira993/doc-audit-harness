@@ -203,7 +203,7 @@ class TestV013Contracts(unittest.TestCase):
         self.assertEqual(
             {plugin_version, latest_sha_version, adoption_version,
              adoption_ja_version, stamp_version},
-            {"0.17.0"})
+            {"0.18.0"})
 
     def test_j_only_allowlisted_0_12_0_references_remain(self):
         old_version = "0." "12.0"
@@ -212,12 +212,12 @@ class TestV013Contracts(unittest.TestCase):
             "docs/ADOPTION.md": [
                 rf"Separately, v{old} can opt Phase 3 into .*",
                 rf"\*\*v{old} behavior changes:\*\*.*",
-                rf"Existing unmodified stamped 0\.10\.0, 0\.10\.1, 0\.11\.0, 0\.12\.0, 0\.13\.0, 0\.13\.1, 0\.13\.2, 0\.14\.0, 0\.15\.0, 0\.15\.1, or 0\.16\.0 templates can be updated directly to 0\.17\.0 with",
+                rf"Existing unmodified stamped 0\.10\.0, 0\.10\.1, 0\.11\.0, 0\.12\.0, 0\.13\.0, 0\.13\.1, 0\.13\.2, 0\.14\.0, 0\.15\.0, 0\.15\.1, 0\.16\.0, or 0\.17\.0 templates can be updated directly to 0\.18\.0 with",
             ],
             "docs/ADOPTION.ja.md": [
                 rf"これとは別に、v{old} では Phase 3 を .*",
                 rf"\*\*v{old} の挙動変更:\*\*.*",
-                rf"変更されていない stamp 付きの 0\.10\.0、0\.10\.1、0\.11\.0、0\.12\.0、0\.13\.0、0\.13\.1、0\.13\.2、0\.14\.0、0\.15\.0、0\.15\.1、または 0\.16\.0 テンプレートは、",
+                rf"変更されていない stamp 付きの 0\.10\.0、0\.10\.1、0\.11\.0、0\.12\.0、0\.13\.0、0\.13\.1、0\.13\.2、0\.14\.0、0\.15\.0、0\.15\.1、0\.16\.0、または 0\.17\.0 テンプレートは、",
             ],
             "skills/audit/references/engine-shas.json": [
                 rf'\s*"{old}": \{{',
@@ -236,6 +236,8 @@ class TestV013Contracts(unittest.TestCase):
             or path == "README.md")]
         unexpected = []
         for path in shipped_paths:
+            if not os.path.exists(os.path.join(ROOT, path)):
+                continue
             with open(os.path.join(ROOT, path), encoding="utf-8", errors="replace") as handle:
                 for line_number, line in enumerate(handle, 1):
                     if old_version not in line:

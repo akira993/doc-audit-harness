@@ -17,7 +17,7 @@ live here; the plugin ships no project knowledge.
 | `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: (path\|path:line)[]}` — a URL `liveSource` (http/https) is not supported: it is never executed or fetched, and the audit emits a warning |
 | `docAuditCommands` | object | no | `{format, existence, semantic}` slash-command/skill names used by active pre-flight and delegated Phase 4 |
 | `boundaryCommand` | string | no | shell command for project-boundary check |
-| `reviewCommands` | object | no | `{code, security, required}`; exact P6 `code` values are `/code-review low`, `/code-review medium`, or `/code-review high`; `required:bool=false` affects `code` only; malformed official-namespace values REFUSE every run, other strings remain legacy project commands |
+| `reviewCommands` | object | no | `{security}`; `code` and `required` are ignored with a migration warning |
 | `reportPath` | string | no | output report path template (supports `<YYYY-MM-DD>` and `[_NN]`) |
 | `auditReportsInCorpus` | boolean | no | only literal `true` keeps matching audit reports in corpus scans; omitted, `false`, or an invalid type excludes them (generic layers emit a config WARN for an invalid type) |
 | `maxImpactedDocs` | number | no | cap on impacted docs (default 200); overflow sets `truncated` |
@@ -41,21 +41,11 @@ live here; the plugin ships no project knowledge.
 `impacts` entries MUST be doc paths only; put commentary in `note`. `changed`
 accepts a single path or a glob.
 
-## code-review command contract
+## reviewCommands
 
-Classification is lexical and ordered. A missing `reviewCommands` or missing `code` is inactive.
-A non-object `reviewCommands`, non-string/empty/Unicode-whitespace-only `code`, or non-boolean
-`required` is invalid. Exact `/code-review low|medium|high` values are autonomously run; the
-effort is passed as the only Skill argument. `/code-review` alone or followed by any Unicode
-whitespace enters the official namespace, so unsupported effort, `ultra`, `xhigh`, `--fix`,
-double/full-width whitespace, and extra tokens are invalid and make the gate REFUSED. All other
-non-empty strings, including `/code-review-custom` and Unicode project commands, keep the legacy
-behavior. `required:true` is valid only with an exact autonomous command; omission means false.
-
-`reviewCommands.security` is unchanged and never inherits `required`. Autonomous code-review
-requires Claude Code 2.1.246 or newer. Confirmed findings are folded with `source:"code-review"`;
-missing or unknown severity is blocking for that source only. Code-review findings affect the
-verdict but are excluded from `phase4Runs` and flip measurement.
+`reviewCommands` remains an object because it owns `security`. `reviewCommands.code` and
+`reviewCommands.required` are ignored and emit `reviewCommandsCodeRemoved`; remove both keys.
+`reviewCommands.security` is unchanged.
 
 ## Harness adoption state
 
@@ -200,11 +190,13 @@ explicit `codexReview.model`; otherwise light uses `gpt-5.6-luna` and standard u
 
 `indexing` is optional and conditional-force. With `mdq` on `PATH` (or `bin` pointed at a
 vendored binary), Phase 0 builds the index under `.mdq/` (mdq's own default DB resolution —
-e.g. `index-<lang>-<strategy>.sqlite` on current mdq, `index.sqlite` on older) and Phase 3 reads
-impacted docs as token-optimized chunks (`mdq search --paths <doc>` / `mdq get`). By
-default it indexes the whole repo (`--root .`) — mdq's own default roots (`docs`,
-`knowledge`, …) would miss `README.md`, `skills/**`, and `agents/**`; set `roots` to
-narrow the scope. When `indexing.enabled` is `false`, the audit silently degrades to grep
+`index-<lang>-<strategy>.sqlite`; the bare `index.sqlite` is a legacy layout reached only via an
+explicit path) and Phase 3 reads impacted docs as token-optimized chunks
+(`mdq search --paths <doc>` / `mdq get`). By
+default it indexes from the repo root (`--root .`) — mdq's own default roots (`docs`,
+`users-guide`, which a repository's own `mdq.toml` may override) would miss `README.md`,
+`skills/**`, and `agents/**`; set `roots` to narrow the scope. A `.` root is not literally
+every file: mdq still applies the unconditional exclusions described below. When `indexing.enabled` is `false`, the audit silently degrades to grep
 (an explicit opt-out). When `mdq` is absent, indexing fails, or the Phase-0 health probe
 finds it installed but unhealthy, the audit's Phase-0 confirmation gate asks the user
 (`AskUserQuestion`) to fix mdq first or explicitly approve continuing in grep-degrade mode
@@ -215,13 +207,50 @@ tool-independent overall. Add
 `tool` is reserved for future multi-backend support; the runtime currently reads only
 `bin` (to locate the executable), plus `enabled` and `roots` — `tool` itself is not consumed.
 
+**`bin` does not reach every mdq caller.** It is honored by `mdq-index.sh` and
+`mdq-health.py` only. The Phase-3 `doc-impact-verifier` agents invoke the fixed name `mdq`
+from the repo root, so a `bin` pointing at a vendored binary makes Phase 0 and Phase 3 use
+*different* executables. Keep `bin` at `"mdq"` unless the same name also resolves on `PATH`.
+
+**Current mdq excludes dependency and build trees unconditionally.** Regardless of `roots`,
+its indexer skips any path that lies below `.git`, `.mdq`, `.cq`, `.toolsearch`, `node_modules`, `__pycache__`, `dist`, `build`, `.next`, `.cache`, `venv`, and any directory whose name starts with `.venv`. A directory named
+*as a root* is still indexed (the check starts below the requested root), so `"roots": ["build"]`
+works while `build/` under `--root .` does not. Older mdq had no such rule, so re-indexing an
+existing repository with current mdq can shrink the corpus substantially — that is expected,
+not a failure. `.mdq/` itself is on the list, so the index never indexes itself.
+
+**The default (BM25) mode can return 0 hits for a term that is present**, and narrowing
+`--paths` makes it far more likely. mdq applies `path_globs` before ranking, so `N` is the
+number of *surviving* chunks, and it then keeps only strictly positive scores. A term's IDF
+is `log(N - df + 0.5) - log(df + 0.5)`, which is exactly zero when the term appears in half
+the surviving chunks — measured at `N` = 2, 4, 6, 8 and 10, so this is **not** a
+small-corpus effect and no chunk count is immune. Appearing in *more* than half gives a
+negative IDF, which is floored to a quarter of the corpus's average IDF; that rescues the
+term only while the average is positive, and on a small or vocabulary-poor corpus it is not.
+mdq 78edaabc behaves identically, so none of this is a regression. Use `--mode grep` for a
+narrow search (the verifier agents already do this for exact identifiers), or widen
+`--paths` to the parent directory glob.
+
+**On a small index this stops the audit, not just the status line.** The Phase-0 health
+probe derives its smoke terms from the index's own heading paths and file paths, so when
+every term it can try is dropped it reports `search-broken`. That leaves `MDQ_AVAILABLE`
+true and `MDQ_HEALTHY` false — the pair the Phase-0 confirmation gate fires on — so an
+interactive run stops before Phase 1 and asks the operator to fix mdq, while a
+non-interactive run continues under an UNCONFIRMED-degrade banner. **There is no chunk
+count that is reliably safe**, because the threshold depends on how much vocabulary the
+probe's terms share, not on size alone: with distinct headings and filenames it was
+measured at one and two chunks, and with repeated ones (`# Overview` in several files, or
+several `README.md`) it reached three here and five on another corpus. The status line's
+"run `mdq index`" advice does not apply — the index is correct and simply too small to
+rank — so approving the degrade is the right answer until the corpus grows.
+
 ## context-mode (Phase 0/2/3/4)
 
 `contextMode` is optional and conditional-force, complementary to `indexing` (mdq): mdq
 optimizes Markdown *reads*, context-mode optimizes the *processing of large machine
 output*. When the `ctx_*` MCP tools are available, the audit's Phase-0 probe calls
-`ctx_doctor`, and Phases 2/3/4 process the big `git diff` and `/code-review` /
-`/security-review` output in context-mode's sandbox (returning only distilled summaries)
+`ctx_doctor`, and Phases 2/3/4 process the big `git diff` and `/security-review`
+output in context-mode's sandbox (returning only distilled summaries)
 instead of reading them in full. It needs no `bin`/`roots` — context-mode is a global
 plugin with nothing to locate, so detection is purely by tool availability (never by
 inspecting `~/.claude` plugin paths). When the tools are absent, `contextMode.enabled`
@@ -252,7 +281,7 @@ multi-backend support; the runtime currently reads only `bin` and `enabled`.
 
 `codexReview` is optional and key-gated: only when the key exists does it mirror `webExtract`'s shape for the
 `codex` CLI (`@openai/codex` npm package) — the fourth, adversarial review in Phase 4, run
-after `/code-review` and `/security-review`. Only the `codex` CLI itself is required; the
+after `/security-review`. Only the `codex` CLI itself is required; the
 openai-codex Claude Code plugin is not a dependency. With `codex` on `PATH` (or `bin` pointed at
 an executable wrapper), Phase 0 runs the local-only commands recorded in `probeCommands`:
 `<bin> --version`, then `<bin> exec --help`. This confirms CLI presence and `exec` reachability

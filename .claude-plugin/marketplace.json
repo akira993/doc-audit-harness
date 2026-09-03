@@ -9,7 +9,7 @@
       "source": "./",
       "description": "Change-driven documentation audit harness with local check-docs onboarding, pre-flight checks, sealed run evidence, deterministic PASS caching, light/standard routing, delegated doc checks, and review-backed verdicts.",
       "category": "documentation",
-      "keywords": ["documentation", "audit", "code-review", "claude-code"]
+      "keywords": ["documentation", "audit", "claude-code"]
     }
   ]
 }
