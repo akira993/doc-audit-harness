@@ -11,6 +11,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PLUGIN = os.path.join(ROOT, ".claude-plugin", "plugin.json")
 SHAS = os.path.join(ROOT, "skills", "audit", "references", "engine-shas.json")
 SCAFFOLD = os.path.join(ROOT, "skills", "audit", "scripts", "scaffold.py")
+AUDIT_SKILL = os.path.join(ROOT, "skills", "audit", "SKILL.md")
 
 
 class TestV013Contracts(unittest.TestCase):
@@ -40,6 +41,10 @@ class TestV013Contracts(unittest.TestCase):
         self.assertTrue(any("scopePath" in line and "AUDIT_SCOPE_PATH" in line for line in lines))
         self.assertTrue(any("diff.missing" in line and "/docaudit:init --import-audit-scope" in line for line in lines))
         self.assertTrue(any("not-imported" in line and "continue" in line for line in lines))
+        path_mismatch_lines = [line for line in lines
+                               if "path-mismatch" in line and "recordedScopePath" in line]
+        self.assertEqual(len(path_mismatch_lines), 2)
+        self.assertTrue(all("scopePath" in line for line in path_mismatch_lines))
 
     def test_d_audit_scope_write_contract(self):
         with open(os.path.join(ROOT, "skills", "init", "SKILL.md"), encoding="utf-8") as handle:
@@ -184,7 +189,7 @@ class TestV013Contracts(unittest.TestCase):
         codex_section = schema.split("## Codex review (Phase 0/4)", 1)[1].split("\n## ", 1)[0]
         self.assertIn("probeCommands", codex_section)
 
-    def test_i_release_version_matches_all_five_surfaces(self):
+    def test_i_release_version_matches_all_six_surfaces(self):
         with open(PLUGIN, encoding="utf-8") as handle:
             plugin_version = json.load(handle)["version"]
         with open(SHAS, encoding="utf-8") as handle:
@@ -193,6 +198,11 @@ class TestV013Contracts(unittest.TestCase):
 
         adoption_version = self._adoption_list_version("docs/ADOPTION.md")
         adoption_ja_version = self._adoption_list_version("docs/ADOPTION.ja.md")
+        with open(AUDIT_SKILL, encoding="utf-8") as handle:
+            skill_versions = re.findall(
+                r"--skill-version (\d+\.\d+\.\d+)", handle.read())
+        self.assertEqual(len(skill_versions), 1)
+        skill_version = skill_versions[0]
         with tempfile.TemporaryDirectory() as repo:
             proc = subprocess.run(
                 [sys.executable, SCAFFOLD, "--repo-root", repo, "--harness", "--dry-run"],
@@ -202,8 +212,8 @@ class TestV013Contracts(unittest.TestCase):
 
         self.assertEqual(
             {plugin_version, latest_sha_version, adoption_version,
-             adoption_ja_version, stamp_version},
-            {"0.20.0"})
+             adoption_ja_version, stamp_version, skill_version},
+            {"0.21.0"})
 
     def test_j_only_allowlisted_0_12_0_references_remain(self):
         old_version = "0." "12.0"
@@ -212,12 +222,12 @@ class TestV013Contracts(unittest.TestCase):
             "docs/ADOPTION.md": [
                 rf"Separately, v{old} can opt Phase 3 into .*",
                 rf"\*\*v{old} behavior changes:\*\*.*",
-                rf"Existing unmodified stamped 0\.10\.0, 0\.10\.1, 0\.11\.0, 0\.12\.0, 0\.13\.0, 0\.13\.1, 0\.13\.2, 0\.14\.0, 0\.15\.0, 0\.15\.1, 0\.16\.0, 0\.17\.0, 0\.18\.0, or 0\.19\.0 templates can be updated directly to 0\.20\.0 with",
+                rf"Existing unmodified stamped 0\.10\.0, 0\.10\.1, 0\.11\.0, 0\.12\.0, 0\.13\.0, 0\.13\.1, 0\.13\.2, 0\.14\.0, 0\.15\.0, 0\.15\.1, 0\.16\.0, 0\.17\.0, 0\.18\.0, 0\.19\.0, or 0\.20\.0 templates can be updated directly to 0\.21\.0 with",
             ],
             "docs/ADOPTION.ja.md": [
                 rf"これとは別に、v{old} では Phase 3 を .*",
                 rf"\*\*v{old} の挙動変更:\*\*.*",
-                rf"変更されていない stamp 付きの 0\.10\.0、0\.10\.1、0\.11\.0、0\.12\.0、0\.13\.0、0\.13\.1、0\.13\.2、0\.14\.0、0\.15\.0、0\.15\.1、0\.16\.0、0\.17\.0、0\.18\.0、または 0\.19\.0 テンプレートは、.*",
+                rf"変更されていない stamp 付きの 0\.10\.0、0\.10\.1、0\.11\.0、0\.12\.0、0\.13\.0、0\.13\.1、0\.13\.2、0\.14\.0、0\.15\.0、0\.15\.1、0\.16\.0、0\.17\.0、0\.18\.0、0\.19\.0、または 0\.20\.0 テンプレートは、`/docaudit:init --harness --refresh` で 0\.21\.0 へ直接更新できる。利用者が変更したテンプレートは",
             ],
             "skills/audit/references/engine-shas.json": [
                 rf'\s*"{old}": \{{',

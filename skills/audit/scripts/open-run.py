@@ -18,10 +18,24 @@ from docaudit_paths import validate_repo_path
 
 
 RUNID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
+HERE = os.path.dirname(os.path.abspath(__file__))
+PLUGIN_MANIFEST = os.path.join(HERE, "..", "..", "..", ".claude-plugin", "plugin.json")
 
 
 def sha(data):
     return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def plugin_engine_version():
+    try:
+        with open(PLUGIN_MANIFEST, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read plugin engine version: {exc}") from exc
+    version = manifest.get("version") if isinstance(manifest, dict) else None
+    if not isinstance(version, str) or not version:
+        raise ValueError("plugin manifest has no version")
+    return version
 
 
 def emit(value, code=0):
@@ -177,6 +191,7 @@ def main():
     parser.add_argument("--break-lock", action="store_true")
     parser.add_argument("--accept-config", action="store_true")
     parser.add_argument("--expect-config-sha")
+    parser.add_argument("--skill-version")
     args = parser.parse_args()
     if args.release and args.break_lock:
         parser.error("--release and --break-lock are mutually exclusive")
@@ -200,6 +215,22 @@ def main():
             return 2
         return release(lock_path, last_run_path, args.runid)
 
+    if not args.skill_version:
+        print("open-run: normal open requires --skill-version", file=sys.stderr)
+        return 2
+    try:
+        engine_version = plugin_engine_version()
+    except ValueError as exc:
+        print(f"open-run: {exc}", file=sys.stderr)
+        return 2
+    if args.skill_version != engine_version:
+        print(
+            f"open-run: skill version {args.skill_version} does not match plugin engine "
+            f"version {engine_version}; the plugin changed under this session — start a new "
+            "session and rerun the audit",
+            file=sys.stderr,
+        )
+        return 2
     if not args.expect_config_sha:
         print("open-run: normal open requires --expect-config-sha", file=sys.stderr)
         return 2
@@ -350,7 +381,7 @@ def main():
         os.close(fd)
     result = {"runid": runid, "runDir": run_dir, "anchor": anchor_sha,
               "config": config_sha, "lockIno": inode,
-              "preflight": "none", "phase4": "none"}
+              "preflight": "none", "phase4": "none", "engineVersion": engine_version}
     if prior_status is not None:
         result["previousReportStatus"] = prior_status
     return emit(result)

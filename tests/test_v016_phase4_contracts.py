@@ -21,6 +21,7 @@ if SCRIPTS not in sys.path:
     sys.path.insert(0, SCRIPTS)
 
 from docaudit_cache import parse_history_document  # noqa: E402
+from claim_record import encode_claim_record, extract_claim_targets  # noqa: E402
 
 
 def script(name):
@@ -76,9 +77,19 @@ class TestV016Phase4Contracts(unittest.TestCase):
         }
         completed = fx.complete(phase4=phase4)
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self._write_nonblocking_claims(fx, phase4)
         gated = fx.gate()
         self.assertEqual(gated.returncode, 0, gated.stdout + gated.stderr)
         return json.loads(gated.stdout)
+
+    def _write_nonblocking_claims(self, fx, phase4):
+        targets, missing_titles = extract_claim_targets(phase4)
+        self.assertEqual(missing_titles, 0)
+        for target in targets:
+            record = {"runid": fx.runid, "findingId": target["findingId"],
+                      "state": "unverified", "rationale": "history fixture"}
+            write(os.path.join(fx.run_dir, "claims", target["findingId"] + ".json"),
+                  encode_claim_record(record))
 
     def _plan_carry_forward(self, fx):
         with open(os.path.join(fx.run_dir, "manifest.json"), encoding="utf-8") as handle:
@@ -178,6 +189,9 @@ class TestV016Phase4Contracts(unittest.TestCase):
                             "carryForwardSha": "none"},
         })
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self._write_nonblocking_claims(fx, {
+            "findings": [{"source": "codex-review", "file": "docs/a.md",
+                          "severity": "HIGH", "title": "sample"}]})
 
         module = load_decide_verdict()
         argv = [
@@ -274,7 +288,8 @@ class TestV016Phase4Contracts(unittest.TestCase):
         fx = RunFixture(self, config_extra={"codexReview": {"required": True}})
         self._prepare_full(fx)
         self._complete_and_gate(fx, [
-            {"source": "codex-review", "file": "docs/a.md", "severity": "HIGH"},
+            {"source": "codex-review", "file": "docs/a.md", "severity": "HIGH",
+             "title": "sample"},
             {"source": "security-review", "file": "docs/b.md", "severity": "HIGH"},
         ])
         with open(fx.history, encoding="utf-8") as handle:

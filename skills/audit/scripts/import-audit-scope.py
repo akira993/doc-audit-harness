@@ -18,8 +18,9 @@ import sys
 import tempfile
 import time
 
-from docaudit_paths import (corpus_settings, is_excluded_doc, list_doc_files,
-                            matches_glob, validate_repo_path)
+from docaudit_paths import (RESERVED_DIRECTORY_NAMES, corpus_settings,
+                            is_excluded_doc, list_doc_files, matches_glob,
+                            validate_repo_path)
 
 
 CATCH_ALL = {"*", "**", "**/*"}
@@ -119,7 +120,7 @@ def convert_rules(rules, errors):
             for original, value in rules]
 
 
-def metadata(config, repo, errors):
+def metadata(config, repo, errors, path_validator=None):
     if "auditScope" not in config:
         return None
     value = config["auditScope"]
@@ -131,7 +132,10 @@ def metadata(config, repo, errors):
     rules = value.get("rules")
     imported = value.get("importedAt")
     try:
-        validate_repo_path(repo, path, must_exist=False)
+        if path_validator is None:
+            validate_repo_path(repo, path, must_exist=False)
+        else:
+            path_validator(path)
     except ValueError as exc:
         errors.append(f"auditScope.path invalid: {exc}")
     if not isinstance(sha, str) or not HEX_SHA_RE.fullmatch(sha):
@@ -284,6 +288,142 @@ def git_paths(repo, errors):
     return sorted(paths)
 
 
+def lexical_repo_path(repo, repo_apparent, path):
+    """Normalize a repository path without consulting working-tree entries."""
+    if not isinstance(path, str) or not path:
+        raise ValueError("path must be a non-empty repository-relative string")
+    if "\r" in path or "\n" in path:
+        raise ValueError("path contains CR/LF")
+    path = path.replace("\\", "/")
+    if os.path.isabs(path):
+        if any(component in ("", ".", "..") for component in path.split("/")[1:]):
+            raise ValueError(
+                'absolute path must not contain empty, "." or ".." components'
+            )
+        for root in (repo_apparent.replace("\\", "/"), repo.replace("\\", "/")):
+            if path.startswith(root + "/"):
+                path = path[len(root) + 1:]
+                break
+        else:
+            raise ValueError("absolute path is outside repo")
+    parts = path.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise ValueError("path contains an empty, dot, or parent component")
+    return "/".join(parts)
+
+
+def index_snapshot(repo, errors):
+    """Return all entries and the accepted regular-blob path/OID snapshot."""
+    try:
+        completed = subprocess.run(
+            ["git", "-C", repo, "ls-files", "--stage", "-z"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        errors.append(f"git enumeration failed: {exc}")
+        return {}, {}
+    entries = collections.defaultdict(list)
+    for record in completed.stdout.split(b"\0"):
+        if not record:
+            continue
+        header, separator, raw_path = record.partition(b"\t")
+        path = raw_path.decode("utf-8", "surrogateescape")
+        if not separator:
+            errors.append("git index entry is malformed")
+            continue
+        if "\r" in path or "\n" in path:
+            errors.append(f"unsupported filename: {path!r}")
+        try:
+            mode, oid, stage = header.decode("ascii").split(" ")
+        except (UnicodeDecodeError, ValueError):
+            errors.append(f"git index entry is malformed: {path!r}")
+            continue
+        entries[path].append((mode, oid, stage))
+    accepted = {}
+    for path, values in entries.items():
+        if (len(values) == 1 and values[0][2] == "0"
+                and values[0][0] in ("100644", "100755")):
+            accepted[path] = values[0][1]
+    return dict(entries), accepted
+
+
+def index_blob(repo, oid, label, errors):
+    try:
+        completed = subprocess.run(
+            ["git", "-C", repo, "cat-file", "blob", oid],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        errors.append(f"{label} blob read failed: {exc}")
+        return None
+    return completed.stdout
+
+
+def index_corpus(paths, doc_globs, exclude_globs):
+    found = set()
+    for path in paths:
+        directories = path.split("/")[:-1]
+        if any(name in RESERVED_DIRECTORY_NAMES for name in directories):
+            continue
+        if not any(matches_glob(path, glob) for glob in doc_globs):
+            continue
+        if any(matches_glob(path, glob) for glob in exclude_globs):
+            continue
+        found.add(path)
+    return found
+
+
+def validate_rules_from_index(converted_rules, paths, config, doc_globs,
+                              repo, repo_apparent, errors):
+    translated = []
+    skipped = []
+    exclude_globs, _respect_gitignore = corpus_settings(config)
+    corpus = index_corpus(paths, doc_globs, exclude_globs)
+    report_rx = None
+    if config.get("auditReportsInCorpus") is not True:
+        report_rx = report_regex(config)
+    for changed, raw_value, converted in converted_rules:
+        if isinstance(raw_value, JSONObject):
+            keys = [key for key, _value in raw_value]
+            duplicates = sorted({key for key in keys if keys.count(key) > 1})
+            for key in duplicates:
+                errors.append(f"duplicate key in scope value {changed}: {key}")
+            if list(raw_value) == [("impact", "none")]:
+                if converted is not None:
+                    skipped.append(changed)
+                continue
+            errors.append(f"invalid scope value: {changed}")
+            continue
+        value = normal_object(raw_value)
+        if not isinstance(value, list) or not value:
+            errors.append(f"scope impacts must be a non-empty string array: {changed}")
+            continue
+        impacts = []
+        for target in value:
+            if not isinstance(target, str):
+                errors.append(f"scope impact is not a string: {changed}")
+                continue
+            try:
+                normalized = lexical_repo_path(repo, repo_apparent, target)
+            except ValueError as exc:
+                errors.append(f"invalid scope impact {changed}: {exc}")
+                continue
+            if not any(matches_glob(normalized, glob) for glob in doc_globs):
+                errors.append(f"scope impact outside docGlobs ({normalized}); extend docGlobs and rerun")
+                continue
+            if normalized not in corpus and any(
+                    matches_glob(normalized, glob) for glob in exclude_globs):
+                errors.append("scope impact excluded from corpus (excludeDocGlobs or Git exclude rules): "
+                              f"{normalized}; remove it from audit-scope.json and re-import; "
+                              "if it is the last target, remove the whole rule")
+                continue
+            if normalized not in corpus or (report_rx and report_rx.fullmatch(normalized)):
+                errors.append(f"scope impact outside document corpus ({normalized}); extend docGlobs and rerun")
+                continue
+            impacts.append(normalized)
+        if converted is not None and impacts:
+            translated.append({"changed": converted, "impacts": impacts, "from": changed})
+    return translated, skipped
+
+
 def equivalence(converted_rules, paths, errors):
     for original, _value, converted in converted_rules:
         if converted is None:
@@ -296,8 +436,9 @@ def equivalence(converted_rules, paths, errors):
 
 
 def result(state, rules, translated, skipped, errors, checked,
-           config_raw, scope_raw, missing=(), extra=(), scope_path=None):
-    return {
+           config_raw, scope_raw, missing=(), extra=(), scope_path=None,
+           recorded_scope_path=None):
+    output = {
         "state": state,
         "rules": len(rules),
         "translated": translated,
@@ -309,6 +450,9 @@ def result(state, rules, translated, skipped, errors, checked,
         "scopeSha": digest(scope_raw) if scope_raw is not None else None,
         "diff": {"missing": list(missing), "extra": list(extra)},
     }
+    if recorded_scope_path is not None:
+        output["recordedScopePath"] = recorded_scope_path
+    return output
 
 
 def emit(output, json_output):
@@ -356,6 +500,108 @@ def safe_path(repo, repo_apparent, path, errors, label):
     except ValueError as exc:
         errors.append(f"{label} invalid: {exc}")
         return None
+
+
+def check_from_index(args, repo, repo_apparent):
+    errors = []
+    entries, accepted = index_snapshot(repo, errors)
+    try:
+        config_rel = lexical_repo_path(repo, repo_apparent, args.config)
+    except ValueError as exc:
+        errors.append(f"config invalid: {exc}")
+        config_rel = None
+    config_raw = None
+    if config_rel is not None:
+        oid = accepted.get(config_rel)
+        if oid is None:
+            errors.append(f"config not in index: {config_rel}")
+        else:
+            config_raw = index_blob(repo, oid, "config", errors)
+    if (args.expect_config_sha is not None
+            and (config_raw is None or args.expect_config_sha != digest(config_raw))):
+        errors.append("config SHA mismatch")
+    config = config_object(config_raw, errors)
+    try:
+        corpus_settings(config)
+    except ValueError as exc:
+        errors.append(str(exc))
+    configured_scope = config.get("auditScope")
+    if args.scope is not None:
+        scope_argument = args.scope
+    elif (isinstance(configured_scope, dict)
+          and isinstance(configured_scope.get("path"), str)):
+        scope_argument = configured_scope["path"]
+    else:
+        scope_argument = ".claude/audit-scope.json"
+    try:
+        scope_rel = lexical_repo_path(repo, repo_apparent, scope_argument)
+    except ValueError as exc:
+        errors.append(f"scope invalid: {exc}")
+        scope_rel = None
+    audit_scope = metadata(
+        config, repo, errors,
+        path_validator=lambda path: lexical_repo_path(repo, repo_apparent, path))
+    scope_raw = None
+    scope_indexed = scope_rel in entries if scope_rel is not None else False
+    scope_accepted = scope_rel in accepted if scope_rel is not None else False
+    if scope_indexed and not scope_accepted:
+        errors.append(f"scope not a regular blob in index: {scope_rel}")
+    elif scope_accepted:
+        scope_raw = index_blob(repo, accepted[scope_rel], "scope", errors)
+    if (args.expect_scope_sha is not None
+            and (scope_raw is None or args.expect_scope_sha != digest(scope_raw))):
+        errors.append("scope SHA mismatch")
+    if errors:
+        output = result("error", [], [], [], errors, len(accepted),
+                        config_raw, scope_raw, scope_path=scope_rel)
+        emit(output, args.json)
+        return 1
+    if not scope_indexed:
+        state = "absent" if audit_scope is None else "drift"
+        output = result(state, [], [], [], [], len(accepted),
+                        config_raw, None, scope_path=scope_rel)
+        emit(output, args.json)
+        return 0 if state == "absent" else 2
+    rules = scope_rules(scope_raw, errors)
+    converted_rules = convert_rules(rules, errors)
+    default_globs = args.doc_glob or ["docs/**/*.md", "*.md"]
+    doc_globs = config.get("docGlobs", default_globs)
+    if (not isinstance(doc_globs, list)
+            or not all(isinstance(item, str) for item in doc_globs)):
+        errors.append("docGlobs must be a string array")
+        doc_globs = []
+    translated, skipped = validate_rules_from_index(
+        converted_rules, set(accepted), config, doc_globs,
+        repo, repo_apparent, errors)
+    equivalence(converted_rules, set(accepted), errors)
+    if errors:
+        output = result("error", rules, translated, skipped, errors,
+                        len(accepted), config_raw, scope_raw,
+                        scope_path=scope_rel)
+        emit(output, args.json)
+        return 1
+    missing, extra = compare(config, translated)
+    recorded_scope_path = None
+    if audit_scope is None:
+        state = "not-imported"
+    else:
+        scope_matches = audit_scope.get("sha256") == digest(scope_raw)[len("sha256:"):]
+        path_matches = audit_scope.get("path") == scope_rel
+        if not missing and not extra and scope_matches and path_matches:
+            state = "in-sync"
+        elif not missing and not extra and scope_matches:
+            state = "path-mismatch"
+            recorded_scope_path = audit_scope.get("path")
+        else:
+            state = "drift"
+    output = result(state, rules, translated, skipped, [], len(accepted),
+                    config_raw, scope_raw, missing, extra,
+                    scope_path=scope_rel,
+                    recorded_scope_path=recorded_scope_path)
+    emit(output, args.json)
+    if state in ("in-sync", "absent"):
+        return 0
+    return 4 if state == "path-mismatch" else 2
 
 
 def remove_owned_lock(fd, lock_path):
@@ -574,15 +820,20 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true")
     mode.add_argument("--write", action="store_true")
+    parser.add_argument("--from-index", action="store_true")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--expect-config-sha")
     parser.add_argument("--expect-scope-sha")
     parser.add_argument("--base-config", choices=["-"])
     parser.add_argument("--expect-base-config-sha")
     args = parser.parse_args()
+    if args.from_index and args.write:
+        parser.error("--from-index cannot be used with --write")
     args.check = not args.write
     repo_apparent = os.path.abspath(args.repo_root)
     repo = os.path.realpath(args.repo_root)
+    if args.from_index:
+        return check_from_index(args, repo, repo_apparent)
     errors = []
     config_rel = safe_path(repo, repo_apparent, args.config, errors, "config")
     expected_arguments_valid(args, errors)
@@ -666,11 +917,20 @@ def main():
         else:
             scope_matches = audit_scope.get("sha256") == digest(scope_raw)[len("sha256:"):]
             path_matches = audit_scope.get("path") == scope_rel
-            state = "in-sync" if not missing and not extra and scope_matches and path_matches else "drift"
+            if not missing and not extra and scope_matches and path_matches:
+                state = "in-sync"
+            elif not missing and not extra and scope_matches:
+                state = "path-mismatch"
+            else:
+                state = "drift"
         output = result(state, rules, translated, skipped, [], len(paths),
-                        config_raw, scope_raw, missing, extra, scope_path=scope_rel)
+                        config_raw, scope_raw, missing, extra, scope_path=scope_rel,
+                        recorded_scope_path=(audit_scope.get("path")
+                                             if state == "path-mismatch" else None))
         emit(output, args.json)
-        return 0 if state == "in-sync" else 2
+        if state == "in-sync":
+            return 0
+        return 4 if state == "path-mismatch" else 2
     if config_raw is None and args.base_config is None:
         print("config absent: use --base-config - with --expect-base-config-sha",
               file=sys.stderr)

@@ -71,8 +71,13 @@ def prepare_fixture(owner, kind, env=None):
             "--state", "refuted", "--evidence-file", "docs/a.md", "--evidence-line", "1",
         ]
         assert fx.call("write-claim.py", *claim_args, input_text="false positive").returncode == 0
+        assert fx.write_template(
+            body=fx.report_template() + "codexClaims: {{GATE_CODEX_CLAIMS}}\n").returncode == 0
         first = run_gate(fx, env or os.environ)
         assert first.returncode == 0
+        first_report = json.loads(first.stdout).get("reportPath")
+        if first_report:
+            os.unlink(os.path.join(fx.repo, first_report))
         assert fx.open(runid="20260818T120001Z-abcdef13").returncode == 0
         assert fx.plan_start_seal(mode="full").returncode == 0
         completed = {"findings": [], "codexReview": {

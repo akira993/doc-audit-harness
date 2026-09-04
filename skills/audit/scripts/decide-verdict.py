@@ -21,12 +21,14 @@ from docaudit_paths import normalize_finding_path, validate_repo_path
 from sealed_config import SealedConfigMismatch, load_sealed_config
 from claim_record import (CLAIM_FILENAME_RE, ClaimRecordError, extract_claim_targets,
                           load_valid_claim_record)
+from report_tokens import (BIDI_CONTROLS, OPTIONAL_TOKENS, TOKEN_COUNTS, TOKEN_RE,
+                           TokenCountError, validate_template_body)
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUIRED_EXPECT = {"runid", "runDir", "anchor", "config", "lockIno", "preflight",
                    "dispatch", "cached", "history", "historyStatus", "manifest",
-                   "digest", "returns", "attempt", "phase4"}
+                   "digest", "returns", "attempt", "phase4", "engineVersion"}
 VALID_VERDICTS = {"PASS", "WARN", "FAIL"}
 VALID_PROVENANCE = {"mapped", "heuristic", "both", "full", "self", "graphify", "semantic",
                     "regression"}
@@ -43,25 +45,10 @@ OBSERVERS = (
 MAX_TEMPLATE_BYTES = 2 * 1024 * 1024
 MAX_REPORT_BYTES = 4 * 1024 * 1024
 MAX_RECEIPT_BYTES = 64 * 1024
-TOKEN_COUNTS = {
-    "{{GATE_VERDICT}}": 1,
-    "{{GATE_REASON}}": 1,
-    "{{GATE_COUNTS}}": 1,
-    "{{GATE_HISTORY_STATUS}}": 1,
-    "{{GATE_WARNINGS}}": 1,
-    "{{GATE_SIBLING_SCAN}}": 1,
-    "{{GATE_CODEX_CLAIMS}}": 1,
-    "{{GATE_ANCHOR_WRITTEN}}": 1,
-    "{{GATE_REPORT_DATE}}": 2,
-}
-OPTIONAL_TOKENS = frozenset({"{{GATE_REASON}}"})
-TOKEN_RE = re.compile(r"\{\{GATE_[A-Z0-9_]+\}\}")
 REPORT_WARNING_CODES = frozenset({
     "reportWriteError", "reportTemplateMissing", "reportTemplateInvalid",
     "reportDurabilityUnknown", "reportStatusUpdateFailed", "lockReleaseFailed",
 })
-BIDI_CONTROLS = frozenset(chr(value) for value in (
-    0x061C, 0x200E, 0x200F, *range(0x202A, 0x202F), *range(0x2066, 0x206A)))
 REVIEW_COMMANDS_CODE_REMOVED = "reviewCommandsCodeRemoved"
 REVIEW_COMMANDS_CODE_REMOVED_WARNING = (
     "reviewCommands.code is no longer supported (removed in docaudit v0.18.0) and was ignored. "
@@ -157,6 +144,20 @@ def read_once(path, label):
             return handle.read()
     except OSError as exc:
         raise Refused(f"{label} cannot be read: {exc}") from exc
+
+
+def plugin_engine_version():
+    path = os.path.abspath(os.path.join(HERE, "..", "..", "..", ".claude-plugin",
+                                        "plugin.json"))
+    try:
+        with open(path, encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise Refused(f"plugin engine version cannot be read: {exc}") from exc
+    version = value.get("version") if isinstance(value, dict) else None
+    if not isinstance(version, str) or not version:
+        raise Refused("plugin engine version is missing")
+    return version
 
 
 def read_state_once(path, label):
@@ -386,8 +387,9 @@ def adjudicate_codex_claims(repo, run_dir, runid, phase4, codex_review_state, wa
     targets, missing_titles = extract_claim_targets(phase4)
     if missing_titles:
         add_warning(warnings, "codexFindingTitleMissing")
+        raise Refused("codexClaimTitleMissing")
     if not targets:
-        return [], 0
+        return [], 0, 0
 
     claims_dir = os.path.join(run_dir, "claims")
     target_ids = {target["findingId"] for target in targets}
@@ -407,6 +409,7 @@ def adjudicate_codex_claims(repo, run_dir, runid, phase4, codex_review_state, wa
         add_warning(warnings, "claimRecordUnexpected")
 
     items = []
+    unadjudicated = 0
     for target in targets:
         finding_id = target["findingId"]
         record = None
@@ -421,6 +424,7 @@ def adjudicate_codex_claims(repo, run_dir, runid, phase4, codex_review_state, wa
                 warning = exc.warning
         if record is None:
             add_warning(warnings, warning)
+            unadjudicated += 1
             record = {"state": "unverified", "rationale": ""}
         item = {
             "findingId": finding_id,
@@ -434,7 +438,7 @@ def adjudicate_codex_claims(repo, run_dir, runid, phase4, codex_review_state, wa
             "rationale": record.get("rationale", "")[:2048],
         }
         items.append(item)
-    return items, len(targets)
+    return items, len(targets), unadjudicated
 
 
 def codex_claim_counts(items):
@@ -524,6 +528,8 @@ def validate_evidence(value):
         raise Refused("EVIDENCE required keys are missing")
     if not isinstance(value["runid"], str) or not isinstance(value["runDir"], str):
         raise Refused("EVIDENCE run identity has invalid types")
+    if not isinstance(value["engineVersion"], str) or not value["engineVersion"]:
+        raise Refused("EVIDENCE engineVersion has invalid type")
     if (isinstance(value["lockIno"], bool) or not isinstance(value["lockIno"], int)
             or value["lockIno"] <= 0):
         raise Refused("EVIDENCE lockIno has invalid type")
@@ -692,17 +698,11 @@ def bounded_claim_payload(items, byte_budget):
 def render_report(template, verdict, report_date, *, reason=None, counts=None,
                   history_status=None, warnings=None, sibling=None, anchor_written=False,
                   claim_items=None, claim_target_count=None, claim_payload_result=None):
+    try:
+        validate_template_body(template, claim_target_count)
+    except TokenCountError as exc:
+        raise TemplateInvalid(str(exc)) from exc
     found = TOKEN_RE.findall(template)
-    if any(token not in TOKEN_COUNTS for token in found):
-        raise TemplateInvalid("report template contains an unknown gate token")
-    optional_tokens = set(OPTIONAL_TOKENS)
-    if claim_target_count in (None, 0):
-        optional_tokens.add("{{GATE_CODEX_CLAIMS}}")
-    for token, count in TOKEN_COUNTS.items():
-        actual_count = found.count(token)
-        if ((token in optional_tokens and actual_count not in (0, count))
-                or (token not in optional_tokens and actual_count != count)):
-            raise TemplateInvalid(f"report template token count is invalid for {token}")
     refused = verdict == "REFUSED"
     report_warnings = [
         f"{code}: {REVIEW_COMMANDS_CODE_REMOVED_WARNING}"
@@ -938,29 +938,54 @@ def add_warning(warnings, code):
         warnings.append(code)
 
 
-def finalize_report(repo, run_dir, rule, report_date, last_run_path, base_state, warnings,
-                    verdict, *, reason=None, counts=None, history_status=None,
-                    sibling=None, anchor_written=False, claim_items=None,
-                    claim_target_count=None):
-    claim_payload = {
-        "items": [],
-        "omittedCount": len(claim_items or []),
-        "omittedByEffectiveState": {},
-    }
+def render_report_snapshot(run_dir, rule, report_date, verdict, *, reason=None, counts=None,
+                           history_status=None, warnings=None, sibling=None,
+                           anchor_written=False, claim_items=None, claim_target_count=None):
+    if rule is None:
+        return None, bounded_claim_payload(claim_items or [], MAX_REPORT_BYTES)
+    template = load_report_template(run_dir)
+    claim_payload = {}
+    rendered = render_report(
+        template, verdict, report_date, reason=reason, counts=counts,
+        history_status=history_status, warnings=warnings, sibling=sibling,
+        anchor_written=anchor_written, claim_items=claim_items,
+        claim_target_count=claim_target_count,
+        claim_payload_result=claim_payload)
+    return rendered, claim_payload
+
+
+def render_report_before_commit(run_dir, rule, report_date, warnings, verdict, **kwargs):
+    if rule is None:
+        try:
+            return render_report_snapshot(
+                run_dir, rule, report_date, verdict, warnings=warnings, **kwargs)
+        except TemplateInvalid:
+            add_warning(warnings, "reportTemplateInvalid")
+            claim_items = kwargs.get("claim_items") or []
+            return None, {
+                "items": [],
+                "omittedCount": len(claim_items),
+                "omittedByEffectiveState": {},
+            }
+    try:
+        return render_report_snapshot(
+            run_dir, rule, report_date, verdict, warnings=warnings, **kwargs)
+    except TemplateMissing as exc:
+        add_warning(warnings, "reportTemplateMissing")
+        raise Refused("reportTemplateMissing") from exc
+    except TemplateInvalid as exc:
+        add_warning(warnings, "reportTemplateInvalid")
+        raise Refused(f"reportTemplateInvalid: {exc}") from exc
+
+
+def publish_rendered_report(repo, run_dir, rule, last_run_path, base_state, warnings,
+                            rendered, claim_payload):
     report_path = None
     status = "failed" if rule is not None else base_state["reportStatus"]
     error_code = None
     try:
-        claim_payload = bounded_claim_payload(claim_items or [], MAX_REPORT_BYTES)
         if rule is None:
             return None, base_state["reportStatus"], claim_payload
-        template = load_report_template(run_dir)
-        rendered = render_report(
-            template, verdict, report_date, reason=reason, counts=counts,
-            history_status=history_status, warnings=warnings, sibling=sibling,
-            anchor_written=anchor_written, claim_items=claim_items,
-            claim_target_count=claim_target_count,
-            claim_payload_result=claim_payload)
         report_path, durability_unknown, cleanup_error = publish_report(
             repo, run_dir, rule, rendered)
         if durability_unknown:
@@ -970,12 +995,6 @@ def finalize_report(repo, run_dir, rule, report_date, last_run_path, base_state,
             status = "written"
         if cleanup_error is not None:
             add_warning(warnings, "reportWriteError")
-    except TemplateMissing:
-        error_code = "reportTemplateMissing"
-        add_warning(warnings, error_code)
-    except TemplateInvalid:
-        error_code = "reportTemplateInvalid"
-        add_warning(warnings, error_code)
     except (OSError, ValueError):
         error_code = "reportWriteError"
         add_warning(warnings, error_code)
@@ -991,6 +1010,46 @@ def finalize_report(repo, run_dir, rule, report_date, last_run_path, base_state,
         add_warning(warnings, "reportStatusUpdateFailed")
         persisted_status = base_state["reportStatus"]
     return report_path, persisted_status, claim_payload
+
+
+def finalize_report(repo, run_dir, rule, report_date, last_run_path, base_state, warnings,
+                    verdict, *, reason=None, counts=None, history_status=None,
+                    sibling=None, anchor_written=False, claim_items=None,
+                    claim_target_count=None):
+    claim_payload = {
+        "items": [],
+        "omittedCount": len(claim_items or []),
+        "omittedByEffectiveState": {},
+    }
+    try:
+        # Preserve the refused-path replacement validation order used before
+        # normal reports moved to render-before-commit.
+        claim_payload = bounded_claim_payload(claim_items or [], MAX_REPORT_BYTES)
+        rendered, claim_payload = render_report_snapshot(
+            run_dir, rule, report_date, verdict, reason=reason, counts=counts,
+            history_status=history_status, warnings=warnings, sibling=sibling,
+            anchor_written=anchor_written, claim_items=claim_items,
+            claim_target_count=claim_target_count)
+    except TemplateMissing:
+        add_warning(warnings, "reportTemplateMissing")
+        rendered = None
+    except TemplateInvalid:
+        add_warning(warnings, "reportTemplateInvalid")
+        rendered = None
+    if rendered is None and rule is not None:
+        final_state = dict(base_state, reportStatus="failed",
+                           reportError=("reportTemplateMissing"
+                                        if "reportTemplateMissing" in warnings
+                                        else "reportTemplateInvalid"))
+        try:
+            report_status_update(last_run_path, final_state)
+            persisted_status = "failed"
+        except OSError:
+            add_warning(warnings, "reportStatusUpdateFailed")
+            persisted_status = base_state["reportStatus"]
+        return None, persisted_status, claim_payload
+    return publish_rendered_report(
+        repo, run_dir, rule, last_run_path, base_state, warnings, rendered, claim_payload)
 
 
 def main():
@@ -1149,6 +1208,11 @@ def main():
                 or backend != config.get("phase3Backend", "workflow")):
             raise Refused("sealed phase3Backend is invalid or does not match config")
         report_trusted = identity_ok
+        engine_version = plugin_engine_version()
+        if expected["engineVersion"] != engine_version:
+            raise Refused(
+                "engine version changed during run: "
+                f"evidence={expected['engineVersion']} plugin={engine_version}")
         code_removed_warning = review_commands_code_warning(config)
         if code_removed_warning is not None:
             add_warning(warnings, code_removed_warning)
@@ -1235,8 +1299,13 @@ def main():
         if phase4 is None:
             claim_target_count = 0
         else:
-            claim_items, claim_target_count = adjudicate_codex_claims(
+            claim_items, claim_target_count, unadjudicated_count = adjudicate_codex_claims(
                 repo, run_dir, args.runid, phase4, codex_review_state, warnings)
+            if unadjudicated_count > 0:
+                raise Refused(
+                    "codexClaimsUnadjudicated: "
+                    f"{unadjudicated_count} of {claim_target_count} codex-review "
+                    "CRITICAL/HIGH findings have no valid claim record")
 
         head = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"], capture_output=True,
                               text=True, check=True).stdout.strip()
@@ -1433,6 +1502,21 @@ def main():
             except ValueError:
                 add_warning(warnings, "Phase-4 history record failed round-trip validation")
                 phase4_flips = 0
+        counts = {"impacted": len(impacted), "dispatch": len(dispatched),
+                  "cached": len(cached),
+                  "verdictFlipsUnchangedContent": flips,
+                  "verdictFlipsUnchangedContentSameChangeSet": same_change_set_flips,
+                  "phase4FlipsUnchangedContent": phase4_flips}
+        if claim_target_count:
+            counts["codexClaims"] = codex_claim_counts(claim_items)
+        report_verdict = verdict
+        if verdict == "CONSISTENT" and codex_review_status["degraded"]:
+            report_verdict = f"CONSISTENT (codex-review did not run: {codex_review_state})"
+        rendered_report, claim_payload = render_report_before_commit(
+            run_dir, report_rule, manifest["reportDate"], warnings, report_verdict,
+            counts=counts, history_status=expected["historyStatus"], sibling=sibling,
+            anchor_written=(verdict == "CONSISTENT"), claim_items=claim_items,
+            claim_target_count=claim_target_count)
         atomic(history_path, {"entries": trim_history(history_entries + additions),
                               "phase4Runs": next_phase4_runs})
         report_status = "pending" if report_rule is not None else "not-requested"
@@ -1445,22 +1529,9 @@ def main():
                                  "runid": args.runid,
                                  "contractVersion": manifest["contractVersion"]})
             anchor_written = True
-        counts = {"impacted": len(impacted), "dispatch": len(dispatched),
-                  "cached": len(cached),
-                  "verdictFlipsUnchangedContent": flips,
-                  "verdictFlipsUnchangedContentSameChangeSet": same_change_set_flips,
-                  "phase4FlipsUnchangedContent": phase4_flips}
-        if claim_target_count:
-            counts["codexClaims"] = codex_claim_counts(claim_items)
-        report_verdict = verdict
-        if verdict == "CONSISTENT" and codex_review_status["degraded"]:
-            report_verdict = f"CONSISTENT (codex-review did not run: {codex_review_state})"
-        report_path, report_status, claim_payload = finalize_report(
-            repo, run_dir, report_rule, manifest["reportDate"], last_run_path,
-            last_state, warnings, report_verdict, counts=counts,
-            history_status=expected["historyStatus"], sibling=sibling,
-            anchor_written=anchor_written, claim_items=claim_items,
-            claim_target_count=claim_target_count)
+        report_path, report_status, claim_payload = publish_rendered_report(
+            repo, run_dir, report_rule, last_run_path, last_state, warnings,
+            rendered_report, claim_payload)
         try:
             release_lock(lock_path, lock_inode)
         except OSError:

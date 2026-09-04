@@ -243,7 +243,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.20.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.21.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -302,6 +302,8 @@ This release also removes the `/code-review` layer: `reviewCommands.code` and `r
 
 **v0.20.0 behavior changes:** corpus exclusions (`excludeDocGlobs` and Git excludes) now apply to generic layers and the refreshed distributed harness. Generic layers no longer inspect documents with a symlink component, which can remove findings for shared-document layouts. An installed harness not refreshed after this upgrade retains its v0.19 model-driven doc-lint behavior. Incremental runs add changed corpus documents as provenance `self`, which can increase impacted count and select the standard route more often. The first incremental run after an update does not reuse verdict-cache entries for this run's impacted documents when `contractVersion` differs (`qualified=0`).
 
+**v0.21.0 behavior changes:** the normal run open carries the skill version in `--skill-version`, records the matching plugin version as `engineVersion`, and the gate refuses if that version changes during the run. When a report is configured, the gate fully renders and validates its final bytes before committing normal history, last-run, or anchor state; an invalid template therefore produces REFUSED without advancing the anchor. A codex-review `critical` or `high` finding with a missing title now produces `codexClaimTitleMissing`, and any such target without a valid claim record produces `codexClaimsUnadjudicated`, regardless of `codexReview.required`; valid `refuted`, `unverified`, and `not-adjudicable` records remain non-blocking. With normal or absent history, an owned run identity, and `reportPath` configured, this REFUSED path renders a report, leaves the anchor unchanged, and releases the lock. Corrupt history still takes the existing quarantine path first; if quarantine fails, no report is published and the lock remains held. Findings from a REFUSED run are not written to history and therefore are not carried forward, but the unchanged anchor causes the same change set to be reviewed again on the next run. In an environment that cannot run the adjudication Workflow, the only opt-out is to set `codexReview.enabled:false`, disabling codex-review itself. `import-audit-scope.py --check --from-index` now checks one Git index snapshot independently of the working tree, accepting only stage-0 regular blobs; matching content recorded at a different scope path reports `path-mismatch` and exits 4. Harness pre-flight now uses `--check-stamps` to compare each uniquely and canonically placed stamp and normalized body with the shipped template SHA. A `--refresh` whose bodies already match reports them `up-to-date` without rewriting their stamps; an existing harness decision updates `engineVersion` only when at least one template is written, while the initial decision always records the installing engine version.
+
 Impact priority is `mapped`/`full`/`self` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic`.
 
 Configured `docAuditCommands` findings and project-side harness definitions have repository-writer trust because the same writer can change those definitions directly. Sealed-config completely covers the plugin engine decision path; it does not claim to make project-defined commands more trustworthy. Across runs, last-run, history, and anchor markers are operational fail-closed aids rather than a separate security boundary: missing state is indistinguishable from a fresh install, and the documented quarantine-marker persistence failure followed by emergency lock breaking remains a known limit.
@@ -340,7 +342,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, 0.15.1, 0.16.0, 0.17.0, 0.18.0, or 0.19.0 templates can be updated directly to 0.20.0 with
+Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, 0.15.1, 0.16.0, 0.17.0, 0.18.0, 0.19.0, or 0.20.0 templates can be updated directly to 0.21.0 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
@@ -716,6 +718,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/plan-dispatch.py
 ├── skills/audit/scripts/probe-record.py
 ├── skills/audit/scripts/read-manifest.py
+├── skills/audit/scripts/report_tokens.py
 ├── skills/audit/scripts/resolve-impact.py
 ├── skills/audit/scripts/scaffold.py
 ├── skills/audit/scripts/seal-run.py

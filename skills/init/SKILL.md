@@ -93,8 +93,11 @@ Map the accepted answer to exactly one state:
 | 既存を調整 | `adjusted` | only after the approved diff is applied, write its mapping |
 | そのまま | `existing-untouched` | do not edit or auto-wire the candidates |
 
-Read `<version>` from `$SD/../../.claude-plugin/plugin.json` and make the decision object
-`{"state":"…","decidedAt":"<current ISO-8601 timestamp>","engineVersion":"<version>"}`.
+Read `<version>` from `$SD/../../.claude-plugin/plugin.json`. A newly created decision object is
+`{"state":"…","decidedAt":"<current ISO-8601 timestamp>","engineVersion":"<version>"}` even
+when no harness file is written. On a later `--refresh`, preserve the existing
+`harness.engineVersion` when `created` is empty, and update it to `<version>` only when `created`
+is non-empty.
 For an existing config, record the decision with one atomic invocation, adding the second
 `--set` only for a state that requires wiring:
 
@@ -105,7 +108,10 @@ Here `CFG="$CLAUDE_PROJECT_DIR/.claude/doc-audit.json"`. For a new config, do no
 directly in the Step-2 draft so Step 4 creates the complete approved JSON once. For `installed`,
 the scaffold return value must wire existence=`/check-docs --only existence`,
 format=`/check-docs --only format`, and semantic=`doc-lint`. Report every `created`, `skipped`,
-and `skipReasons` entry. If an existing config was the `--harness` exception, stop after this
+`skipReasons`, and `upToDate` entry. Only when `upToDate` contains all three harness paths may
+you report that every template is up-to-date and its stamp was left unchanged. If `created` is
+empty but any file is `not-refreshable`, show its `skipReasons` detail and report that it needs
+inspection. If an existing config was the `--harness` exception, stop after this
 harness-only update; do not rebuild or rewrite the rest of the adapter.
 
 ## Step 2 — draft the config
@@ -218,8 +224,11 @@ the generic baseline. Do this AFTER Step 3 approval and BEFORE the Step 4 config
    generated skill report-only (propose fixes; never edit docs).
 4. Tell the user to review + commit the new skills + config, then run `/docaudit:audit --full`.
 Additive only: scaffold.py creates NEW skill files; it never edits existing docs/ADRs. Its
-`--refresh` exception overwrites only generated harness files whose stamp and normalized body
-still match a shipped template; modified or unstamped files are skipped with a reason.
+`--refresh` classifies every generated harness path as `missing`, `current`, `refreshable`, or
+`not-refreshable`. It creates missing files, rewrites only refreshable files, leaves current files
+byte-for-byte unchanged with an `up-to-date` reason, and skips not-refreshable files with a reason.
+A stamp is eligible only when it is the single, type-correct stamp at the canonical position and
+the normalized body matches a shipped template; the stamp's version text alone is not used.
 
 ## Guardrails
 Additive only (new files), except for an explicitly approved existing-tool adjustment and the

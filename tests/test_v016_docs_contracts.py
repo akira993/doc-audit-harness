@@ -53,7 +53,7 @@ class TestV016DocumentContracts(unittest.TestCase):
                 "sealed-config-mismatch",
                 "same worktreeDigest, contractVersion, configSha, and carryForwardSha",
                 "Carry-forward is data-only (`file` plus `severity`)",
-                "every older, future, missing, invalid, or modified stamp falls back",
+                "every ineligible or unparseable result falls back",
                 "repository-writer level",
             ),
         }

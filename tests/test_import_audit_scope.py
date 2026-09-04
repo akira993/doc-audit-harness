@@ -106,6 +106,15 @@ class ImportAuditScopeTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         return json.loads(read(self.config_path(root)))
 
+    def stage_imported(self, root):
+        data = self.import_existing(root)
+        subprocess.run(["git", "add", "-f", "."], cwd=root, check=True)
+        return data
+
+    def remove_from_index(self, root, rel):
+        subprocess.run(["git", "update-index", "--force-remove", "--", rel],
+                       cwd=root, check=True)
+
     # PLAN §1.6 (i)
     def test_i_glob_translation_positive_and_negative_examples(self):
         positive = {
@@ -534,6 +543,196 @@ class ImportAuditScopeTests(unittest.TestCase):
         self.import_existing(root)
         proc = self.invoke(root, "--json")
         self.assertEqual((proc.returncode, self.output(proc)["state"]), (0, "in-sync"))
+
+        custom = "config/scopes/project.json"
+        write(self.scope_path(root, custom), read(self.scope_path(root)))
+        proc = self.invoke(root, "--scope", custom, "--json")
+        out = self.output(proc)
+        self.assertEqual((proc.returncode, out["state"]), (4, "path-mismatch"))
+        self.assertEqual(out["recordedScopePath"], ".claude/audit-scope.json")
+
+    def test_c4_from_index_and_path_state_table(self):
+        """PLAN C-4: one end-to-end table fixes every index/check decision."""
+        def imported_root():
+            root = self.make_repo(
+                config={"docGlobs": ["docs/**/*.md"], "impactMap": []})
+            self.stage_imported(root)
+            return root
+
+        # (i), (vi): staged bytes and paths win over damaged working-tree state.
+        root = imported_root()
+        write(self.scope_path(root), '{"src/*.py":["docs/b.md"]}')
+        plain = self.invoke(root, "--json")
+        indexed = self.invoke(root, "--from-index", "--json")
+        self.assertEqual((plain.returncode, self.output(plain)["state"]), (2, "drift"))
+        indexed_out = self.output(indexed)
+        self.assertEqual((indexed.returncode, indexed_out["state"]), (0, "in-sync"))
+        self.assertNotIn("warnings", indexed_out)
+        write(self.config_path(root), "not json")
+        os.unlink(os.path.join(root, "docs", "a.md"))
+        write(os.path.join(root, "docs", "untracked.md"), "# untracked\n")
+        write(os.path.join(root, ".gitignore"), "docs/a.md\n")
+        indexed = self.invoke(root, "--from-index", "--json")
+        self.assertEqual((indexed.returncode, self.output(indexed)["state"]), (0, "in-sync"))
+
+        scope_raw = b'{"src/*.py":["docs/untracked.md"]}'
+        scope_sha = hashlib.sha256(scope_raw).hexdigest()
+        manual_config = {
+            "docGlobs": ["docs/**/*.md"],
+            "impactMap": [{
+                "changed": "src/**.py", "impacts": ["docs/untracked.md"],
+                "source": "audit-scope",
+            }],
+            "auditScope": {
+                "path": ".claude/audit-scope.json", "sha256": scope_sha,
+                "rules": 1, "importedAt": "2026-09-04T00:00:00+00:00",
+            },
+        }
+        root = self.make_repo(scope=scope_raw, config=manual_config)
+        write(os.path.join(root, "docs", "untracked.md"), "# not indexed\n")
+        proc = self.invoke(root, "--from-index", "--json")
+        out = self.output(proc)
+        self.assertEqual((proc.returncode, out["state"]), (1, "error"))
+        self.assertTrue(any("outside document corpus" in error
+                            for error in out["errors"]), out)
+
+        # (ii-a), (ii-b): absence is decided only from the snapshot.
+        root = imported_root()
+        self.remove_from_index(root, ".claude/doc-audit.json")
+        proc = self.invoke(root, "--from-index", "--json")
+        out = self.output(proc)
+        self.assertEqual((proc.returncode, out["state"]), (1, "error"))
+        self.assertIn("config not in index: .claude/doc-audit.json", out["errors"])
+
+        for metadata_present, expected in ((False, (0, "absent")),
+                                           (True, (2, "drift"))):
+            with self.subTest(scope_absent_metadata=metadata_present):
+                if metadata_present:
+                    root = imported_root()
+                else:
+                    root = self.make_repo(
+                        config={"docGlobs": ["docs/**/*.md"], "impactMap": []})
+                self.remove_from_index(root, ".claude/audit-scope.json")
+                proc = self.invoke(root, "--from-index", "--json")
+                self.assertEqual((proc.returncode, self.output(proc)["state"]), expected)
+
+        # (iii): index input is check-only.
+        root = imported_root()
+        proc = self.invoke(root, "--from-index", "--write", "--json")
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("--from-index cannot be used with --write", proc.stderr)
+
+        # (iv), (v): a path-only mismatch has its own state and exit value.
+        root = imported_root()
+        custom = "config/scopes/project.json"
+        write(self.scope_path(root, custom), read(self.scope_path(root)))
+        subprocess.run(["git", "add", "-f", custom], cwd=root, check=True)
+        proc = self.invoke(root, "--from-index", "--scope", custom, "--json")
+        out = self.output(proc)
+        self.assertEqual((proc.returncode, out["state"]), (4, "path-mismatch"))
+        self.assertEqual(out["recordedScopePath"], ".claude/audit-scope.json")
+        write(self.scope_path(root, custom), '{"src/*.py":["docs/b.md"]}')
+        subprocess.run(["git", "add", "-f", custom], cwd=root, check=True)
+        proc = self.invoke(root, "--from-index", "--scope", custom, "--json")
+        self.assertEqual((proc.returncode, self.output(proc)["state"]), (2, "drift"))
+
+        # (vii), (viii): expected hashes are checked against index blobs.
+        wrong = "sha256:" + "0" * 64
+        for option in ("--expect-config-sha", "--expect-scope-sha"):
+            with self.subTest(index_sha=option):
+                root = imported_root()
+                proc = self.invoke(root, "--from-index", option, wrong, "--json")
+                out = self.output(proc)
+                self.assertEqual((proc.returncode, out["state"]), (1, "error"))
+                self.assertTrue(any("SHA mismatch" in error for error in out["errors"]))
+
+        # (ix): non-blob config/scope entries never become accepted files.
+        for target, metadata_present, expected_error in (
+                ("config", True, "config not in index"),
+                ("scope", False, "scope not a regular blob in index"),
+                ("scope", True, "scope not a regular blob in index")):
+            with self.subTest(non_blob=target, metadata=metadata_present):
+                root = (imported_root() if metadata_present else self.make_repo(
+                    config={"docGlobs": ["docs/**/*.md"], "impactMap": []}))
+                rel = (".claude/doc-audit.json" if target == "config"
+                       else ".claude/audit-scope.json")
+                path = os.path.join(root, *rel.split("/"))
+                os.unlink(path)
+                os.symlink("../docs/a.md", path)
+                subprocess.run(["git", "add", "-f", rel], cwd=root, check=True)
+                proc = self.invoke(root, "--from-index", "--json")
+                out = self.output(proc)
+                self.assertEqual((proc.returncode, out["state"]), (1, "error"))
+                self.assertTrue(any(expected_error in error for error in out["errors"]), out)
+
+        root = imported_root()
+        rel = ".claude/audit-scope.json"
+        first_oid = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"], cwd=root,
+            input=read(self.scope_path(root)), capture_output=True, check=True,
+        ).stdout.strip().decode("ascii")
+        second_oid = subprocess.run(
+            ["git", "hash-object", "-w", "--stdin"], cwd=root,
+            input=b'{"src/*.py":["docs/b.md"]}', capture_output=True, check=True,
+        ).stdout.strip().decode("ascii")
+        self.remove_from_index(root, rel)
+        conflict = (f"100644 {first_oid} 1\t{rel}\0"
+                    f"100644 {second_oid} 2\t{rel}\0").encode()
+        subprocess.run(["git", "update-index", "-z", "--index-info"], cwd=root,
+                       input=conflict, check=True)
+        proc = self.invoke(root, "--from-index", "--json")
+        out = self.output(proc)
+        self.assertEqual((proc.returncode, out["state"]), (1, "error"))
+        self.assertIn("scope not a regular blob in index: " + rel, out["errors"])
+
+        # (x): excludeDocGlobs is applied to the index corpus.
+        scope = b'{"src/*.py":["docs/private.md"]}'
+        config = {
+            "docGlobs": ["docs/**/*.md"],
+            "excludeDocGlobs": ["docs/private.md"],
+            "impactMap": [],
+        }
+        root = self.make_repo(scope=scope, config=config,
+                              files=(("docs/private.md", "# private\n"),))
+        proc = self.invoke(root, "--from-index", "--json")
+        out = self.output(proc)
+        self.assertEqual((proc.returncode, out["state"]), (1, "error"))
+        self.assertTrue(any("excluded from corpus" in error for error in out["errors"]))
+
+        # (xii): CR/LF names are diagnosed before entry filtering.
+        root = imported_root()
+        odd = "ignored\nname"
+        write(os.path.join(root, odd), "")
+        subprocess.run(["git", "add", "-f", odd], cwd=root, check=True)
+        proc = self.invoke(root, "--from-index", "--json")
+        out = self.output(proc)
+        self.assertEqual((proc.returncode, out["state"]), (1, "error"))
+        self.assertIn(f"unsupported filename: {odd!r}", out["errors"])
+
+        # (xiii): repo-contained absolute config/scope paths normalize lexically.
+        root = imported_root()
+        proc = self.invoke(
+            root, "--from-index", "--config", self.config_path(root),
+            "--scope", self.scope_path(root), "--json")
+        self.assertEqual((proc.returncode, self.output(proc)["state"]), (0, "in-sync"))
+
+        # (xv): every shared reserved directory name is absent from both corpora.
+        reserved_files = tuple(
+            (f"{name}/hidden.md", "# hidden\n")
+            for name in sorted(IMPORTER.RESERVED_DIRECTORY_NAMES))
+        impacts = [path for path, _content in reserved_files]
+        scope = json.dumps({"src/*.py": impacts})
+        root = self.make_repo(
+            scope=scope,
+            config={"docGlobs": ["**/*.md"], "impactMap": []},
+            files=reserved_files)
+        plain = self.invoke(root, "--json")
+        indexed = self.invoke(root, "--from-index", "--json")
+        plain_out = self.output(plain)
+        indexed_out = self.output(indexed)
+        self.assertEqual((plain.returncode, indexed.returncode), (1, 1))
+        self.assertEqual(plain_out["errors"], indexed_out["errors"])
+        self.assertEqual(len(plain_out["errors"]), len(impacts))
 
     def test_vi_multiset_detects_one_deleted_duplicate(self):
         scope = json.dumps({

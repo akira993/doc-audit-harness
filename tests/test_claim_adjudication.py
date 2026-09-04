@@ -1,6 +1,7 @@
 """Contracts and end-to-end checks for v0.19 codex claim adjudication."""
 
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
@@ -81,8 +82,9 @@ class ClaimWorkspace(unittest.TestCase):
 
     def adjudicate(self, phase_value, state="completed", run_dir=None):
         warnings = []
-        items, count = DECIDE.adjudicate_codex_claims(
+        items, count, unadjudicated = DECIDE.adjudicate_codex_claims(
             self.repo, run_dir or self.run_dir, "run-1", phase_value, state, warnings)
+        self.last_unadjudicated = unadjudicated
         return items, count, warnings
 
 
@@ -103,11 +105,13 @@ class TestP1ThroughP7(ClaimWorkspace):
         items, _count, warnings = self.adjudicate(value)
         self.assertEqual(items[0]["effectiveState"], "unverified")
         self.assertIn("codexClaimsUnadjudicated", warnings)
+        self.assertEqual(self.last_unadjudicated, 1)
         target = self.target()
         self.put_record(target, "refuted")
         items, _count, warnings = self.adjudicate(value)
         self.assertEqual(items[0]["effectiveState"], "refuted")
         self.assertNotIn("codexClaimsUnadjudicated", warnings)
+        self.assertEqual(self.last_unadjudicated, 0)
 
     def test_p2_rejects_each_identity_shape_and_file_kind_error(self):
         value = phase([finding()])
@@ -227,9 +231,12 @@ class TestP1ThroughP7(ClaimWorkspace):
         self.assertIn("claimRecordUnexpected", warnings)
         self.assertIn("codexClaimsUnadjudicated", warnings)
 
-    def test_missing_title_warns_and_invalid_claim_fields_are_rejected(self):
-        items, count, warnings = self.adjudicate(phase([finding(title="  ")]))
-        self.assertEqual((items, count), ([], 0))
+    def test_missing_title_refuses_and_invalid_claim_fields_are_rejected(self):
+        warnings = []
+        with self.assertRaisesRegex(DECIDE.Refused, "^codexClaimTitleMissing$"):
+            DECIDE.adjudicate_codex_claims(
+                self.repo, self.run_dir, "run-1", phase([finding(title="  ")]),
+                "completed", warnings)
         self.assertIn("codexFindingTitleMissing", warnings)
         invalid = [
             {"file": None, "severity": "HIGH", "title": "claim"},
@@ -325,9 +332,52 @@ class TestGateOutcomes(unittest.TestCase):
             effective)
         return result
 
-    def test_c3_i_empty_claims_is_consistent_with_warning(self):
-        result = self.assert_derived(["refuted"], record_indexes=[])
+    @staticmethod
+    def report_template(fx):
+        return fx.report_template() + "codexClaims: {{GATE_CODEX_CLAIMS}}\n"
+
+    def assert_missing_records_refused(self, states, record_indexes, *, required=None):
+        config = {"codexReview": {}}
+        if required is not None:
+            config["codexReview"]["required"] = required
+        config["reportPath"] = "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"
+        findings = [finding(f"Claim {index}", file="docs/a.md" if index % 2 == 0
+                            else "docs/b.md") for index in range(len(states))]
+        fx = RunFixture(self, config_extra=config)
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        self.assertEqual(fx.complete(phase4=phase(findings)).returncode, 0)
+        for index in record_indexes:
+            target = claim_record.extract_claim_targets(phase([findings[index]]))[0][0]
+            args = ["--run-dir", fx.run_dir,
+                    "--out", os.path.join(fx.run_dir, "claims", target["findingId"] + ".json"),
+                    "--runid", fx.runid, "--repo-root", fx.repo,
+                    "--finding-id", target["findingId"], "--state", states[index]]
+            if states[index] in {"confirmed", "refuted"}:
+                args.extend(["--evidence-file", findings[index]["file"],
+                             "--evidence-line", "1"])
+            written = fx.call("write-claim.py", *args, input_text="checked")
+            self.assertEqual(written.returncode, 0, written.stderr)
+        self.assertEqual(fx.write_template(body=self.report_template(fx)).returncode, 0)
+        before = tuple(os.path.exists(path) for path in (fx.history, fx.anchor))
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["verdict"], "REFUSED")
+        self.assertTrue(result["reason"].startswith("codexClaimsUnadjudicated"))
         self.assertIn("codexClaimsUnadjudicated", result["warnings"])
+        self.assertFalse(result["anchorWritten"])
+        self.assertEqual(tuple(os.path.exists(path) for path in (fx.history, fx.anchor)), before)
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+        self.assertEqual(json.loads(Path(fx.last_run).read_text(encoding="utf-8"))["verdict"],
+                         "REFUSED")
+        report = Path(fx.repo, result["reportPath"]).read_text(encoding="utf-8")
+        self.assertIn("verdict: REFUSED", report)
+        return fx, result
+
+    def test_c3_i_empty_claims_is_refused_with_report_and_unchanged_state(self):
+        _fx, result = self.assert_missing_records_refused(["refuted"], [])
+        self.assertIn("1 of 1", result["reason"])
 
     def test_c3_ii_all_confirmed_is_needs_fix(self):
         self.assert_derived(["confirmed", "confirmed"])
@@ -338,9 +388,102 @@ class TestGateOutcomes(unittest.TestCase):
     def test_c3_iv_mixed_confirmed_refuted_is_needs_fix(self):
         self.assert_derived(["confirmed", "refuted"])
 
-    def test_c3_v_partial_without_confirmed_is_consistent(self):
-        result = self.assert_derived(["refuted", "refuted"], record_indexes=[0])
-        self.assertEqual(result["counts"]["codexClaims"]["unverified"], 1)
+    def test_c3_v_partial_without_confirmed_is_refused_one_of_two(self):
+        _fx, result = self.assert_missing_records_refused(
+            ["refuted", "refuted"], record_indexes=[0])
+        self.assertIn("1 of 2", result["reason"])
+
+    def test_invalid_record_and_required_false_are_still_refused(self):
+        fx, _result = self.assert_missing_records_refused(
+            ["refuted"], record_indexes=[], required=False)
+        # The first run already proved required:false. A separate run fixes the record-error branch.
+        fx = RunFixture(self, config_extra={
+            "codexReview": {},
+            "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md",
+        })
+        fx.open(); fx.plan_start_seal(); fx.complete(phase4=phase([finding("Claim 0")]))
+        claims = os.path.join(fx.run_dir, "claims")
+        os.makedirs(claims)
+        target = claim_record.extract_claim_targets(phase([finding("Claim 0")]))[0][0]
+        write(os.path.join(claims, target["findingId"] + ".json"), "{broken")
+        self.assertEqual(fx.write_template(body=self.report_template(fx)).returncode, 0)
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertTrue(json.loads(proc.stdout)["reason"].startswith(
+            "codexClaimsUnadjudicated: 1 of 1"))
+
+    def test_zero_targets_and_all_valid_nonblocking_records_are_not_refused(self):
+        self.assert_derived(["refuted", "unverified"])
+        fx = RunFixture(self, config_extra={"codexReview": {}})
+        fx.open(); fx.plan_start_seal()
+        self.assertEqual(fx.complete(phase4=phase([finding(severity="MEDIUM")])).returncode, 0)
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(json.loads(proc.stdout)["verdict"], "CONSISTENT")
+
+    def test_title_missing_is_refused_before_unadjudicated(self):
+        fx = RunFixture(self, config_extra={
+            "codexReview": {},
+            "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md",
+        })
+        fx.open(); fx.plan_start_seal()
+        self.assertEqual(fx.complete(phase4=phase([finding(title=" ")])).returncode, 0)
+        self.assertEqual(fx.write_template().returncode, 0)
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["reason"], "codexClaimTitleMissing")
+        self.assertIn("codexFindingTitleMissing", result["warnings"])
+        self.assertIn("reportPath", result)
+        self.assertFalse(os.path.exists(fx.anchor))
+
+    def test_corrupt_history_is_quarantined_when_claim_record_is_missing(self):
+        fx = RunFixture(self, config_extra={
+            "codexReview": {},
+            "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md",
+        })
+        write(fx.history, "{broken")
+        fx.open(); fx.plan_start_seal()
+        self.assertEqual(fx.evidence["historyStatus"], "corrupt")
+        self.assertEqual(fx.complete(phase4=phase([finding()])).returncode, 0)
+        self.assertEqual(fx.write_template(body=self.report_template(fx)).returncode, 0)
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertTrue(result["reason"].startswith("codexClaimsUnadjudicated"))
+        self.assertTrue(os.path.exists(fx.history + ".tainted-" + fx.runid))
+        self.assertIn("reportPath", result)
+
+    def test_claim_and_template_error_reason_priority(self):
+        cases = (([finding(title=" ")], "codexClaimTitleMissing"),
+                 ([finding()], "codexClaimsUnadjudicated"))
+        for findings, expected_reason in cases:
+            with self.subTest(reason=expected_reason):
+                fx = RunFixture(self, config_extra={
+                    "codexReview": {},
+                    "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md",
+                })
+                fx.open(); fx.plan_start_seal()
+                self.assertEqual(fx.complete(phase4=phase(findings)).returncode, 0)
+                template = (fx.report_template() +
+                            ("codexClaims: {{GATE_CODEX_CLAIMS}}\n"
+                             if expected_reason != "codexClaimTitleMissing" else ""))
+                self.assertEqual(fx.write_template(body=template).returncode, 0)
+                raw = (template + "duplicate: {{GATE_VERDICT}}\n").encode("utf-8")
+                write(os.path.join(fx.run_dir, "report-template.md"), raw)
+                write(os.path.join(fx.run_dir, "report-template.receipt.json"), json.dumps({
+                    "failed": False, "bytes": len(raw),
+                    "sha256": "sha256:" + hashlib.sha256(raw).hexdigest(),
+                }) + "\n")
+                proc = fx.gate()
+                self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+                result = json.loads(proc.stdout)
+                self.assertTrue(result["reason"].startswith(expected_reason))
+                self.assertEqual(result["reportStatus"], "failed")
+                self.assertIn("reportTemplateInvalid", result["warnings"])
+                self.assertNotIn("reportPath", result)
+                self.assertFalse(os.path.exists(fx.anchor))
+                self.assertFalse(os.path.exists(fx.history))
 
     def test_two_run_refuted_then_confirmed_becomes_needs_fix(self):
         fx = self.prepare(["refuted"])
@@ -372,9 +515,10 @@ class TestClaimReportEndToEnd(unittest.TestCase):
     def report_template(fx):
         return fx.report_template() + "codexClaims: {{GATE_CODEX_CLAIMS}}\n"
 
-    def prepared_claim_report(self, bidi_field=None):
+    def prepared_claim_report(self, bidi_field=None, *, report=True):
         bidi_path = "docs/evidence" + self.BIDI + ".md"
-        fx = RunFixture(self, config_extra=self.REPORT_CONFIG)
+        config = self.REPORT_CONFIG if report else {"codexReview": {}}
+        fx = RunFixture(self, config_extra=config)
         if bidi_field in {"file", "evidenceFile"}:
             write(os.path.join(fx.repo, bidi_path), "# Evidence\n")
             subprocess.run(["git", "-C", fx.repo, "add", bidi_path], check=True,
@@ -405,8 +549,9 @@ class TestClaimReportEndToEnd(unittest.TestCase):
         rationale = "checked" + self.BIDI if bidi_field == "rationale" else "checked"
         written = fx.call("write-claim.py", *args, input_text=rationale)
         self.assertEqual(written.returncode, 0, written.stderr)
-        template = self.report_template(fx)
-        self.assertEqual(fx.write_template(body=template).returncode, 0)
+        if report:
+            template = self.report_template(fx)
+            self.assertEqual(fx.write_template(body=template).returncode, 0)
         return fx
 
     def assert_bidi_report_failure_is_terminally_safe(self, field, refused):
@@ -414,28 +559,69 @@ class TestClaimReportEndToEnd(unittest.TestCase):
         if refused:
             write(os.path.join(fx.repo, "src", "app.py"), "print('changed')\n")
         proc = fx.gate()
-        self.assertEqual(proc.returncode, 3 if refused else 0, proc.stdout + proc.stderr)
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
         result = json.loads(proc.stdout)
-        self.assertEqual(result["verdict"], "REFUSED" if refused else "CONSISTENT")
+        self.assertEqual(result["verdict"], "REFUSED")
         self.assertIn("reportTemplateInvalid", result["warnings"])
         self.assertEqual(result["reportStatus"], "failed")
-        if not refused:
-            self.assertEqual(result["codexClaims"], {
-                "items": [], "omittedCount": 1, "omittedByEffectiveState": {}})
+        self.assertNotIn("codexClaims", result)
         self.assertNotIn("Traceback", proc.stderr)
         self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+        self.assertFalse(os.path.exists(fx.anchor))
+        self.assertFalse(os.path.exists(fx.history))
         state = json.loads(Path(fx.last_run).read_text(encoding="utf-8"))
         self.assertEqual(state["verdict"], result["verdict"])
 
-    def test_bidi_in_each_claim_field_does_not_crash_success_path(self):
+    def test_bidi_in_each_claim_field_refuses_before_state_commit(self):
         for field in ("title", "rationale", "file", "evidenceFile"):
             with self.subTest(field=field):
                 self.assert_bidi_report_failure_is_terminally_safe(field, refused=False)
+
+    def test_bidi_in_each_claim_field_without_report_commits_state_with_warning(self):
+        for field in ("title", "rationale", "file", "evidenceFile"):
+            with self.subTest(field=field):
+                fx = self.prepared_claim_report(field, report=False)
+                proc = fx.gate()
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                result = json.loads(proc.stdout)
+                self.assertEqual(result["verdict"], "CONSISTENT")
+                self.assertTrue(result["anchorWritten"])
+                self.assertTrue(os.path.exists(fx.anchor))
+                self.assertIn("reportTemplateInvalid", result["warnings"])
+                self.assertEqual(result["reportStatus"], "not-requested")
+                self.assertEqual(result["codexClaims"], {
+                    "items": [], "omittedCount": 1, "omittedByEffectiveState": {},
+                })
+                history = json.loads(Path(fx.history).read_text(encoding="utf-8"))
+                self.assertTrue(history["entries"])
+                self.assertTrue(all(entry["verdict"] == "PASS"
+                                    and entry["runid"] == fx.runid
+                                    for entry in history["entries"]))
+                state = json.loads(Path(fx.last_run).read_text(encoding="utf-8"))
+                self.assertEqual(state["verdict"], "CONSISTENT")
 
     def test_bidi_in_each_claim_field_does_not_crash_refused_path(self):
         for field in ("title", "rationale", "file", "evidenceFile"):
             with self.subTest(field=field):
                 self.assert_bidi_report_failure_is_terminally_safe(field, refused=True)
+
+    def test_missing_template_is_classified_before_bidi_replacement(self):
+        fx = RunFixture(self, config_extra=self.REPORT_CONFIG)
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        phase4 = phase([finding()])
+        self.assertEqual(fx.complete(phase4=phase4).returncode, 0)
+        target = claim_record.extract_claim_targets(phase4)[0][0]
+        record = {"runid": fx.runid, "findingId": target["findingId"],
+                  "state": "refuted", "rationale": "checked" + self.BIDI,
+                  "evidenceFile": "docs/a.md", "evidenceLine": 1}
+        write(os.path.join(fx.run_dir, "claims", target["findingId"] + ".json"),
+              claim_record.encode_claim_record(record))
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["reason"], "reportTemplateMissing")
+        self.assertIn("reportTemplateMissing", result["warnings"])
 
     def test_claim_payload_is_rendered_end_to_end_on_success(self):
         fx = self.prepared_claim_report()
@@ -448,6 +634,56 @@ class TestClaimReportEndToEnd(unittest.TestCase):
         rendered_payload = json.loads(line.split(": ", 1)[1])
         self.assertEqual(rendered_payload, result["codexClaims"])
         self.assertEqual(rendered_payload["items"][0]["effectiveState"], "refuted")
+
+    def test_truncated_claim_payload_is_identical_in_stdout_and_report(self):
+        findings = [finding("x" * 60000 + str(index)) for index in range(80)]
+        phase4 = phase(findings)
+        fx = RunFixture(self, config_extra=self.REPORT_CONFIG)
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        self.assertEqual(fx.complete(phase4=phase4).returncode, 0)
+        for target in claim_record.extract_claim_targets(phase4)[0]:
+            record = {"runid": fx.runid, "findingId": target["findingId"],
+                      "state": "refuted", "rationale": "checked",
+                      "evidenceFile": "docs/a.md", "evidenceLine": 1}
+            write(os.path.join(fx.run_dir, "claims", target["findingId"] + ".json"),
+                  claim_record.encode_claim_record(record))
+        self.assertEqual(fx.write_template(body=self.report_template(fx)).returncode, 0)
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        report = Path(fx.repo, result["reportPath"]).read_text(encoding="utf-8")
+        line = next(value for value in report.splitlines() if value.startswith("codexClaims: "))
+        rendered_payload = json.loads(line.split(": ", 1)[1])
+        self.assertGreater(rendered_payload["omittedCount"], 0)
+        self.assertGreater(len(rendered_payload["items"]), 0)
+        self.assertEqual(rendered_payload, result["codexClaims"])
+
+    def test_gate_accepts_phase4_larger_than_write_template_early_check_limit(self):
+        fx = RunFixture(self, config_extra=self.REPORT_CONFIG)
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        phase4 = phase([finding()])
+        phase4["padding"] = "x" * (2 * 1024 * 1024)
+        self.assertEqual(fx.complete(phase4=phase4).returncode, 0)
+        target = claim_record.extract_claim_targets(phase4)[0][0]
+        written = fx.call(
+            "write-claim.py", "--run-dir", fx.run_dir,
+            "--out", os.path.join(fx.run_dir, "claims", target["findingId"] + ".json"),
+            "--runid", fx.runid, "--repo-root", fx.repo,
+            "--finding-id", target["findingId"], "--state", "refuted",
+            "--evidence-file", "docs/a.md", "--evidence-line", "1",
+            input_text="checked")
+        self.assertEqual(written.returncode, 0, written.stderr)
+        template = self.report_template(fx)
+        accepted = fx.write_template(body=template)
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+        self.assertIn("claim token count not checked", accepted.stderr)
+        gate = fx.gate()
+        self.assertEqual(gate.returncode, 0, gate.stdout + gate.stderr)
+        result = json.loads(gate.stdout)
+        self.assertEqual(result["verdict"], "CONSISTENT")
+        self.assertEqual(result["codexClaims"]["items"][0]["effectiveState"], "refuted")
 
     def test_refused_path_passes_claim_target_count_and_renders_na(self):
         fx = self.prepared_claim_report()
@@ -732,7 +968,11 @@ class TestInteractionMatrix(ClaimWorkspace):
                     with self.subTest(source=source, severity=severity, state=state):
                         run_dir = os.path.join(self.repo, "matrix", source, severity, state)
                         os.makedirs(run_dir)
-                        item = finding(source=source, severity=severity)
+                        item = finding(
+                            source=source, severity=severity,
+                            file=("docs/missing.md" if source == "codex-review"
+                                  and severity in {"CRITICAL", "HIGH"}
+                                  and state == "not-adjudicable" else "docs/a.md"))
                         value = phase([item])
                         claim_items = []
                         if source == "codex-review" and severity in {"CRITICAL", "HIGH"}:
@@ -749,11 +989,15 @@ class TestInteractionMatrix(ClaimWorkspace):
                                 write(os.path.join(claims_dir, target["findingId"] + ".json"),
                                       claim_record.encode_claim_record(record))
                             warnings = []
-                            claim_items, _count = DECIDE.adjudicate_codex_claims(
+                            claim_items, _count, unadjudicated = DECIDE.adjudicate_codex_claims(
                                 self.repo, run_dir, "run-1", value, "completed", warnings)
-                        blocked = DECIDE.findings_fail(value) or DECIDE.codex_claims_block(claim_items)
+                        else:
+                            unadjudicated = 0
+                        blocked = (unadjudicated > 0 or DECIDE.findings_fail(value)
+                                   or DECIDE.codex_claims_block(claim_items))
                         expected = (severity in {"CRITICAL", "HIGH"}
-                                    and (source != "codex-review" or state == "confirmed"))
+                                    and (source != "codex-review"
+                                         or state in {"confirmed", "missing"}))
                         self.assertEqual(blocked, expected)
 
     def test_four_confirmed_positive_controls_cover_defect_classes(self):
