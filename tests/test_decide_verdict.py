@@ -15,13 +15,15 @@ import textwrap
 import unittest
 from unittest import mock
 
-from tests.wp12_helpers import RunFixture, git, write
+from tests.wp12_helpers import RunFixture, git, plugin_version, write
 
 
 DECIDE = os.path.join(os.path.dirname(os.path.dirname(__file__)), "skills", "audit", "scripts", "decide-verdict.py")
 SCRIPT_DIR = os.path.dirname(DECIDE)
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
+
+import claim_record
 
 
 class GateBase(unittest.TestCase):
@@ -157,6 +159,16 @@ class TestGateWritesReport(GateBase):
             code = module.main()
         return code, json.loads(output.getvalue())
 
+    @staticmethod
+    def replace_template_artifacts(fx, raw):
+        raw = raw if isinstance(raw, bytes) else raw.encode("utf-8")
+        write(os.path.join(fx.run_dir, "report-template.md"), raw)
+        write(os.path.join(fx.run_dir, "report-template.receipt.json"), json.dumps({
+            "failed": False,
+            "bytes": len(raw),
+            "sha256": "sha256:" + hashlib.sha256(raw).hexdigest(),
+        }) + "\n")
+
     def paused_gate(self, fx, phase="publish"):
         ready_read, ready_write = os.pipe()
         resume_read, resume_write = os.pipe()
@@ -287,7 +299,10 @@ raise SystemExit(module.main())
 
         missing = RunFixture(self, config_extra=self.REPORT_CONFIG)
         missing.open(); missing.plan_start_seal(); missing.complete()
-        result = json.loads(missing.gate().stdout)
+        missing_proc = missing.gate()
+        self.assertEqual(missing_proc.returncode, 3, missing_proc.stdout + missing_proc.stderr)
+        result = json.loads(missing_proc.stdout)
+        self.assertEqual(result["verdict"], "REFUSED")
         self.assertIn("reportTemplateMissing", result["warnings"])
         self.assertNotIn("reportPath", result)
         self.assertEqual(result["reportStatus"], "failed")
@@ -297,11 +312,21 @@ raise SystemExit(module.main())
         fx = self.prepared_report()
         duplicate = fx.write_template(body="new", replace=False)
         self.assertEqual(duplicate.returncode, 2)
-        result = json.loads(fx.gate().stdout)
+        failed_proc = fx.gate()
+        self.assertEqual(failed_proc.returncode, 3, failed_proc.stdout + failed_proc.stderr)
+        result = json.loads(failed_proc.stdout)
+        self.assertEqual(result["verdict"], "REFUSED")
         self.assertIn("reportTemplateInvalid", result["warnings"])
+        self.assertEqual(result["reportStatus"], "failed")
+        self.assertNotIn("reportPath", result)
+        self.assertFalse(os.path.exists(fx.history))
+        self.assertFalse(os.path.exists(fx.anchor))
 
-        bad = self.prepared_report(template=self.prepared_report_template_with_duplicate_date())
-        out = json.loads(bad.gate().stdout)
+        bad = self.prepared_report()
+        self.replace_template_artifacts(bad, self.prepared_report_template_with_duplicate_date())
+        bad_proc = bad.gate()
+        self.assertEqual(bad_proc.returncode, 3, bad_proc.stdout + bad_proc.stderr)
+        out = json.loads(bad_proc.stdout)
         self.assertIn("reportTemplateInvalid", out["warnings"])
         self.assertNotIn("reportPath", out)
 
@@ -325,8 +350,17 @@ sibling: {{GATE_SIBLING_SCAN}}
             [sys.executable, os.path.join(SCRIPT_DIR, "write-template.py"),
              "--repo-root", fx.repo, "--runid", fx.runid],
             input=b"\xff", capture_output=True)
-        self.assertEqual(proc.returncode, 0, proc.stderr.decode())
-        result = json.loads(fx.gate().stdout)
+        self.assertEqual(proc.returncode, 2, proc.stderr.decode())
+        raw = b"\xff"
+        write(os.path.join(fx.run_dir, "report-template.md"), raw)
+        write(os.path.join(fx.run_dir, "report-template.receipt.json"), json.dumps({
+            "failed": False,
+            "bytes": len(raw),
+            "sha256": "sha256:" + hashlib.sha256(raw).hexdigest(),
+        }) + "\n")
+        gate = fx.gate()
+        self.assertEqual(gate.returncode, 3, gate.stdout + gate.stderr)
+        result = json.loads(gate.stdout)
         self.assertIn("reportTemplateInvalid", result["warnings"])
 
     def test_gate_bounded_read_rejects_template_at_two_mib_plus_one(self):
@@ -338,8 +372,12 @@ sibling: {{GATE_SIBLING_SCAN}}
                    "sha256": "sha256:" + hashlib.sha256(raw).hexdigest()}
         write(os.path.join(fx.run_dir, "report-template.receipt.json"),
               json.dumps(receipt) + "\n")
-        result = json.loads(fx.gate().stdout)
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
         self.assertIn("reportTemplateInvalid", result["warnings"])
+        self.assertFalse(os.path.exists(fx.history))
+        self.assertFalse(os.path.exists(fx.anchor))
 
     def test_owned_refused_commits_reason_before_report_and_releases_lock(self):
         fx = self.prepared_report(phase4=[{"title": "missing severity"}])
@@ -347,7 +385,8 @@ sibling: {{GATE_SIBLING_SCAN}}
         self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
         result = json.loads(proc.stdout)
         self.assertIn("reportPath", result)
-        state = self.last_state(fx)
+        with open(fx.last_run, encoding="utf-8") as handle:
+            state = json.load(handle)
         self.assertEqual(state["verdict"], "REFUSED")
         self.assertEqual(state["reportStatus"], "written")
         self.assertEqual(result["reportStatus"], state["reportStatus"])
@@ -496,14 +535,22 @@ sibling: {{GATE_SIBLING_SCAN}}
         huge_scan = {"payload": "x" * (4 * 1024 * 1024)}
         code, result = self.run_main(
             module, fx, mock.patch.object(module, "run_sibling_step", return_value=huge_scan))
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 3)
+        self.assertTrue(result["reason"].startswith("reportTemplateInvalid"))
         self.assertIn("reportTemplateInvalid", result["warnings"])
+        self.assertEqual(result["reportStatus"], "written")
+        self.assertIn("reportPath", result)
+        self.assertFalse(os.path.exists(fx.history))
+        self.assertFalse(os.path.exists(fx.anchor))
 
-        unknown_template = (self.prepared_report_template_with_duplicate_date()
-                            .replace("extra: {{GATE_REPORT_DATE}}\n",
-                                     "unknown: {{GATE_UNKNOWN}}\n"))
-        unknown = self.prepared_report(template=unknown_template)
-        out = json.loads(unknown.gate().stdout)
+        unknown = self.prepared_report()
+        unknown_template = (unknown.report_template()
+                            + "unknown: {{GATE_UNKNOWN}}\n")
+        self.replace_template_artifacts(unknown, unknown_template)
+        unknown_proc = unknown.gate()
+        self.assertEqual(unknown_proc.returncode, 3,
+                         unknown_proc.stdout + unknown_proc.stderr)
+        out = json.loads(unknown_proc.stdout)
         self.assertIn("reportTemplateInvalid", out["warnings"])
 
     def test_scan_then_barrier_then_state_then_link_order(self):
@@ -511,12 +558,15 @@ sibling: {{GATE_SIBLING_SCAN}}
         module = self.module(); events = []
         real_scan = module.run_sibling_step
         real_lock = module.lock_recheck
+        real_render = module.render_report
         real_atomic = module.atomic
         real_publish = module.publish_report
         def scan(*args, **kwargs):
             events.append("scan"); return real_scan(*args, **kwargs)
         def barrier(*args, **kwargs):
             events.append("barrier"); return real_lock(*args, **kwargs)
+        def render(*args, **kwargs):
+            result = real_render(*args, **kwargs); events.append("render"); return result
         def state(*args, **kwargs):
             events.append("state"); return real_atomic(*args, **kwargs)
         def link(*args, **kwargs):
@@ -524,12 +574,51 @@ sibling: {{GATE_SIBLING_SCAN}}
         code, _ = self.run_main(
             module, fx, mock.patch.object(module, "run_sibling_step", side_effect=scan),
             mock.patch.object(module, "lock_recheck", side_effect=barrier),
+            mock.patch.object(module, "render_report", side_effect=render),
             mock.patch.object(module, "atomic", side_effect=state),
             mock.patch.object(module, "publish_report", side_effect=link))
         self.assertEqual(code, 0)
         self.assertLess(events.index("scan"), events.index("barrier"))
-        self.assertLess(events.index("barrier"), events.index("state"))
+        self.assertLess(events.index("barrier"), events.index("render"))
+        self.assertLess(events.index("render"), events.index("state"))
         self.assertLess(events.index("state"), events.index("link"))
+
+    def test_render_snapshot_precedes_all_state_and_publishes_captured_bytes(self):
+        claim = {"source": "codex-review", "severity": "HIGH",
+                 "title": "Claim A", "file": "docs/a.md"}
+        phase4 = {"findings": [claim], "codexReview": {
+            "state": "completed", "promptVariant": "diff", "carryForwardSha": "none"}}
+        fx = RunFixture(self, config_extra=self.REPORT_CONFIG)
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        self.assertEqual(fx.complete(phase4=phase4).returncode, 0)
+        target = claim_record.extract_claim_targets(phase4)[0][0]
+        record = {"runid": fx.runid, "findingId": target["findingId"],
+                  "state": "refuted", "rationale": "checked",
+                  "evidenceFile": "docs/a.md", "evidenceLine": 1}
+        write(os.path.join(fx.run_dir, "claims", target["findingId"] + ".json"),
+              claim_record.encode_claim_record(record))
+        self.assertEqual(fx.write_template(
+            body=fx.report_template() + "codexClaims: {{GATE_CODEX_CLAIMS}}\n").returncode, 0)
+        module = self.module()
+        real_render = module.render_report
+        replacement = "SWAPPED AFTER RENDER\n" + fx.report_template()
+
+        def render_then_swap(*args, **kwargs):
+            rendered = real_render(*args, **kwargs)
+            self.assertFalse(os.path.exists(fx.history))
+            self.assertFalse(os.path.exists(fx.last_run))
+            self.assertFalse(os.path.exists(fx.anchor))
+            self.replace_template_artifacts(fx, replacement)
+            return rendered
+
+        code, result = self.run_main(
+            module, fx, mock.patch.object(module, "render_report", side_effect=render_then_swap))
+        self.assertEqual(code, 0)
+        with open(os.path.join(fx.repo, result["reportPath"]), encoding="utf-8") as handle:
+            report = handle.read()
+        self.assertNotIn("SWAPPED AFTER RENDER", report)
+        self.assertIn("verdict: CONSISTENT", report)
 
     def test_each_barrier_target_changed_during_scan_is_refused(self):
         for target in ("digest", "history", "anchor", "config", "lock"):
@@ -783,7 +872,8 @@ class TestAttacks(GateBase):
 
     def test_missing_phase4_refuses(self):
         fx = RunFixture(self)
-        fx.open(); fx.plan_start_seal()
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
         for path in fx.docs:
             fx.write_verdict(path)
         returns = [{"attempt": 1, "assignedPath": path, "returnedPath": path,
@@ -815,6 +905,81 @@ class TestAttacks(GateBase):
         released = fx.call("open-run.py", "--run-base", fx.run_base,
                            "--repo-root", fx.repo, "--release", "--runid", fx.runid)
         self.assertEqual(released.returncode, 0, released.stdout + released.stderr)
+
+    def test_engine_version_missing_or_invalid_is_prelock_refused(self):
+        cases = (("missing", None), ("null", None), ("number", 21), ("empty", ""))
+        for label, value in cases:
+            with self.subTest(label=label):
+                fx = self.prepared()
+                if label == "missing":
+                    fx.evidence.pop("engineVersion")
+                else:
+                    fx.evidence["engineVersion"] = value
+                spec = importlib.util.spec_from_file_location(
+                    "decide_engine_prelock_" + label, DECIDE)
+                module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+                argv = ["decide-verdict.py", "--run-dir", fx.run_dir,
+                        "--repo-root", fx.repo, "--config", fx.config_path,
+                        "--anchor-path", fx.anchor_rel, "--runid", fx.runid,
+                        "--expect-json", json.dumps(fx.evidence)]
+                output = io.StringIO()
+                with mock.patch.object(sys, "argv", argv), \
+                     mock.patch.object(module.fcntl, "flock",
+                                       side_effect=AssertionError("lock was acquired")), \
+                     contextlib.redirect_stdout(output):
+                    code = module.main()
+                self.assertEqual(code, 3)
+                result = json.loads(output.getvalue())
+                self.assertNotIn("reportStatus", result)
+                self.assertFalse(os.path.exists(fx.last_run))
+                self.assertTrue(os.path.exists(os.path.join(fx.run_base, "lock")))
+                released = fx.call("open-run.py", "--run-base", fx.run_base,
+                                   "--repo-root", fx.repo, "--release", "--runid", fx.runid)
+                self.assertEqual(released.returncode, 0, released.stdout + released.stderr)
+
+    def test_engine_version_mismatch_refuses_after_identity_and_releases_lock(self):
+        fx = RunFixture(self, config_extra={
+            "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"})
+        fx.open(); fx.plan_start_seal(); fx.complete(); fx.write_template()
+        fx.evidence["engineVersion"] = "9.9.9"
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertEqual(result["verdict"], "REFUSED")
+        self.assertEqual(
+            result["reason"],
+            f"engine version changed during run: evidence=9.9.9 plugin={plugin_version()}")
+        self.assertEqual(result["reportStatus"], "written")
+        self.assertIn("reportPath", result)
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+        with open(fx.last_run, encoding="utf-8") as handle:
+            state = json.load(handle)
+        self.assertEqual(state["verdict"], "REFUSED")
+        self.assertEqual(state["reportStatus"], "written")
+        with open(os.path.join(fx.repo, result["reportPath"]), encoding="utf-8") as handle:
+            self.assertIn("verdict: REFUSED", handle.read())
+
+    def test_engine_version_reason_precedes_title_claim_and_template_errors(self):
+        fx = RunFixture(self, config_extra={
+            "codexReview": {},
+            "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md"})
+        self.assertEqual(fx.open().returncode, 0)
+        self.assertEqual(fx.plan_start_seal().returncode, 0)
+        phase4 = {"findings": [{"source": "codex-review", "severity": "HIGH",
+                                "title": " ", "file": "docs/a.md"}],
+                  "codexReview": {"state": "completed", "promptVariant": "diff",
+                                  "carryForwardSha": "none"}}
+        self.assertEqual(fx.complete(phase4=phase4).returncode, 0)
+        self.assertEqual(fx.write_template().returncode, 0)
+        bad = (fx.report_template() + "duplicate: {{GATE_VERDICT}}\n").encode("utf-8")
+        TestGateWritesReport.replace_template_artifacts(fx, bad)
+        fx.evidence["engineVersion"] = "9.9.9"
+        proc = fx.gate()
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        self.assertTrue(result["reason"].startswith("engine version changed during run"))
+        self.assertEqual(result["reportStatus"], "failed")
+        self.assertIn("reportTemplateInvalid", result["warnings"])
 
     def test_none_sentinel_with_existing_file_refuses(self):
         fx = self.prepared()
@@ -890,7 +1055,8 @@ class TestAttacks(GateBase):
             config_sha = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
         opened = fx.call("open-run.py", "--run-base", fx.run_base,
                          "--repo-root", fx.repo, "--runid", later,
-                         "--expect-config-sha", config_sha)
+                         "--expect-config-sha", config_sha,
+                         "--skill-version", plugin_version())
         self.assertEqual(opened.returncode, 0, opened.stderr)
         proc = fx.gate()
         self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)

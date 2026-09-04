@@ -18,6 +18,7 @@ if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
 from docaudit_paths import validate_repo_path
+from report_tokens import read_bounded_regular_file
 
 
 AUDIT_DIR = os.path.dirname(SCRIPT_DIR)
@@ -25,6 +26,7 @@ REPO_DIR = os.path.dirname(os.path.dirname(AUDIT_DIR))
 PLUGIN_JSON = os.path.join(REPO_DIR, ".claude-plugin", "plugin.json")
 ENGINE_SHAS = os.path.join(AUDIT_DIR, "references", "engine-shas.json")
 ENGINE_SOURCE = os.path.join(SCRIPT_DIR, "generic-layers.py")
+MAX_HARNESS_BYTES = 1024 * 1024
 
 HARNESS_COMMANDS = {
     "existence": "/check-docs --only existence",
@@ -130,6 +132,18 @@ engine's `SUMMARY` or `VERDICT` lines.
 STAMP_RE = re.compile(
     r"^(?:<!--\s*|#\s*)docaudit-template:\s*([\w-]+)@([^\s]+)\s+sha256:([0-9a-f]{64})(?:\s*-->)?\s*$"
 )
+MARKDOWN_STAMP_RE = re.compile(
+    r"^<!-- docaudit-template: ([\w-]+)@([^\s]+) sha256:([0-9a-f]{64}) -->$"
+)
+PYTHON_STAMP_RE = re.compile(
+    r"^# docaudit-template: ([\w-]+)@([^\s]+) sha256:([0-9a-f]{64})$"
+)
+
+HARNESS_TARGETS = (
+    ("check-docs", ".claude/commands/check-docs.md", False),
+    ("doc-lint", ".claude/skills/doc-lint/SKILL.md", False),
+    ("check-docs-engine", "scripts/check-docs.py", True),
+)
 
 
 def _read_text(path):
@@ -208,6 +222,85 @@ def _destination(repo_root, rel):
     return os.path.join(os.path.realpath(repo_root), *safe_rel.split("/"))
 
 
+def _decoded_bounded_text(path):
+    raw = read_bounded_regular_file(path, MAX_HARNESS_BYTES)
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("file is not valid UTF-8") from exc
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _canonical_stamp(text, name):
+    lines = text.splitlines()
+    stamp_lines = [index for index, line in enumerate(lines)
+                   if STAMP_RE.match(line)]
+    if not stamp_lines:
+        raise ValueError("missing template stamp")
+    if len(stamp_lines) != 1:
+        raise ValueError("template stamp is not unique")
+
+    if name == "check-docs-engine":
+        if not lines or not lines[0].startswith("#!"):
+            raise ValueError("check-docs engine must start with a shebang")
+        expected_index = 1
+        pattern = PYTHON_STAMP_RE
+    else:
+        if not lines or lines[0] != "---":
+            raise ValueError("front matter must be first")
+        try:
+            expected_index = lines.index("---", 1) + 1
+        except ValueError as exc:
+            raise ValueError("front matter is not closed") from exc
+        pattern = MARKDOWN_STAMP_RE
+
+    stamp_index = stamp_lines[0]
+    if stamp_index != expected_index:
+        raise ValueError("template stamp is not in the canonical position")
+    match = pattern.fullmatch(lines[stamp_index])
+    if not match:
+        raise ValueError("template stamp has invalid syntax")
+    return {"name": match.group(1), "version": match.group(2), "sha": match.group(3)}
+
+
+def classify_harness_file(repo_root, rel, name, version, shipped):
+    """Classify a generated harness file without modifying it."""
+    result = {"path": rel, "class": "not-refreshable", "detail": ""}
+    try:
+        dest = _destination(repo_root, rel)
+    except ValueError as exc:
+        result["detail"] = f"unsafe destination: {exc}"
+        return result
+    if not os.path.exists(dest):
+        result.update({"class": "missing", "detail": "file does not exist"})
+        return result
+    try:
+        existing = _decoded_bounded_text(dest)
+        stamp = _canonical_stamp(existing, name)
+    except (OSError, ValueError) as exc:
+        result["detail"] = str(exc)
+        return result
+    if stamp["name"] != name:
+        result["detail"] = "template stamp name does not match destination"
+        return result
+    actual = _normalized_sha(existing)
+    if actual != stamp["sha"]:
+        result["detail"] = "modified template body"
+        return result
+
+    current = shipped.get(version)
+    if isinstance(current, dict) and stamp["sha"] == current.get(name):
+        result.update({"class": "current", "detail": "up-to-date"})
+        return result
+    historical = {entry.get(name) for entry in shipped.values()
+                  if isinstance(entry, dict) and isinstance(entry.get(name), str)}
+    if stamp["sha"] in historical:
+        result.update({"class": "refreshable", "detail": "shipped historical template"})
+        return result
+    result["detail"] = "unknown template stamp"
+    return result
+
+
 def _write_new(repo_root, rel, text, executable=False):
     path = _destination(repo_root, rel)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -250,14 +343,31 @@ def _scaffold_layers(args, created, skipped, reasons):
     return names
 
 
-def _harness(args, version, shipped, created, skipped, reasons):
+def _harness(args, version, shipped, created, skipped, reasons, up_to_date):
     templates = _current_templates(version, shipped)
-    targets = (
-        ("check-docs", ".claude/commands/check-docs.md", False),
-        ("doc-lint", ".claude/skills/doc-lint/SKILL.md", False),
-        ("check-docs-engine", "scripts/check-docs.py", True),
-    )
-    for name, rel, executable in targets:
+    for name, rel, executable in HARNESS_TARGETS:
+        if args.refresh:
+            classification = classify_harness_file(
+                args.repo_root, rel, name, version, shipped)
+            file_class = classification["class"]
+            if file_class == "current":
+                skipped.append(rel)
+                reasons.append({"path": rel, "reason": "up-to-date"})
+                up_to_date.append(rel)
+                continue
+            if file_class == "not-refreshable":
+                skipped.append(rel)
+                reasons.append({"path": rel, "reason": classification["detail"]})
+                continue
+            if not args.dry_run:
+                try:
+                    _write_new(args.repo_root, rel, templates[name], executable)
+                except ValueError as exc:
+                    skipped.append(rel)
+                    reasons.append({"path": rel, "reason": f"unsafe destination: {exc}"})
+                    continue
+            created.append(rel)
+            continue
         try:
             dest = _destination(args.repo_root, rel)
         except ValueError as exc:
@@ -274,36 +384,19 @@ def _harness(args, version, shipped, created, skipped, reasons):
                     continue
             created.append(rel)
             continue
-        if not args.refresh:
-            skipped.append(rel)
-            reasons.append({"path": rel, "reason": "exists"})
-            continue
-        try:
-            existing = _read_text(dest)
-        except OSError as exc:
-            skipped.append(rel)
-            reasons.append({"path": rel, "reason": f"unreadable: {exc}"})
-            continue
-        stamp = _stamp(existing)
-        if not stamp:
-            skipped.append(rel)
-            reasons.append({"path": rel, "reason": "missing template stamp"})
-            continue
-        historical = shipped.get(stamp["version"], {}).get(name)
-        actual = _normalized_sha(existing)
-        if stamp["name"] != name or not historical or stamp["sha"] != historical \
-                or actual != historical:
-            skipped.append(rel)
-            reasons.append({"path": rel, "reason": "modified or unknown template stamp"})
-            continue
-        if not args.dry_run:
-            try:
-                _write_new(args.repo_root, rel, templates[name], executable)
-            except ValueError as exc:
-                skipped.append(rel)
-                reasons.append({"path": rel, "reason": f"unsafe destination: {exc}"})
-                continue
-        created.append(rel)
+        skipped.append(rel)
+        reasons.append({"path": rel, "reason": "exists"})
+
+
+def _check_stamps(args, version, shipped):
+    _current_templates(version, shipped)
+    files = [classify_harness_file(args.repo_root, rel, name, version, shipped)
+             for name, rel, _executable in HARNESS_TARGETS]
+    return {
+        "eligible": all(item["class"] == "current" for item in files),
+        "stampVersion": version,
+        "files": files,
+    }
 
 
 def main():
@@ -317,20 +410,32 @@ def main():
                         help="create /check-docs, doc-lint, and scripts/check-docs.py")
     parser.add_argument("--refresh", action="store_true",
                         help="with --harness, refresh only unmodified stamped files")
+    parser.add_argument("--check-stamps", action="store_true",
+                        help="with --harness, check whether all generated files are current")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     if args.refresh and not args.harness:
         parser.error("--refresh requires --harness")
+    if args.check_stamps and not args.harness:
+        parser.error("--check-stamps requires --harness")
+    if args.check_stamps and (args.refresh or args.scaffold or args.dry_run):
+        parser.error("--check-stamps cannot be combined with --refresh, --scaffold, or --dry-run")
 
     try:
         version = str(_load_json(PLUGIN_JSON)["version"])
         shipped = _load_json(ENGINE_SHAS) if args.harness else {}
+        if args.check_stamps:
+            json.dump(_check_stamps(args, version, shipped), sys.stdout,
+                      ensure_ascii=False, indent=2)
+            sys.stdout.write("\n")
+            return 0
         created, skipped, reasons = [], [], []
+        up_to_date = []
         # No mode flag preserves the historical scaffold.py contract.
         do_scaffold = args.scaffold or not args.harness
         names = _scaffold_layers(args, created, skipped, reasons) if do_scaffold else {}
         if args.harness:
-            _harness(args, version, shipped, created, skipped, reasons)
+            _harness(args, version, shipped, created, skipped, reasons, up_to_date)
     except (OSError, KeyError, json.JSONDecodeError, ValueError) as exc:
         print(f"scaffold: {exc}", file=sys.stderr)
         return 2
@@ -348,6 +453,8 @@ def main():
         "stampVersion": version,
         "docAuditCommands": commands,
     }
+    if args.harness:
+        output["upToDate"] = up_to_date
     if do_scaffold:
         output["skillNames"] = names
     json.dump(output, sys.stdout, ensure_ascii=False, indent=2)

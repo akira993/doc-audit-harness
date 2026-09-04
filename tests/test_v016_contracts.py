@@ -25,6 +25,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(ROOT, "skills", "audit", "scripts")
 SKILL = os.path.join(ROOT, "skills", "audit", "SKILL.md")
 BAD_SHA = "sha256:" + "0" * 64
+with open(os.path.join(ROOT, ".claude-plugin", "plugin.json"), encoding="utf-8") as handle:
+    PLUGIN_VERSION = json.load(handle)["version"]
+if SCRIPTS not in sys.path:
+    sys.path.insert(0, SCRIPTS)
+import claim_record
 
 
 CONSUMER_REGISTRY = (
@@ -288,7 +293,8 @@ class TestV016Contracts(unittest.TestCase):
 
         wrong_open = run("open-run.py", "--run-base", fx.run_base, "--repo-root", fx.repo,
                          "--anchor-path", fx.anchor_rel, "--runid", fx.runid,
-                         "--expect-config-sha", BAD_SHA)
+                         "--expect-config-sha", BAD_SHA,
+                         "--skill-version", PLUGIN_VERSION)
         expected_code, expected_token = mismatch_contract["open-run.py"]
         self.assertEqual(wrong_open.returncode, expected_code)
         self.assertIn(expected_token, wrong_open.stderr)
@@ -560,7 +566,8 @@ class TestV016Contracts(unittest.TestCase):
             good = file_sha(fx.config_path)
             open_args = ["--run-base", fx.run_base, "--repo-root", fx.repo,
                          "--anchor-path", fx.anchor_rel, "--runid", fx.runid,
-                         "--expect-config-sha", good]
+                         "--expect-config-sha", good,
+                         "--skill-version", PLUGIN_VERSION]
             proc, events = execute("open-run.py", open_args, fx.config_path)
             self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
             self.assertEqual(len(events), 1, events)
@@ -838,10 +845,13 @@ class TestV016Contracts(unittest.TestCase):
     def test_ct_4b_harness_compatibility_contract(self):
         with open(SKILL, encoding="utf-8") as handle:
             skill = handle.read()
-        self.assertIn("Only a stamp exactly equal to `0.20.0`", skill)
-        self.assertIn("older, future, missing, invalid, or modified", skill)
+        self.assertIn("--harness --check-stamps", skill)
+        self.assertIn("`eligible` is literal `true`", skill)
+        self.assertIn("each `files[].class` and `files[].detail`", skill)
         self.assertIn("do not run the copy", skill)
         self.assertIn("--expect-config-sha \"$CONFIG_SHA\"", skill)
+        self.assertIn("all three stamps are unique at their canonical positions", skill)
+        self.assertNotIn("Only a stamp exactly equal", skill)
 
     def test_ct_4d_plan_dispatch_history_mismatch_funnel(self):
         with open(script("plan-dispatch.py"), encoding="utf-8") as handle:
@@ -938,9 +948,22 @@ class TestV016Contracts(unittest.TestCase):
                                 "carryForwardSha": carry_sha},
             }
 
+        def complete_with_valid_claim(phase4):
+            completed = fx.complete(phase4=phase4)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            target = claim_record.extract_claim_targets(phase4)[0][0]
+            out = os.path.join(fx.run_dir, "claims", target["findingId"] + ".json")
+            written = fx.call(
+                "write-claim.py", "--run-dir", fx.run_dir, "--out", out,
+                "--runid", fx.runid, "--repo-root", fx.repo,
+                "--finding-id", target["findingId"], "--state", "unverified",
+                input_text="history flip fixture",
+            )
+            self.assertEqual(written.returncode, 0, written.stdout + written.stderr)
+
         self.assertEqual(fx.open().returncode, 0)
         self.assertEqual(fx.plan_start_seal(mode="full", contract="0.16.0").returncode, 0)
-        self.assertEqual(fx.complete(phase4=full_phase("./docs/a.md")).returncode, 0)
+        complete_with_valid_claim(full_phase("./docs/a.md"))
         first = fx.gate()
         self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
         self.assertEqual(json.loads(first.stdout)["counts"]["phase4FlipsUnchangedContent"], 0)
@@ -951,7 +974,7 @@ class TestV016Contracts(unittest.TestCase):
 
         self.assertEqual(fx.open(runid="20260818T120001Z-abcdef13").returncode, 0)
         self.assertEqual(fx.plan_start_seal(mode="full", contract="0.16.0").returncode, 0)
-        self.assertEqual(fx.complete(phase4=full_phase("docs/b.md:10")).returncode, 0)
+        complete_with_valid_claim(full_phase("docs/b.md:10"))
         second = fx.gate()
         self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
         second_result = json.loads(second.stdout)
@@ -965,8 +988,7 @@ class TestV016Contracts(unittest.TestCase):
         self.assertEqual(fx.open(runid="20260818T120002Z-abcdef14").returncode, 0)
         self.assertEqual(fx.plan_start_seal(mode="full", contract="0.16.0").returncode, 0)
         different_carry = "sha256:" + "2" * 64
-        self.assertEqual(
-            fx.complete(phase4=full_phase("docs/a.md", different_carry)).returncode, 0)
+        complete_with_valid_claim(full_phase("docs/a.md", different_carry))
         third = fx.gate()
         self.assertEqual(third.returncode, 0, third.stdout + third.stderr)
         self.assertEqual(json.loads(third.stdout)["counts"]["phase4FlipsUnchangedContent"], 0)
@@ -1037,7 +1059,8 @@ class TestV016Contracts(unittest.TestCase):
             self.assertIn(token, joined)
         self.assertIn("entire plugin tree", texts["docs/ADOPTION.md"])
         self.assertIn("plugin tree 全体", texts["docs/ADOPTION.ja.md"])
-        self.assertIn("older, future, missing, invalid, or modified", texts["skills/audit/SKILL.md"])
+        self.assertIn("every ineligible or unparseable result falls back",
+                      texts["skills/audit/SKILL.md"])
         self.assertIn("repository-writer level", joined)
 
 

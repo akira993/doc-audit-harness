@@ -1,6 +1,9 @@
+import contextlib
 import json
 import hashlib
 import fcntl
+import importlib.util
+import io
 import os
 import stat
 import subprocess
@@ -8,8 +11,14 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
-from tests.wp12_helpers import RunFixture, git, script, write
+from tests.wp12_helpers import RunFixture, git, plugin_version, script, write
+
+
+SCRIPT_DIR = os.path.dirname(script("open-run.py"))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
 
 
 def sealed_sha(path):
@@ -29,6 +38,55 @@ class TestOpenRun(unittest.TestCase):
         evidence = json.loads(proc.stdout)
         self.assertEqual(evidence["preflight"], "none")
         self.assertEqual(evidence["phase4"], "none")
+        self.assertEqual(evidence["engineVersion"], plugin_version())
+
+    def test_normal_open_requires_matching_skill_version_before_lock(self):
+        fx = RunFixture(self)
+        base = ["--run-base", fx.run_base, "--repo-root", fx.repo,
+                "--anchor-path", fx.anchor_rel, "--runid", fx.runid,
+                "--expect-config-sha", self.config_sha(fx)]
+
+        missing = fx.call("open-run.py", *base)
+        self.assertEqual(missing.returncode, 2, missing.stdout + missing.stderr)
+        self.assertIn("normal open requires --skill-version", missing.stderr)
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+
+        mismatched = fx.call("open-run.py", *base, "--skill-version", "9.9.9")
+        self.assertEqual(mismatched.returncode, 2, mismatched.stdout + mismatched.stderr)
+        self.assertIn(
+            "skill version 9.9.9 does not match plugin engine version " + plugin_version(),
+            mismatched.stderr,
+        )
+        self.assertIn("start a new session and rerun the audit", mismatched.stderr)
+        self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
+
+        matched = fx.call(
+            "open-run.py", *base, "--skill-version", plugin_version())
+        self.assertEqual(matched.returncode, 0, matched.stdout + matched.stderr)
+        self.assertEqual(json.loads(matched.stdout)["engineVersion"], plugin_version())
+
+    def test_normal_open_rejects_unreadable_or_versionless_plugin_manifest(self):
+        script_path = script("open-run.py")
+        for label, manifest in (("unreadable", None), ("versionless", {})):
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as temporary:
+                fx = RunFixture(self)
+                manifest_path = os.path.join(temporary, "plugin.json")
+                if manifest is not None:
+                    write(manifest_path, json.dumps(manifest) + "\n")
+                spec = importlib.util.spec_from_file_location(
+                    "open_run_manifest_" + label, script_path)
+                module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+                module.PLUGIN_MANIFEST = manifest_path
+                argv = ["open-run.py", "--run-base", fx.run_base,
+                        "--repo-root", fx.repo, "--anchor-path", fx.anchor_rel,
+                        "--runid", fx.runid, "--expect-config-sha", self.config_sha(fx),
+                        "--skill-version", plugin_version()]
+                stderr = io.StringIO()
+                with mock.patch.object(sys, "argv", argv), contextlib.redirect_stderr(stderr):
+                    code = module.main()
+                self.assertEqual(code, 2)
+                self.assertIn("open-run:", stderr.getvalue())
+                self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
 
     def test_double_open_release_and_break(self):
         fx = RunFixture(self)
@@ -38,7 +96,8 @@ class TestOpenRun(unittest.TestCase):
             expected = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
         second = fx.call("open-run.py", "--run-base", fx.run_base, "--repo-root", fx.repo,
                          "--runid", "20260818T120001Z-abcdef13",
-                         "--expect-config-sha", expected)
+                         "--expect-config-sha", expected,
+                         "--skill-version", plugin_version())
         self.assertEqual(second.returncode, 4)
         wrong = fx.call("open-run.py", "--run-base", fx.run_base, "--repo-root", fx.repo,
                         "--release", "--runid", "20260818T120001Z-abcdef13")
@@ -81,7 +140,8 @@ class TestOpenRun(unittest.TestCase):
         wrong_config = fx.call(
             "open-run.py", "--run-base", fx.run_base, "--repo-root", fx.repo,
             "--anchor-path", fx.anchor_rel, "--runid", fx.runid,
-            "--expect-config-sha", "sha256:" + "0" * 64)
+            "--expect-config-sha", "sha256:" + "0" * 64,
+            "--skill-version", plugin_version())
         self.assertEqual(wrong_config.returncode, 2)
         self.assertIn("config-changed-before-open", wrong_config.stderr)
         self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))
@@ -89,7 +149,8 @@ class TestOpenRun(unittest.TestCase):
         wrong_anchor = fx.call(
             "open-run.py", "--run-base", fx.run_base, "--repo-root", fx.repo,
             "--anchor-path", ".claude/state/wrong-anchor.json", "--runid", fx.runid,
-            "--expect-config-sha", self.config_sha(fx))
+            "--expect-config-sha", self.config_sha(fx),
+            "--skill-version", plugin_version())
         self.assertEqual(wrong_anchor.returncode, 2)
         self.assertIn("anchor-path-mismatch", wrong_anchor.stderr)
         self.assertFalse(os.path.exists(os.path.join(fx.run_base, "lock")))

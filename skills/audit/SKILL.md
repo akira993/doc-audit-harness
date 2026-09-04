@@ -24,8 +24,8 @@ gate holds its `flock`, including the complete gate+report interval, it MUST be 
 `reason:"gate-running"` and must never be bypassed. Otherwise run
 Before acquiring a run lock, run `AUDIT_SCOPE_CHECK="$(python3 "$SD/scripts/import-audit-scope.py" --repo-root "$CLAUDE_PROJECT_DIR" --config "$CFG" --check --json)"`.
 Bind `PRECHECK_CONFIG_SHA`, `AUDIT_SCOPE_PATH`, and `AUDIT_SCOPE_STATE` from that same JSON's `configSha`, `scopePath`, and `state` fields; do not read the config again between this check and open.
-If `AUDIT_SCOPE_STATE` is `drift`, or `errors[]` is non-empty, stop without calling the lock-acquiring `open-run.py`; show `diff.missing` / `diff.extra` (or `errors[]`) and tell the user to run `/docaudit:init --import-audit-scope` to restore the generated map. If it is `not-imported`, show only `💡 audit-scope.json は未導入です。` and continue. `absent` and `in-sync` are silent.
-`python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --expect-config-sha "$PRECHECK_CONFIG_SHA" [--accept-config]`,
+If `AUDIT_SCOPE_STATE` is `drift` or `path-mismatch`, or `errors[]` is non-empty, stop without calling the lock-acquiring `open-run.py`; for `path-mismatch`, show both `scopePath` and `recordedScopePath`, otherwise show `diff.missing` / `diff.extra` (or `errors[]`), and tell the user to run `/docaudit:init --import-audit-scope` to restore the generated map. If it is `not-imported`, show only `💡 audit-scope.json は未導入です。` and continue. `absent` and `in-sync` are silent.
+`python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --expect-config-sha "$PRECHECK_CONFIG_SHA" --skill-version 0.21.0 [--accept-config]`,
 adding `--accept-config` only when the skill received it. Assign the complete stdout JSON,
 unchanged, to `EVIDENCE`; bind `RUNID` and `RUN_DIR` from its `runid` and `runDir` fields. Do not
 create `RUN_DIR` yourself. If stdout includes `previousReportStatus` with `pending`, `failed`, or
@@ -36,6 +36,9 @@ show the holder and stop with “先行 run が lock を保持しています。
 `/docaudit:audit --break-lock` を実行してください。” Exit 6 means an earlier run detected an
 unapproved config change: stop, ask the user to inspect `git diff .claude/doc-audit.json`, and
 re-run with `--accept-config` only after approving that difference. Neither exit path owns a lock.
+Exit 2 with stderr containing `unrecognized arguments: --skill-version` or
+`does not match plugin engine version` means the plugin and this skill have different versions:
+start a new session and rerun `/docaudit:audit`. This exit path also owns no lock.
 
 After every successful open and at the beginning of every later turn or phase before its first config consumer, re-derive `CONFIG_SHA="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["config"])' "$EVIDENCE")"`. `CONFIG_SHA` is never restored from a checkpoint as an independent value.
 
@@ -57,7 +60,7 @@ inside `EVIDENCE`, not separate transport variables:
 
 | checkpoint | cumulative evidence represented in `RUNID` + `EVIDENCE` |
 |---|---|
-| (a) open complete | runid, runDir, anchor, config, lockIno |
+| (a) open complete | runid, runDir, anchor, config, lockIno, engineVersion |
 | (b) harness question complete | same as (a) |
 | (c) pre-flight complete | (b) + preflight |
 | (d) start-run complete | (c) + dispatch, cached, history, historyStatus, manifest |
@@ -296,7 +299,7 @@ tell the user to run `/docaudit:init --harness`, and then run `/docaudit:audit` 
 `python3 "$SD/scripts/set-config-key.py" --config "$CFG" --expect-config-sha "$CONFIG_SHA" --set 'harness={"state":"declined","decidedAt":"<current ISO-8601 timestamp>"}'`;
 never write `installed`, `integrated`, `adjusted`, or `existing-untouched` from audit. Because that
 approved config write invalidates the open-time config snapshot, release this run immediately,
-re-run the pre-open `import-audit-scope.py --check`, rebind `PRECHECK_CONFIG_SHA`, `AUDIT_SCOPE_PATH`, and `AUDIT_SCOPE_STATE` from its one JSON result, then open a fresh run with the normal open command described above; confirm its exit status and success JSON,
+re-run the pre-open `import-audit-scope.py --check`, rebind `PRECHECK_CONFIG_SHA`, `AUDIT_SCOPE_PATH`, and `AUDIT_SCOPE_STATE` from its one JSON result, and apply the same stopping rule: `drift` or `path-mismatch` stops before open, with `path-mismatch` displaying both `scopePath` and `recordedScopePath`. Then open a fresh run with the normal open command described above; confirm its exit status and success JSON,
 and if the reopen fails, stop under the normal exit-4/6 rules. Only on success bind `RUNID`,
 `RUN_DIR`, and `EVIDENCE` from its stdout. Then re-run Phase 0 from its first step on the new run — every probe, every probe-record.py call, and the mdq confirmation gate evaluated exactly as on a first pass against the new probe results: if it fires and AskUserQuestion is available and the user has not asked the run not to pause, ask again; if it fires but questions are unavailable or suppressed, bind MDQ_DEGRADE="non-interactive"; if it does not fire or PHASE3_BACKEND_CONFIG is codex, bind MDQ_DEGRADE="n/a"; never reuse an earlier answer — so the new run directory holds its own phase0-probes.json; if that gate evaluation permits the audit to continue, then continue with Phase 0.5 exactly once (the harness question is not asked again because harness.declined is now recorded). Bind `HARNESS_STATE=declined`. In a non-interactive session do not write config; bind
 `HARNESS_STATE=unanswered` and continue. If the key already exists, never ask again and bind its
@@ -317,10 +320,12 @@ For `installed`, first require all three generated files:
 `scripts/check-docs.py`. If any is absent, derive `HARNESS_STATE=broken` for this run only (do not
 write it to config), bind `PREFLIGHT_STATE=broken`, make pre-flight not required, skip harness
 execution, run `generic-layers.py --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"` only as a non-evidence diagnostic,
-and report `/docaudit:init --harness --refresh`. If all three exist, compare their template stamps
-with the installed plugin version. Only a stamp exactly equal to `0.20.0` may run the target repository's copied engine directly, never through a slash command:
+and report `/docaudit:init --harness --refresh`. If all three exist, run
+`HARNESS_STAMPS="$(python3 "$SD/scripts/scaffold.py" --repo-root "$CLAUDE_PROJECT_DIR" --harness --check-stamps)"`.
+Only when that command exits 0, its stdout parses as JSON, and `eligible` is literal `true` may the
+target repository's copied engine run directly, never through a slash command:
 `python3 "$CLAUDE_PROJECT_DIR/scripts/check-docs.py" --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"`.
-For every other stamp (older, future, missing, invalid, or modified), do not run the copy; run `python3 "$SD/scripts/generic-layers.py" --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"` as the evidence-producing pre-flight engine, add a harness WARN with `/docaudit:init --harness --refresh` guidance, and record the plugin engine and fallback reason in the `script-backed` command entry.
+For every other result, do not run the copy; run `python3 "$SD/scripts/generic-layers.py" --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"` as the evidence-producing pre-flight engine, add a harness WARN with `/docaudit:init --harness --refresh` guidance, and put each `files[].class` and `files[].detail` in that WARN finding's body. If the command failed or stdout did not parse, put that fact in the WARN body instead. Record the plugin engine and fallback reason in the `script-backed` command entry.
 Record this installed run as one `commands[]` entry `{layer:"all", command:"<the exact engine command run>", kind:"script-backed", ran:true, exitCode:<its exit code>, parsed:<true when its JSON parsed>, skippedReason:null}`; do not list the three configured `docAuditCommands` values for `installed`, because those are Phase-4 names rather than pre-flight commands.
 For every non-installed configured command, bind and classify the configured mapping with
 `DOC_AUDIT_COMMANDS_JSON="$(python3 "$SD/scripts/sealed_config.py" --config "$CFG" --expect-sha "$CONFIG_SHA" --get docAuditCommands --default null)"`.
@@ -421,8 +426,8 @@ Classify the run deterministically:
 Bind `RUN_CLASS` from `runClass` (`light` or `standard`) and retain its counts/reasons for the
 report. Full mode is always `standard`.
 
-Next plan cache use and dispatch. Bind `CONTRACT_VERSION` from the installed plugin's version
-metadata (the verifier prompt/agent/gate contract version; never invent a per-run value) and run:
+Next plan cache use and dispatch. Bind `CONTRACT_VERSION` from `EVIDENCE.engineVersion`
+(the verifier prompt/agent/gate contract version; never invent a per-run value) and run:
 `python3 "$SD/scripts/plan-dispatch.py" --run-dir "$RUN_DIR" --runid "$RUNID" --repo-root "$CLAUDE_PROJECT_DIR" --config "$CFG" --expect-config-sha "$CONFIG_SHA" --history "$CLAUDE_PROJECT_DIR/.claude/state/docaudit-history.json" --impact-json "$RUN_DIR/impact.json" --baseline-sha "$EFFECTIVE_BASELINE_SHA" --mode "$MODE" --contract-version "$CONTRACT_VERSION" --evidence "$EVIDENCE"`.
 If this reports `sealed-history-mismatch`, apply the stopping rule with `--taint-observed history --observed-by plan-dispatch.py`; do not continue to start or seal the run.
 Replace `EVIDENCE` with stdout unchanged. Parse `$RUN_DIR/dispatch.json` and bind `DISPATCH[]`,
@@ -662,9 +667,8 @@ is non-empty, invoke Workflow once with
 `scriptPath:"$SD/references/claim-adjudication-workflow.js"` and
 `args:{repoRoot:"$CLAUDE_PROJECT_DIR",claims:<parsed CLAIMS_JSON>,runId:"$RUNID",runDir:"$RUN_DIR",scriptsDir:"$SD/scripts"}`.
 Run the planner again and retry Workflow at most twice more while claims remain (three total
-attempts). Missing, damaged, or unresolved adjudication is non-blocking and is surfaced by the
-gate as `codexClaimsUnadjudicated`; never synthesize a record and never turn an adjudication
-failure into REFUSED. On every resume from checkpoint (h), run this same planner sequence; an
+attempts). If claims still remain after the third attempt, proceed to Phase 5: the gate refuses
+the run as `codexClaimsUnadjudicated`. Never synthesize a record. On every resume from checkpoint (h), run this same planner sequence; an
 empty result means checkpoint (i) is already complete and existing records must not be
 overwritten. If a report template already exists after this resumed adjudication, regenerate it
 with `write-template.py --replace`; otherwise use the normal template creation step.
@@ -722,6 +726,16 @@ verdict or create separate success and REFUSED templates:
 | `{{GATE_CODEX_CLAIMS}}` | 1 when adjudication targets exist; otherwise 0 or 1 | verified claim payload; `"n/a"` on REFUSED or when no targets exist |
 | `{{GATE_ANCHOR_WRITTEN}}` | 1 | whether the anchor was written |
 | `{{GATE_REPORT_DATE}}` | 2 | sealed date for front matter `created` and `updated` |
+
+Outside this table, do not put a placeholder name in the report body with its braces; when the
+name must be discussed, write bare `GATE_CODEX_CLAIMS`, for example. `write-template.py` rejects
+the body with exit 2 if it violates the table's occurrence rules (including whether
+`GATE_CODEX_CLAIMS` is required, as determined from the number of targets in `phase4.json`) or
+contains a bidirectional control character. On rejection it does not write the template and the
+receipt remains `failed:true`. Correct the body and rerun the same helper: use the normal call
+after an initial-creation failure, or `--replace` after a replacement failure. The gate enforces
+the same rules and completely renders the final report bytes before writing history or the
+anchor, so a template it cannot render produces REFUSED and does not advance the anchor.
 
 `{{GATE_WARNINGS}}` includes only warnings known before report publication. It renders fixed warning
 codes unchanged, except `reviewCommandsCodeRemoved`, which is rendered as
@@ -891,7 +905,7 @@ present it is REQUIRED for doc reads (repo-root index + chunked `mdq search`/`ge
 used only when mdq is genuinely absent (conditional-force). The engine still runs fully without
 mdq. MCP servers are optional.
 
-After open, never use the Read tool or an ad-hoc direct JSON file read to inspect `CFG`; every plugin-engine config value must come from `sealed_config.py` using the current `CONFIG_SHA`. Project-defined `docAuditCommands` and their repository-side definitions are trusted only at repository-writer level, while sealed-config completely covers the plugin engine's decision path. A copied harness engine is defense-in-depth: only the exact current `0.20.0` stamp is executed; every older, future, missing, invalid, or modified stamp falls back to the plugin engine with a WARN and refresh guidance.
+After open, never use the Read tool or an ad-hoc direct JSON file read to inspect `CFG`; every plugin-engine config value must come from `sealed_config.py` using the current `CONFIG_SHA`. Project-defined `docAuditCommands` and their repository-side definitions are trusted only at repository-writer level, while sealed-config completely covers the plugin engine's decision path. A copied harness engine is defense-in-depth: execute it only when all three stamps are unique at their canonical positions and their normalized bodies match the current shipped template SHA; every ineligible or unparseable result falls back to the plugin engine with a WARN and refresh guidance.
 
 Concurrent audits are excluded mechanically by `RUN_BASE/lock`: `open-run.py` uses exclusive
 creation, the gate holds an exclusive `flock` through its decision, state writes, and report
@@ -934,7 +948,7 @@ baseline ref (codex itself won't catch a bad ref and silently self-falls-back). 
 its `-m` model and medium reasoning explicitly through `"$CODEX_REVIEW_BIN"`; an explicit config
 model is never retried, and only a default light/Luna failure may retry once with Terra. A non-zero exit,
 timeout, or schema-mismatched result is WARN, never a FAIL basis by itself. But a *completed*
-codex-review run's `critical`/`high` findings block only when their persisted claim adjudication has effective state `confirmed`. Missing, invalid, or unavailable adjudication degrades to non-blocking `unverified` with a warning and never makes the verdict REFUSED. This is a deliberate exception to the rule that probe-style seams
+codex-review run's `critical`/`high` findings block only when their persisted claim adjudication has effective state `confirmed`. A missing title makes the gate REFUSED, as does any target without a valid claim record; valid `refuted`, `unverified`, and `not-adjudicable` records remain non-blocking. For an owned run identity with `reportPath` configured and normal or absent history, that REFUSED path renders the report, leaves the anchor unchanged, and releases the lock. Corrupt history follows the existing quarantine path first; if quarantine fails, no report is published and the lock remains held. This is a deliberate exception to the rule that probe-style seams
 (mdq/context-mode/ax) never affect the verdict.
 codegraph, graphify, and CocoIndex (`symbolGraph`/`docGraph`/`semanticSearch`), when available, are
 ALL report-only and NEVER participate in the verdict — none of the three writes to `phase4.json`;

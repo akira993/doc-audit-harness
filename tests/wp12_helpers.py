@@ -10,6 +10,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(ROOT, "skills", "audit", "scripts")
 
 
+def plugin_version():
+    with open(os.path.join(ROOT, ".claude-plugin", "plugin.json"), encoding="utf-8") as handle:
+        return json.load(handle)["version"]
+
+
 def script(name):
     return os.path.join(SCRIPTS, name)
 
@@ -76,7 +81,8 @@ class RunFixture:
             config_sha = "sha256:" + hashlib.sha256(handle.read()).hexdigest()
         args = ["--run-base", self.run_base, "--repo-root", self.repo,
                 "--anchor-path", self.anchor_rel, "--runid", self.runid,
-                "--expect-config-sha", config_sha]
+                "--expect-config-sha", config_sha,
+                "--skill-version", plugin_version()]
         if accept:
             args.append("--accept-config")
         proc = self.call("open-run.py", *args)

@@ -23,7 +23,7 @@ live here; the plugin ships no project knowledge.
 | `reportPath` | string | no | output report path template (supports `<YYYY-MM-DD>` and `[_NN]`) |
 | `auditReportsInCorpus` | boolean | no | only literal `true` keeps matching audit reports in corpus scans; omitted, `false`, or an invalid type excludes them (generic layers emit a config WARN for an invalid type) |
 | `maxImpactedDocs` | number | no | cap on impacted docs (default 200); overflow sets `truncated` |
-| `harness` | object | no | `{state,decidedAt,engineVersion}` where state is `installed`, `declined`, `integrated`, `adjusted`, or `existing-untouched`; absence is the v0.9 `unset` state |
+| `harness` | object | no | `{state,decidedAt,engineVersion}` where state is `installed`, `declined`, `integrated`, `adjusted`, or `existing-untouched`; `engineVersion` is the engine that last wrote a harness body (or the adoption version for the initial decision); absence is the v0.9 `unset` state |
 | `verdictCache` | object | no | `{enabled:bool=true,minConsecutivePasses:int=2}`; values outside 2..10 disable cache and emit WARN |
 | `phase3Backend` | string | no | Phase-3 verifier backend: `"workflow"` (default when omitted) or `"codex"`; any other value is rejected at seal |
 | `phase3CodexTimeoutSeconds` | number | no | per-document Codex execution timeout in seconds (default 600; integer 60..3600); excludes worker-queue wait, resets for each retry, and has effect only when `phase3Backend` is `"codex"` |
@@ -76,8 +76,9 @@ labels and MUST NOT be stored in config.
 | any stored state | `/docaudit:init --reask` | any state above allowed by the current inventory | replace only the decision and its required command mapping after a new answer |
 | `installed` | a generated file is missing | no config change (`broken` is derived) | skip pre-flight and suggest `/docaudit:init --harness --refresh` |
 
-Every stored decision includes an ISO-8601 `decidedAt` value and the plugin version used as
-`engineVersion`. Existing config updates use one `set-config-key.py` invocation with multiple
+Every stored decision includes an ISO-8601 `decidedAt` value and `engineVersion`, the engine that
+last wrote at least one harness body; the initial decision records the adoption version even if no
+body is written. A later refresh updates it only when `created` is non-empty. Existing config updates use one `set-config-key.py` invocation with multiple
 `--set` arguments when both `harness` and `docAuditCommands` change, preserving all other keys.
 New configs include both values in the approved draft and are written once.
 
@@ -102,9 +103,14 @@ The copied engine accepts `--layer`, `--format json|text`, and `--exit-code`; te
 - `/docaudit:init --harness` inventories even when config exists, then changes only harness files,
   `harness`, and the required `docAuditCommands` mapping. The ordinary existing-config stop rule
   still applies without this flag.
-- `/docaudit:init --harness --refresh` delegates to `scaffold.py --harness --refresh`. A stamped
-  file is overwritten only when its normalized body matches the shipped SHA for the version in
-  its stamp. Modified, unstamped, and unknown-version files are preserved and reported as skipped.
+- `/docaudit:init --harness --refresh` delegates to `scaffold.py --harness --refresh`. Each path is
+  classified as `missing`, `current`, `refreshable`, or `not-refreshable`. Missing files are
+  created; only `refreshable` files are replaced. A `current` body is left byte-for-byte unchanged,
+  appears in `upToDate`, and uses skip reason `up-to-date`. `not-refreshable` files are preserved
+  with their detail. Dry-run puts every would-write path in `created` without writing it.
+- `scaffold.py --harness --check-stamps` writes nothing and returns `eligible:true` only when all
+  three files are `current`. It first checks the current `engine-shas.json` entry against the actual
+  shipped sources and exits 2 if that entry is missing or stale.
 - `/docaudit:init --reask` asks again even when `harness` is already stored. Without it, the
   stored answer is not asked again.
 - `scaffold.py --dry-run` reports the same proposed `created`/`skipped` result without writing.
@@ -118,10 +124,23 @@ When `--scaffold` and `--harness` are combined, the command mapping is determini
 | `format` | `/check-docs --only format` (harness wins) |
 | `semantic` | `docaudit-semantic` (legacy tailored scaffold wins) |
 
-Harness template stamps are excluded from the normalized SHA-256. Markdown stamps are the first
-line after front matter; the engine stamp is the first line after its shebang. Shipped hashes are
-versioned in `references/engine-shas.json` so refresh can distinguish an unchanged old template
-from user customization.
+Harness template stamps are excluded from the normalized SHA-256. A valid Markdown stamp is the
+single complete HTML-comment stamp line immediately after the closing front-matter delimiter; a
+valid Python stamp is the single complete hash-comment stamp line immediately after the shebang.
+Wrong position, duplication, a stamp-name mismatch, the other file type's syntax, symlinks,
+unsafe parents, non-UTF-8, oversize input, or a body/stamp SHA mismatch is `not-refreshable`. Classification ignores the
+stamp's version text: a body SHA matching the current shipped entry is `current`, one matching any
+historical shipped entry is `refreshable`, and any other SHA is `not-refreshable`.
+
+## Audit-scope check states
+
+`import-audit-scope.py --check --json` returns `in-sync` (exit 0), `absent` (exit 0),
+`not-imported` (exit 2), `drift` (exit 2), `path-mismatch` (exit 4), or `error` (exit 1).
+`path-mismatch` means the imported content and SHA match but `auditScope.path` differs from the
+checked `scopePath`; its JSON includes `recordedScopePath`. `--from-index` is a check-only CI/manual
+mode that reads one `git ls-files --stage -z` snapshot, accepts only unique stage-0 regular blobs,
+and reads config and scope bytes by object ID. It never includes untracked files or inspects the
+working-tree file state. `--from-index --write` is an argument error.
 
 ## v0.10 run ledger and cache
 
@@ -336,8 +355,15 @@ SHA-256 of canonical JSON containing the persisted finding's verbatim `file`, no
 `severity`, and NFC-trimmed `title`. Records require `runid`, `findingId`, `state`, and string
 `rationale`. States are `confirmed`, `refuted`, `unverified`, and `not-adjudicable`;
 `confirmed`/`refuted` require a resolvable `evidenceFile` and existing `evidenceLine`, while only
-`not-adjudicable` has a `reason`, exactly `path-unresolved`. Missing or invalid records become
-non-blocking `unverified` with a warning. Adjudication failures never make a run REFUSED.
+`not-adjudicable` has a `reason`, exactly `path-unresolved`. A missing finding title makes the gate
+REFUSED as `codexClaimTitleMissing`. Any targeted finding without a valid record—including a
+missing, damaged, or invalid record—makes the gate REFUSED as `codexClaimsUnadjudicated`,
+regardless of `codexReview.required`; valid `refuted`, `unverified`, and `not-adjudicable` records
+remain non-blocking. With normal or absent history, an owned run identity, and `reportPath`
+configured, this REFUSED path renders the report, leaves the anchor unchanged, and releases the
+lock. Corrupt history takes the existing quarantine path first; if quarantine fails, no report is
+published and the lock remains held. Findings from a REFUSED run do not enter history and are not
+carried forward, while the unchanged anchor causes the same change set to be reviewed again.
 
 ## codegraph (symbolGraph, Phase 0/3)
 

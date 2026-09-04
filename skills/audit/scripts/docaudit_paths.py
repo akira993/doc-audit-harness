@@ -8,6 +8,12 @@ import unicodedata
 import subprocess
 
 
+RESERVED_DIRECTORY_NAMES = frozenset({
+    ".git", ".hg", ".svn", "node_modules", ".venv", "venv",
+    "__pycache__", "dist", "build",
+})
+
+
 def glob_to_regex(pattern):
     out = []
     i = 0
@@ -168,8 +174,6 @@ def is_excluded_doc(repo_root, path, exclude_globs=(), respect_gitignore=False,
 def list_doc_files(repo_root, doc_globs, warnings=None, *, exclude_globs=(),
                    respect_gitignore=False, stats=None):
     root = os.path.realpath(repo_root)
-    skip = {".git", ".hg", ".svn", "node_modules", ".venv", "venv",
-            "__pycache__", "dist", "build"}
     stats = stats if stats is not None else {}
     stats.setdefault("excludedByGlobs", 0)
     stats.setdefault("excludedByGitignore", 0)
@@ -179,7 +183,8 @@ def list_doc_files(repo_root, doc_globs, warnings=None, *, exclude_globs=(),
         kept_dirs = []
         for name in dirs:
             full_dir = os.path.join(dirpath, name)
-            if name in skip or os.path.exists(os.path.join(full_dir, ".git")):
+            if (name in RESERVED_DIRECTORY_NAMES
+                    or os.path.exists(os.path.join(full_dir, ".git"))):
                 continue
             if os.path.islink(full_dir):
                 if warnings is not None:

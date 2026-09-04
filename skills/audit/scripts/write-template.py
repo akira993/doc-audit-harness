@@ -10,11 +10,15 @@ import stat
 import sys
 import tempfile
 
+from claim_record import extract_claim_targets
 from docaudit_paths import validate_repo_path
+from report_tokens import (MAX_PHASE4_BYTES, TokenCountError,
+                           read_bounded_regular_file, validate_template_body)
 
 
 RUNID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
 MAX_TEMPLATE_BYTES = 2 * 1024 * 1024
+PHASE4_TOO_LARGE = "file exceeds byte limit"
 
 
 def write_all(fd, raw):
@@ -83,6 +87,31 @@ def replace_template(run_dir, path, raw):
             os.unlink(temporary)
 
 
+def claim_target_count(repo, run_rel):
+    phase4_rel = f"{run_rel}/phase4.json"
+    phase4_path = os.path.join(repo, phase4_rel)
+    if not os.path.lexists(phase4_path):
+        return 0
+    validated = validate_repo_path(repo, phase4_rel)
+    try:
+        raw = read_bounded_regular_file(
+            os.path.join(repo, validated), MAX_PHASE4_BYTES)
+    except ValueError as exc:
+        if str(exc) == PHASE4_TOO_LARGE:
+            print(
+                "write-template: phase4.json exceeds MAX_PHASE4_BYTES; "
+                "claim token count not checked",
+                file=sys.stderr,
+            )
+            return None
+        raise
+    try:
+        phase4 = json.loads(raw.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"phase4.json is not valid JSON: {exc}") from exc
+    return len(extract_claim_targets(phase4)[0])
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", required=True)
@@ -106,6 +135,11 @@ def main():
         raw = sys.stdin.buffer.read(MAX_TEMPLATE_BYTES + 1)
         if len(raw) > MAX_TEMPLATE_BYTES:
             raise ValueError("template exceeds 2 MiB")
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeError as exc:
+            raise ValueError(f"report template is not valid UTF-8: {exc}") from exc
+        validate_template_body(text, claim_target_count(repo, run_rel))
         if args.replace:
             replace_template(run_dir, template, raw)
         else:
@@ -116,7 +150,7 @@ def main():
             "sha256": "sha256:" + hashlib.sha256(raw).hexdigest(),
         }
         atomic_receipt(run_dir, receipt)
-    except (OSError, ValueError) as exc:
+    except (OSError, TokenCountError, ValueError) as exc:
         print(f"write-template: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(receipt, sort_keys=True))

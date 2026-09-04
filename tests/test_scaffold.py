@@ -1,4 +1,5 @@
-import importlib.util, json, os, subprocess, sys, tempfile, unittest
+import contextlib, importlib.util, io, json, os, subprocess, sys, tempfile, unittest
+from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPT = os.path.join(ROOT, "skills", "audit", "scripts", "scaffold.py")
@@ -25,6 +26,22 @@ def write(repo, rel, content):
 def read(path):
     with open(path, encoding="utf-8") as handle:
         return handle.read()
+
+
+def load_module():
+    spec = importlib.util.spec_from_file_location("scaffold_under_test", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def binary_state(path):
+    if os.path.islink(path):
+        return ("symlink", os.readlink(path))
+    if not os.path.exists(path):
+        return ("missing", None)
+    with open(path, "rb") as handle:
+        return ("file", handle.read())
 
 
 class TestScaffold(unittest.TestCase):
@@ -207,7 +224,7 @@ engine's `SUMMARY` or `VERDICT` lines.
             "doc-lint": ".claude/skills/doc-lint/SKILL.md",
             "check-docs-engine": "scripts/check-docs.py",
         }
-        # check-docs itself did not change for 0.20.0, so an existing local
+        # check-docs itself did not change for 0.21.0, so an existing local
         # command remains untouched while the two changed templates refresh.
         write(self.repo, paths["check-docs"], "local check-docs command\n")
         write(self.repo, paths["doc-lint"], module._markdown_with_stamp(
@@ -217,14 +234,14 @@ engine's `SUMMARY` or `VERDICT` lines.
         proc = run(self.repo, "--harness", "--refresh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["stampVersion"], "0.20.0")
+        self.assertEqual(out["stampVersion"], "0.21.0")
         self.assertIn(paths["check-docs"], out["skipped"])
         self.assertTrue({paths["doc-lint"], paths["check-docs-engine"]} <= set(out["created"]))
         self.assertEqual(read(os.path.join(self.repo, paths["check-docs"])), "local check-docs command\n")
         self.assertEqual(module._normalized_sha(read(os.path.join(self.repo, paths["doc-lint"]))),
-                         shipped_all["0.20.0"]["doc-lint"])
+                         shipped_all["0.21.0"]["doc-lint"])
         self.assertEqual(module._normalized_sha(read(os.path.join(self.repo, paths["check-docs-engine"]))),
-                         shipped_all["0.20.0"]["check-docs-engine"])
+                         shipped_all["0.21.0"]["check-docs-engine"])
 
     def test_refresh_preserves_modified_historical_doc_lint(self):
         spec = importlib.util.spec_from_file_location("scaffold_under_test", SCRIPT)
@@ -268,11 +285,11 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         proc = run(self.repo, "--harness", "--refresh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["stampVersion"], "0.20.0")
+        self.assertEqual(out["stampVersion"], "0.21.0")
         self.assertIn("scripts/check-docs.py", out["created"])
         refreshed = read(path)
-        current = json.loads(read(SHAS))["0.20.0"]["check-docs-engine"]
-        self.assertIn(f"# docaudit-template: check-docs-engine@0.20.0 sha256:{current}\n",
+        current = json.loads(read(SHAS))["0.21.0"]["check-docs-engine"]
+        self.assertIn(f"# docaudit-template: check-docs-engine@0.21.0 sha256:{current}\n",
                       refreshed)
         self.assertEqual(module._normalized_sha(refreshed), current)
 
@@ -296,11 +313,11 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         proc = run(self.repo, "--harness", "--refresh")
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = json.loads(proc.stdout)
-        self.assertEqual(out["stampVersion"], "0.20.0")
+        self.assertEqual(out["stampVersion"], "0.21.0")
         self.assertIn("scripts/check-docs.py", out["created"])
         refreshed = read(path)
-        current = json.loads(read(SHAS))["0.20.0"]["check-docs-engine"]
-        self.assertIn(f"# docaudit-template: check-docs-engine@0.20.0 sha256:{current}\n",
+        current = json.loads(read(SHAS))["0.21.0"]["check-docs-engine"]
+        self.assertIn(f"# docaudit-template: check-docs-engine@0.21.0 sha256:{current}\n",
                       refreshed)
         self.assertEqual(module._normalized_sha(refreshed), current)
 
@@ -320,7 +337,7 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         out = json.loads(proc.stdout)
         self.assertIn("scripts/check-docs.py", out["skipped"])
         self.assertIn({"path": "scripts/check-docs.py",
-                       "reason": "modified or unknown template stamp"},
+                       "reason": "modified template body"},
                       out["skipReasons"])
         self.assertEqual(read(path), modified)
         self.assertIn("@0.10.1 ", read(path))
@@ -339,6 +356,268 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         self.assertIn("missing", reasons[".claude/skills/doc-lint/SKILL.md"])
         self.assertEqual(read(command), modified)
         self.assertEqual(read(skill), "unstamped\n")
+
+    def test_refresh_keeps_current_body_with_old_version_stamp(self):
+        module = load_module()
+        initial = json.loads(run(self.repo, "--harness").stdout)
+        version = initial["stampVersion"]
+        rel = ".claude/commands/check-docs.md"
+        path = os.path.join(self.repo, rel)
+        old_version_stamp = read(path).replace(f"@{version} ", "@0.10.0 ", 1)
+        write(self.repo, rel, old_version_stamp)
+        before = binary_state(path)
+
+        proc = run(self.repo, "--harness", "--refresh")
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        out = json.loads(proc.stdout)
+        self.assertEqual(out["created"], [])
+        self.assertEqual(set(out["upToDate"]), {
+            ".claude/commands/check-docs.md",
+            ".claude/skills/doc-lint/SKILL.md",
+            "scripts/check-docs.py",
+        })
+        self.assertIn({"path": rel, "reason": "up-to-date"}, out["skipReasons"])
+        self.assertEqual(binary_state(path), before)
+        shipped = json.loads(read(SHAS))
+        classified = module.classify_harness_file(
+            self.repo, rel, "check-docs", version, shipped)
+        self.assertEqual(classified["class"], "current")
+
+    def test_refresh_missing_files_are_created_and_dry_run_is_would_write(self):
+        dry = run(self.repo, "--harness", "--refresh", "--dry-run")
+        self.assertEqual(dry.returncode, 0, dry.stderr)
+        dry_out = json.loads(dry.stdout)
+        self.assertEqual(len(dry_out["created"]), 3)
+        self.assertFalse(os.path.exists(os.path.join(self.repo, ".claude")))
+        self.assertFalse(os.path.exists(os.path.join(self.repo, "scripts")))
+
+        actual = run(self.repo, "--harness", "--refresh")
+        self.assertEqual(actual.returncode, 0, actual.stderr)
+        actual_out = json.loads(actual.stdout)
+        self.assertEqual(actual_out["created"], dry_out["created"])
+        for rel in actual_out["created"]:
+            self.assertTrue(os.path.isfile(os.path.join(self.repo, rel)))
+
+    def test_check_stamps_classification_matrix_and_read_only_behavior(self):
+        cases = (
+            ("crlf", "current", "up-to-date"),
+            ("modified", "not-refreshable", "modified"),
+            ("missing-stamp", "not-refreshable", "missing"),
+            ("duplicate-stamp", "not-refreshable", "unique"),
+            ("duplicate-stamp-whitespace-markdown", "not-refreshable", "unique"),
+            ("duplicate-stamp-whitespace-python", "not-refreshable", "unique"),
+            ("front-matter-stamp", "not-refreshable", "canonical"),
+            ("wrong-name", "not-refreshable", "destination"),
+            ("markdown-python-stamp", "not-refreshable", "syntax"),
+            ("python-html-stamp", "not-refreshable", "syntax"),
+            ("symlink", "not-refreshable", "symlink"),
+            ("parent-symlink", "not-refreshable", "symlink"),
+            ("non-utf8", "not-refreshable", "UTF-8"),
+            ("too-large", "not-refreshable", "byte limit"),
+            ("missing", "missing", "does not exist"),
+        )
+        for case, expected_class, detail in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as repo:
+                created = run(repo, "--harness")
+                self.assertEqual(created.returncode, 0, created.stderr)
+                rel = ".claude/commands/check-docs.md"
+                path = os.path.join(repo, rel)
+                if case == "crlf":
+                    with open(path, "rb") as handle:
+                        raw = handle.read().replace(b"\n", b"\r\n")
+                    with open(path, "wb") as handle:
+                        handle.write(raw)
+                elif case == "modified":
+                    write(repo, rel, read(path) + "local edit\n")
+                elif case == "missing-stamp":
+                    write(repo, rel, "\n".join(
+                        line for line in read(path).splitlines()
+                        if "docaudit-template:" not in line) + "\n")
+                elif case == "duplicate-stamp":
+                    lines = read(path).splitlines(keepends=True)
+                    stamp = next(line for line in lines if "docaudit-template:" in line)
+                    index = lines.index(stamp)
+                    lines.insert(index + 1, stamp)
+                    write(repo, rel, "".join(lines))
+                elif case == "duplicate-stamp-whitespace-markdown":
+                    text = read(path)
+                    stamp = next(line for line in text.splitlines()
+                                 if "docaudit-template:" in line)
+                    variant = stamp.replace(
+                        "<!-- docaudit-template:", "<!--   docaudit-template:", 1)
+                    write(repo, rel, text + variant + "\n")
+                elif case == "duplicate-stamp-whitespace-python":
+                    rel = "scripts/check-docs.py"
+                    path = os.path.join(repo, rel)
+                    text = read(path)
+                    stamp = next(line for line in text.splitlines()
+                                 if "docaudit-template:" in line)
+                    variant = stamp.replace("# docaudit-template:",
+                                            "#docaudit-template:", 1)
+                    write(repo, rel, text + variant + "\n")
+                elif case == "front-matter-stamp":
+                    lines = read(path).splitlines(keepends=True)
+                    index = next(i for i, line in enumerate(lines)
+                                 if "docaudit-template:" in line)
+                    stamp = lines.pop(index)
+                    closing = lines.index("---\n", 1)
+                    lines.insert(closing, stamp)
+                    write(repo, rel, "".join(lines))
+                elif case == "wrong-name":
+                    write(repo, rel, read(path).replace(
+                        "docaudit-template: check-docs@",
+                        "docaudit-template: other@", 1))
+                elif case == "markdown-python-stamp":
+                    write(repo, rel, read(path).replace(
+                        "<!-- docaudit-template:",
+                        "# docaudit-template:", 1).replace(" -->", "", 1))
+                elif case == "python-html-stamp":
+                    rel = "scripts/check-docs.py"
+                    path = os.path.join(repo, rel)
+                    text = read(path)
+                    line = next(line for line in text.splitlines()
+                                if "docaudit-template:" in line)
+                    write(repo, rel, text.replace(line, f"<!-- {line[2:]} -->", 1))
+                elif case == "symlink":
+                    other = write(repo, "other.md", read(path))
+                    os.unlink(path)
+                    os.symlink(other, path)
+                elif case == "parent-symlink":
+                    rel = "scripts/check-docs.py"
+                    path = os.path.join(repo, rel)
+                    moved = os.path.join(repo, "saved-scripts")
+                    os.rename(os.path.join(repo, "scripts"), moved)
+                    os.symlink(moved, os.path.join(repo, "scripts"))
+                elif case == "non-utf8":
+                    with open(path, "wb") as handle:
+                        handle.write(b"\xff\xfe")
+                elif case == "too-large":
+                    with open(path, "ab") as handle:
+                        handle.write(b"x" * (1024 * 1024 + 1))
+                elif case == "missing":
+                    os.unlink(path)
+
+                before = {candidate: binary_state(os.path.join(repo, candidate))
+                          for candidate in (
+                              ".claude/commands/check-docs.md",
+                              ".claude/skills/doc-lint/SKILL.md",
+                              "scripts/check-docs.py",
+                          )}
+                checked = run(repo, "--harness", "--check-stamps")
+                self.assertEqual(checked.returncode, 0, checked.stderr)
+                out = json.loads(checked.stdout)
+                item = next(item for item in out["files"] if item["path"] == rel)
+                self.assertEqual(item["class"], expected_class)
+                self.assertIn(detail, item["detail"])
+                self.assertEqual(out["eligible"], case == "crlf")
+                after = {candidate: binary_state(os.path.join(repo, candidate))
+                         for candidate in before}
+                self.assertEqual(after, before)
+                if case == "duplicate-stamp-whitespace-markdown":
+                    refreshed = run(repo, "--harness", "--refresh")
+                    self.assertEqual(refreshed.returncode, 0, refreshed.stderr)
+                    self.assertIn(rel, json.loads(refreshed.stdout)["skipped"])
+                    self.assertEqual(binary_state(path), before[rel])
+
+    def test_check_stamps_option_exclusions(self):
+        combinations = (
+            ("--check-stamps",),
+            ("--harness", "--check-stamps", "--refresh"),
+            ("--harness", "--check-stamps", "--scaffold"),
+            ("--harness", "--check-stamps", "--dry-run"),
+        )
+        for arguments in combinations:
+            with self.subTest(arguments=arguments):
+                proc = run(self.repo, *arguments)
+                self.assertEqual(proc.returncode, 2)
+
+    def test_check_stamps_rejects_missing_current_engine_shas_entry(self):
+        module = load_module()
+        plugin = write(self.repo, "plugin.json", json.dumps({"version": "9.9.9"}))
+        shas = write(self.repo, "engine-shas.json", "{}")
+        stderr = io.StringIO()
+        stdout = io.StringIO()
+        arguments = [SCRIPT, "--repo-root", self.repo, "--harness", "--check-stamps"]
+        with mock.patch.object(module, "PLUGIN_JSON", plugin), \
+                mock.patch.object(module, "ENGINE_SHAS", shas), \
+                mock.patch.object(sys, "argv", arguments), \
+                contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            result = module.main()
+        self.assertEqual(result, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("no entry for plugin version 9.9.9", stderr.getvalue())
+
+    def test_classify_harness_file_four_classes_are_exclusive(self):
+        module = load_module()
+        name = "check-docs"
+        rel = ".claude/commands/check-docs.md"
+        current_body = module.CHECK_DOCS_TEMPLATE
+        old_body = current_body + "historical body\n"
+        unknown_body = current_body + "unknown body\n"
+        current_sha = module._normalized_sha(current_body)
+        old_sha = module._normalized_sha(old_body)
+        unknown_sha = module._normalized_sha(unknown_body)
+        shipped = {
+            "current": {name: current_sha},
+            "old": {name: old_sha},
+        }
+        fixtures = (
+            ("missing", None),
+            ("current", module._markdown_with_stamp(
+                current_body, name, "tampered-version", current_sha)),
+            ("refreshable", module._markdown_with_stamp(
+                old_body, name, "unrelated-version", old_sha)),
+            ("not-refreshable", module._markdown_with_stamp(
+                unknown_body, name, "current", unknown_sha)),
+        )
+        observed = []
+        for expected, content in fixtures:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as repo:
+                if content is not None:
+                    write(repo, rel, content)
+                result = module.classify_harness_file(
+                    repo, rel, name, "current", shipped)
+                self.assertEqual(result["class"], expected)
+                self.assertEqual(set(result), {"path", "class", "detail"})
+                observed.append(result["class"])
+        self.assertEqual(set(observed), {
+            "missing", "current", "refreshable", "not-refreshable"})
+        self.assertEqual(len(observed), len(set(observed)))
+
+    def test_refresh_dry_run_and_check_stamps_all_call_classifier(self):
+        module = load_module()
+        invocations = (
+            ("--harness", "--refresh"),
+            ("--harness", "--refresh", "--dry-run"),
+            ("--harness", "--check-stamps"),
+        )
+        for arguments in invocations:
+            with self.subTest(arguments=arguments), tempfile.TemporaryDirectory() as repo:
+                argv = [SCRIPT, "--repo-root", repo, *arguments]
+                def forced_current(_repo_root, rel, _name, _version, _shipped):
+                    return {"path": rel, "class": "current", "detail": "sentinel"}
+
+                stdout = io.StringIO()
+                with mock.patch.object(
+                        module, "classify_harness_file",
+                        side_effect=forced_current) as classify, \
+                        mock.patch.object(sys, "argv", argv), \
+                        contextlib.redirect_stdout(stdout), \
+                        contextlib.redirect_stderr(io.StringIO()):
+                    result = module.main()
+                self.assertEqual(result, 0)
+                self.assertEqual(classify.call_count, 3)
+                out = json.loads(stdout.getvalue())
+                if "--check-stamps" in arguments:
+                    self.assertIs(out["eligible"], True)
+                    self.assertEqual(
+                        {(item["class"], item["detail"]) for item in out["files"]},
+                        {("current", "sentinel")})
+                else:
+                    self.assertEqual(out["created"], [])
+                    self.assertEqual(len(out["upToDate"]), 3)
+                    self.assertFalse(os.path.exists(os.path.join(repo, ".claude")))
+                    self.assertFalse(os.path.exists(os.path.join(repo, "scripts")))
 
     def test_harness_engine_runs_in_temp_repo_with_exit_0_and_1(self):
         self.assertEqual(run(self.repo, "--harness").returncode, 0)
@@ -366,7 +645,7 @@ reinterpret the deterministic engine's `SUMMARY` or `VERDICT` lines.
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         version = json.loads(read(PLUGIN))["version"]
-        self.assertEqual(version, "0.20.0")
+        self.assertEqual(version, "0.21.0")
         shipped = json.loads(read(SHAS))[version]
         actual = {name: module._normalized_sha(text)
                   for name, text in module._harness_sources().items()}
