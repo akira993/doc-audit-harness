@@ -28,6 +28,10 @@ def read_manifest(run_dir, evidence, opener=open):
     manifest = json.loads(raw)
     if not (isinstance(manifest, dict) and manifest.get("sealed") is True):
         raise ValueError("manifest is not sealed")
+    if (not isinstance(manifest.get("excludeDocGlobs"), list)
+            or not all(isinstance(item, str) for item in manifest["excludeDocGlobs"])
+            or not isinstance(manifest.get("respectGitignore"), bool)):
+        raise ValueError("manifest predates the v0.20 corpus contract; rerun the audit")
     return manifest
 
 

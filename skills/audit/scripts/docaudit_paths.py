@@ -5,6 +5,7 @@ import json
 import os
 import re
 import unicodedata
+import subprocess
 
 
 def glob_to_regex(pattern):
@@ -93,10 +94,86 @@ def normalize_finding_path(repo_root, value):
             return None
 
 
-def list_doc_files(repo_root, doc_globs, warnings=None):
+def corpus_settings(config):
+    """Return the raw corpus-filter settings, validating both public keys."""
+    exclude = config.get("excludeDocGlobs", [])
+    respect = config.get("respectGitignore", True)
+    if not isinstance(exclude, list) or not all(isinstance(item, str) for item in exclude):
+        raise ValueError("excludeDocGlobs must be a string array")
+    if not isinstance(respect, bool):
+        raise ValueError("respectGitignore must be a boolean")
+    return exclude, respect
+
+
+def _gitignored_paths(repo_root, paths, warnings, stats):
+    """Return ignored untracked paths using Git's own exclude rules."""
+    if not paths:
+        return set()
+    try:
+        inside = subprocess.run(
+            ["git", "-C", repo_root, "rev-parse", "--is-inside-work-tree"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False).returncode == 0
+    except OSError:
+        inside = False
+    if not inside:
+        stats["gitignoreApplied"] = False
+        if warnings is not None:
+            warnings.append("respectGitignore: gitignore not applied (not a git work tree)")
+        return set()
+    stats["gitignoreApplied"] = True
+    encoded = []
+    unsafe = set()
+    for path in paths:
+        try:
+            encoded.append(path.encode("utf-8"))
+        except UnicodeEncodeError:
+            unsafe.add(path)
+            if warnings is not None:
+                warnings.append(f"document path dropped as unsafe: {path} (not UTF-8 encodable)")
+    if not encoded:
+        return unsafe
+    try:
+        proc = subprocess.run(
+            ["git", "-C", repo_root, "check-ignore", "--stdin", "-z"],
+            input=b"\0".join(encoded) + b"\0", stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False)
+    except OSError as exc:
+        raise ValueError(f"git check-ignore failed: {exc}") from exc
+    if proc.returncode not in (0, 1):
+        detail = proc.stderr.decode("utf-8", "replace").strip()
+        raise ValueError(f"git check-ignore failed (exit {proc.returncode}): {detail}")
+    return unsafe | {item.decode("utf-8") for item in proc.stdout.split(b"\0") if item}
+
+
+def is_excluded_doc(repo_root, path, exclude_globs=(), respect_gitignore=False,
+                    warnings=None, stats=None):
+    """Whether one repository-relative document is excluded from the corpus."""
+    stats = stats if stats is not None else {}
+    stats.setdefault("excludedByGlobs", 0)
+    stats.setdefault("excludedByGitignore", 0)
+    stats.setdefault("gitignoreApplied", False)
+    path = path.replace(os.sep, "/")
+    if any(matches_glob(path, glob) for glob in exclude_globs):
+        stats["excludedByGlobs"] += 1
+        return True
+    if not respect_gitignore:
+        return False
+    ignored = _gitignored_paths(repo_root, [path], warnings, stats)
+    if path in ignored:
+        stats["excludedByGitignore"] += 1
+        return True
+    return False
+
+
+def list_doc_files(repo_root, doc_globs, warnings=None, *, exclude_globs=(),
+                   respect_gitignore=False, stats=None):
     root = os.path.realpath(repo_root)
     skip = {".git", ".hg", ".svn", "node_modules", ".venv", "venv",
             "__pycache__", "dist", "build"}
+    stats = stats if stats is not None else {}
+    stats.setdefault("excludedByGlobs", 0)
+    stats.setdefault("excludedByGitignore", 0)
+    stats.setdefault("gitignoreApplied", False)
     found = []
     for dirpath, dirs, files in os.walk(root, followlinks=False):
         kept_dirs = []
@@ -116,10 +193,18 @@ def list_doc_files(repo_root, doc_globs, warnings=None):
             rel = os.path.relpath(full, root).replace(os.sep, "/")
             if not any(matches_glob(rel, glob) for glob in doc_globs):
                 continue
+            if any(matches_glob(rel, glob) for glob in exclude_globs):
+                stats["excludedByGlobs"] += 1
+                continue
             try:
                 found.append(validate_repo_path(root, rel))
             except ValueError as exc:
                 if warnings is not None:
                     warnings.append(f"document path dropped as unsafe: {rel} ({exc})")
                 continue
-    return sorted(set(found))
+    found = sorted(set(found))
+    if respect_gitignore:
+        ignored = _gitignored_paths(root, found, warnings, stats)
+        stats["excludedByGitignore"] += len(ignored)
+        found = [path for path in found if path not in ignored]
+    return found

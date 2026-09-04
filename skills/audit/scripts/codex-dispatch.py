@@ -109,6 +109,13 @@ Investigate whether the document at {json.dumps(path, ensure_ascii=False)} accur
 the current source and configuration at the sealed HEAD."""
         fail_basis = "the current source"
         pass_basis = "the document accurately describes the current source and configuration"
+    elif provenance == "self":
+        scope = f"""This document itself was added or edited after the anchor (provenance self).
+Sealed HEAD: {head}
+
+Identify the source/configuration it describes from its own references and verify its claims against the current content at the sealed HEAD. Do not PASS merely because the listed changed paths do not contradict it."""
+        fail_basis = "the current source"
+        pass_basis = "the document accurately describes the current source and configuration"
     else:
         changed_set = manifest.get("changedSet", [])
         shown = changed_set[:MAX_CHANGED_PATHS_IN_PROMPT]
@@ -131,7 +138,7 @@ current content of the listed changed paths."""
     return f"""You are a report-only documentation-impact verifier for exactly one document.
 Repository root: {repo}
 Expected identity JSON: {identity}
-Impact provenance: {provenance}. `regression` means a prior FAIL with unchanged content is being rechecked; it is not an impactMap-gap candidate.
+Impact provenance: {provenance}. `self` means this document changed after the anchor and must be checked against current source. `regression` means a prior FAIL with unchanged content is being rechecked; it is not an impactMap-gap candidate.
 {scope} Use read-only commands only. Use grep -n and narrowly targeted reads for relevant document and source lines.
 Do not use mdq even if it is installed, and do not read unrelated files.
 

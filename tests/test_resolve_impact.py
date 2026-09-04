@@ -131,7 +131,11 @@ class TestResolveImpact(unittest.TestCase):
         self.assertNotIn("docs/missing.md", paths)
 
     def test_cap_sets_truncated(self):
-        cfg = self.base_config(maxImpactedDocs=1)
+        with open(os.path.join(self.repo, "docs/other.md"), "w", encoding="utf-8") as handle:
+            handle.write("variables.css\n")
+        with open(os.path.join(self.repo, "docs/server-paths.md"), "w", encoding="utf-8") as handle:
+            handle.write("variables.css\n")
+        cfg = self.base_config(maxImpactedDocs=1, impactMap=[])
         out = run(["apps/nc_proto/css/variables.css"], cfg, self.repo)
         self.assertTrue(out["truncated"])
         self.assertEqual(len(out["impacted"]), 1)
@@ -216,7 +220,7 @@ class TestResolveImpact(unittest.TestCase):
         self.assertNotIn(report, paths)
         self.assertIn(policy, paths)
         self.assertEqual(out["mapGapCandidates"], [])
-        self.assertEqual(out["counts"], {"changed": 0, "impacted": 5, "mapped": 0,
+        self.assertEqual(out["counts"], {"changed": 0, "impacted": 5, "mapped": 0, "self": 0,
                                          "heuristicOnly": 0, "regression": 0, "docCorpus": 5,
                                          "heuristicSaturation": 0.0, "candidatesBeforeCap": 5})
 
@@ -232,7 +236,7 @@ class TestResolveImpact(unittest.TestCase):
         out = run(["src/report_signal.py"], cfg, self.repo)
         self.assertEqual(out["impacted"], [{"path": policy, "provenance": "heuristic"}])
         self.assertEqual(out["mapGapCandidates"], [policy])
-        self.assertEqual(out["counts"], {"changed": 1, "impacted": 1, "mapped": 0,
+        self.assertEqual(out["counts"], {"changed": 1, "impacted": 1, "mapped": 0, "self": 0,
                                          "heuristicOnly": 1, "regression": 0, "docCorpus": 5,
                                          "heuristicSaturation": 0.2, "candidatesBeforeCap": 1})
 
@@ -323,7 +327,11 @@ class TestResolveImpact(unittest.TestCase):
         self.assertNotIn("docs/other.md", [d["path"] for d in excluded["impacted"]])
 
     def test_cap_warning_is_in_json(self):
-        out = run(["apps/nc_proto/css/variables.css"], self.base_config(maxImpactedDocs=1), self.repo)
+        with open(os.path.join(self.repo, "docs/other.md"), "w", encoding="utf-8") as handle:
+            handle.write("variables.css\n")
+        out = run(["apps/nc_proto/css/variables.css"], self.base_config(
+            maxImpactedDocs=1, impactMap=[{"changed": "apps/nc_proto/css/variables.css",
+                                             "impacts": ["docs/wcag.md"]}]), self.repo)
         self.assertIn("1 impacted docs dropped by maxImpactedDocs=1", out["warnings"])
 
     def test_saturation_warn_ratio_type_table(self):
@@ -368,10 +376,10 @@ class TestResolveImpact(unittest.TestCase):
         self.assertTrue(all(d["provenance"] == "full" for d in full["impacted"]))
 
     def test_regression_defaults_missing_and_corrupt_history(self):
-        default = run([], self.base_config(regressionRecheck={}), self.repo, history={"entries": []})
+        default = run([], self.base_config(regressionRecheck={}, respectGitignore=False), self.repo, history={"entries": []})
         self.assertNotIn("historySha", default)
         self.assertEqual(default["warnings"], [])
-        missing = run([], self.base_config(regressionRecheck={"enabled": True}), self.repo,
+        missing = run([], self.base_config(regressionRecheck={"enabled": True}, respectGitignore=False), self.repo,
                       history_path=os.path.join(self.repo, "missing-history.json"))
         self.assertIsNone(missing["historySha"])
         self.assertEqual(missing["warnings"], [])

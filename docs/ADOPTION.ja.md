@@ -161,7 +161,7 @@ repo では空を返すことが確認済みの `codegraph affected` は絶対�
 （provenance `semantic`、`ccc search --json` から `score >= minScore`（既定 `0.4`）を満たす
 ものだけを採用 — `ccc search` には**足切りが無い**ことが確認済みで、無関係なクエリでも
 exit 0・limit 件を、目に見えて低いスコア帯で返す）。どちらもキーが存在し、無効化されておらず、tool が導入済みの場合に限り使用され、どちらも
-`resolve-impact.py` 自身の cap 適用後に残った枠にのみ、優先順位 `mapped` ≥ `regression` ≥ `heuristic` ≥
+`resolve-impact.py` 自身の cap 適用後に残った枠にのみ、優先順位 `mapped`/`full`/`self` ≥ `regression` ≥ `heuristic` ≥
 `graphify` ≥ `semantic` を厳守してマージする — 既存候補を1件たりとも押し出すことはない
 （Issue #8 の再発防止）。**CocoIndex について最も重要な規則: docaudit 自身は `ccc init` を
 絶対に実行しない** — `ccc init` は対象 repo の `.gitignore` に `/.cocoindex_code/` を自動追記する
@@ -171,9 +171,9 @@ exit 0・limit 件を、目に見えて低いスコア帯で返す）。どち�
 経て行われる。probe は `ccc index` の前後で `.gitignore` を比較し、変化した場合は
 `gitignore-modified` を報告するだけで復元しない。
 
-impact provenance は、`impactMap` のみなら `mapped`、現在の内容ハッシュが履歴と一致する前回 FAIL の再検証なら `regression`（impactMap-gap 候補ではない）、heuristic のみなら `heuristic`、両方が同じ
+impact provenance は、`impactMap` のみなら `mapped`、変更集合に含まれる除外後 corpus 文書自身なら `self`（既知結合で impactMap-gap 候補ではない）、現在の内容ハッシュが履歴と一致する前回 FAIL の再検証なら `regression`（impactMap-gap 候補ではない）、heuristic のみなら `heuristic`、両方が同じ
 文書へ到達した場合は `both`、任意の補完元なら `graphify` / `semantic`、anchor が無いか明示的な
-`--full` の全文書 run では各 `docGlobs` 文書が `full` になる。
+`--full` の全文書 run では除外後 corpus の各文書が `full` になる。
 
 健全な設定では、選択された文書の大半が `mapped` で到達し、token `heuristic` はまだ
 `impactMap` に昇格していない結び付きの残差になる。監査コストの主因は
@@ -217,7 +217,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.19.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.20.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -272,6 +272,10 @@ indexing と contextMode は従来どおり既定有効（トークン消費を�
 
 **v0.19.0 の挙動変更:** codex-review の `critical` / `high` 所見は、所見ごとの裁定が `file:line` 根拠付きで `confirmed` の実効状態になった場合に限り blocking となる。裁定が動かない、または記録や根拠が欠落・破損・不正な場合、その主張は非 blocking の `unverified` となり gate が警告する。この扱いは `codexReview.required:true` でも同じで、`required` は codex review 自体には従来どおり fail-closed だが、裁定の利用可否には適用されない。carry-forward は file と severity しか保持しないため裁定結果は run 間で単調ではなく、ある run の `refuted` が次の run で独立に `confirmed` となり NEEDS FIX へ戻ることがある。repository 内の文章は指示ではなく引用データとして扱い、confirmed/refuted には `file:line` 根拠を必須とするが、裁定を `refuted` 側へ誘導し得る prompt injection は残余リスクとして残る。
 
+**v0.20.0 の挙動変更:** corpus 除外（`excludeDocGlobs` と Git exclude）が generic layers と refresh 後の配布 harness に適用される。generic layers は symlink component を持つ文書を扱わず、共有文書構成では所見が減る可能性がある。更新後に harness を refresh していない場合、model-driven な doc-lint 部分は v0.19 の挙動のままである。incremental では変更された corpus 文書を provenance `self` として追加するため、impacted 件数が増え standard route になりやすい。plugin 更新直後の最初の incremental では、今回の impacted 文書は `contractVersion` 不一致で verdict cache を再利用しない（`qualified=0`）。
+
+Impact の優先順位は `mapped`/`full`/`self` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic`。
+
 **v0.15.1 の挙動変更:** symbolGraph probe は `CODEGRAPH_DIR` を尊重し、`<dir>/codegraph.db` の状態から `init` または `sync` を選ぶため、database を失った索引ディレクトリだけが残っても次回 run で自己回復し、symlink または通常ファイル以外の索引ディレクトリ／database は触らず `index-failed` として、従来 `sync` まで進んだ有効な symlink 構成も codegraph が link 先を上書きし得るため本版から意図的に非対応とし、なお `CODEGRAPH_DIR` で改名した索引ディレクトリは `tree-digest.py` の `.codegraph` 固定の既知 root に含まれず、`digestExclude` でも除外できない（既存の制限であり、本版では未対応）。
 
 `/code-review` の記述は、docaudit が利用する前に上流の自律起動能力へ合わせていた。自律起動はその後 v0.17.0 で実装された。
@@ -304,7 +308,7 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、0.15.0、0.15.1、0.16.0、0.17.0、または 0.18.0 テンプレートは、`/docaudit:init --harness --refresh` で 0.19.0 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、0.15.0、0.15.1、0.16.0、0.17.0、0.18.0、または 0.19.0 テンプレートは、`/docaudit:init --harness --refresh` で 0.20.0 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
@@ -331,6 +335,8 @@ cd ~/code/my-project
 | `anchorPath` | string | はい | anchor 状態ファイルの repo 相対パス（慣習: `.claude/state/last-doc-audit.json`） |
 | `diffGlobs` | string[] | はい | 変更集合を絞る path glob。`**` は `/` を跨ぐ、`*` は跨がない。 |
 | `docGlobs` | string[] | いいえ | heuristic/generic スキャンでドキュメントとして扱うファイル（既定 `["docs/**/*.md","*.md"]`）。pre-flight fix path も同じ既定を使う。 |
+| `excludeDocGlobs` | string[] | いいえ | `docGlobs` 後に適用する除外（既定 `[]`）。 |
+| `respectGitignore` | boolean | いいえ | Git の除外規則に当たる未追跡 Markdown を corpus から外す（既定 `true`）。 |
 | `impactMap` | object[] | はい | `{changed: path\|glob, impacts: [docPath,…], note?: string, source?: string}` — 中核（§6）。`source:"audit-scope"` は生成物。`[]` で開始してもよい。 |
 | `auditScope` | object | いいえ | importer が書く `{path,sha256,importedAt,rules}`。手編集しない。 |
 | `ssotSources` | object[] | いいえ | `{name, value?, liveSource, docsThatCite: [path\|path:line,…]}` — ドキュメント横断の値整合 |
@@ -445,7 +451,7 @@ gate の sibling scan は横断的な補完層である。codex review のプロ
 ## 8. 監査の実行 — verdict & anchor ライフサイクル
 
 - **`/docaudit:audit --full`** — 全コーパスの深掘り監査。初回・大きな変更後・定期実行に使う。
-  anchor が無いときは常に自動でこのモード。`docGlobs` の全文書を impacted とし、cache は無効。
+  anchor が無いときは常に自動でこのモード。除外後 corpus の全文書を impacted とし、cache は無効。
 - **`/docaudit:audit`** — incremental: anchor 以降の変更で影響を受けたドキュメントに絞る。
 - **run 台帳と lock:** 監査の最初に `.claude/state/docaudit-run/<runid>/` を作り、隣の `lock` を
   排他的に作成する。TTL や自動奪取はない。古い lock は、停止だけを行う明示操作

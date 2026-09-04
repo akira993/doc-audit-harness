@@ -246,6 +246,7 @@ def write_record(run_fd, record):
 def unknown_rebind():
     return {
         "mdq": {"state": "unknown", "available": None, "reason": None, "bin": None,
+                "rootsDefaulted": None,
                 "healthy": None, "chunks": None, "status": None, "degrade": None},
         "context-mode": {"state": "unknown", "available": None, "healthy": None, "status": None},
         "ax": {"state": "unknown", "available": None, "reason": None},
@@ -282,6 +283,7 @@ def make_rebind(record):
                 "chunks": health.get("chunks") if health else None,
                 "status": health.get("status") if health else None,
                 "degrade": degrade["degrade"],
+                "rootsDefaulted": indexing.get("rootsDefaulted"),
             }
     context = seams.get("contextMode")
     if context is not None:

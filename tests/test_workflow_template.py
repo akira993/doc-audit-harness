@@ -77,7 +77,7 @@ process.stdout.write(buildPersistCmd(values[0], values[1], values[2], values[3])
         )
         return self.run_node(program, env=env)
 
-    def run_template(self, verifier_model, outcomes, parallel_null_indexes=None):
+    def run_template(self, verifier_model, outcomes, parallel_null_indexes=None, impacted=None):
         source = self.source.replace("export ", "", 1)
         program = r"""
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
@@ -88,6 +88,7 @@ const parallelNullIndexes = new Set(
   JSON.parse(process.env.DOCAUDIT_PARALLEL_NULL_INDEXES)
 )
 const agentTypes = []
+const prompts = []
 let index = 0
 const execute = new AsyncFunction('args', 'phase', 'parallel', 'agent', source)
 ;(async () => {
@@ -99,13 +100,14 @@ const execute = new AsyncFunction('args', 'phase', 'parallel', 'agent', source)
       return values.map((value, i) => parallelNullIndexes.has(i) ? null : value)
     },
     async (_prompt, opts) => {
+      prompts.push(_prompt)
       agentTypes.push(opts.agentType)
       const value = outcomes[index]
       index += 1
       return value
     },
   )
-  process.stdout.write(JSON.stringify({ result, agentTypes }))
+  process.stdout.write(JSON.stringify({ result, agentTypes, prompts }))
 })().catch((error) => {
   process.stderr.write(String(error.stack || error))
   process.exitCode = 1
@@ -116,7 +118,7 @@ const execute = new AsyncFunction('args', 'phase', 'parallel', 'agent', source)
         input_value = {
             "repoRoot": "/repo",
             "changeSummary": "changed",
-            "impacted": [
+            "impacted": impacted or [
                 {"path": "docs/a.md", "provenance": "mapped"},
                 {"path": "docs/b.md", "provenance": "heuristic"},
             ],
@@ -194,6 +196,15 @@ new AsyncFunction(process.env.DOCAUDIT_TEMPLATE_SOURCE)
             defaulted["agentTypes"],
             ["docaudit:doc-impact-verifier"] * 2,
         )
+
+    def test_self_provenance_prompt_uses_current_source(self):
+        executed = self.run_template(
+            "sonnet", [{"path": "docs/a.md", "verdict": "PASS", "rationale": "ok"}],
+            impacted=[{"path": "docs/a.md", "provenance": "self"}],
+        )
+        prompt = executed["prompts"][0]
+        self.assertIn("current source", prompt)
+        self.assertNotIn("still ACCURATELY describes the changed source", prompt)
 
     def test_null_return_is_retained_with_assigned_path(self):
         executed = self.run_template(
@@ -361,7 +372,7 @@ class TestVerifierAgentDefinitions(unittest.TestCase):
     def test_agent_documents_all_current_provenance_values(self):
         _, body = self.split_definition(STANDARD_AGENT)
         text = body.decode("utf-8")
-        for value in ("mapped", "heuristic", "both", "full", "regression", "graphify", "semantic"):
+        for value in ("mapped", "heuristic", "both", "full", "self", "regression", "graphify", "semantic"):
             self.assertIn(f"`{value}`", text)
         self.assertIn("`full` means a\n   full-corpus run and is not an impactMap-gap candidate", text)
 

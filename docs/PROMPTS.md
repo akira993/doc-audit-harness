@@ -64,7 +64,7 @@ Use this when you only care about one subsystem or a handful of docs right now.
 `/docaudit:audit` has no scope/path flag — it always resolves the full impacted set for
 the current change set: incremental mode combines mapped `impactMap`, opt-in `regression` rechecks, and heuristic hits,
 supplements them with graphify/semantic candidates when available, and `--full` includes every
-`docGlobs` document — so scoping happens on the prompt side:
+document in the post-exclusion corpus — so scoping happens on the prompt side:
 name the docs/subsystem in `<scope>` and ask for their verdicts to be called out
 explicitly in the summary.
 

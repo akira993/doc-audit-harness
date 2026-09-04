@@ -18,7 +18,8 @@ import sys
 import tempfile
 import time
 
-from docaudit_paths import list_doc_files, matches_glob, validate_repo_path
+from docaudit_paths import (corpus_settings, is_excluded_doc, list_doc_files,
+                            matches_glob, validate_repo_path)
 
 
 CATCH_ALL = {"*", "**", "**/*"}
@@ -203,7 +204,9 @@ def validate_rule_shapes(converted_rules, errors):
 def validate_rules(converted_rules, repo, config, doc_globs, errors):
     translated = []
     skipped = []
-    corpus = set(list_doc_files(repo, doc_globs))
+    exclude_globs, respect_gitignore = corpus_settings(config)
+    corpus = set(list_doc_files(repo, doc_globs, exclude_globs=exclude_globs,
+                                respect_gitignore=respect_gitignore))
     report_rx = None
     if config.get("auditReportsInCorpus") is not True:
         report_rx = report_regex(config)
@@ -239,7 +242,16 @@ def validate_rules(converted_rules, repo, config, doc_globs, errors):
             if not any(matches_glob(normalized, glob) for glob in doc_globs):
                 errors.append(f"scope impact outside docGlobs ({normalized}); extend docGlobs and rerun")
                 continue
-            if normalized not in corpus or (report_rx and report_rx.fullmatch(normalized)):
+            if normalized not in corpus and is_excluded_doc(
+                    repo, normalized, exclude_globs, respect_gitignore):
+                errors.append("scope impact excluded from corpus (excludeDocGlobs or Git exclude rules): "
+                              f"{normalized}; remove it from audit-scope.json and re-import; "
+                              "if it is the last target, remove the whole rule")
+                continue
+            if normalized not in corpus:
+                errors.append(f"scope impact outside document corpus ({normalized}); extend docGlobs and rerun")
+                continue
+            if report_rx and report_rx.fullmatch(normalized):
                 errors.append(f"scope impact outside document corpus ({normalized}); extend docGlobs and rerun")
                 continue
             impacts.append(normalized)
@@ -581,6 +593,10 @@ def main():
     if config_rel and os.path.lexists(config_path) and not os.path.isfile(config_path):
         errors.append("config path is not a regular file")
     config = config_object(config_raw, errors)
+    try:
+        corpus_settings(config)
+    except ValueError as exc:
+        errors.append(str(exc))
     configured_scope = config.get("auditScope")
     if args.scope is not None:
         scope_argument = args.scope

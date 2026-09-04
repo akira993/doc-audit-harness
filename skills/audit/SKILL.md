@@ -66,6 +66,9 @@ inside `EVIDENCE`, not separate transport variables:
 | (g) interrupted during Phase 4 | same as (f); resume Phase 4 from sealed evidence |
 | (h) Phase-4 evidence complete | (g) + phase4 |
 
+When resuming from checkpoint (e), first run `read-manifest.py` again and re-bind the sealed
+Phase-3 values. If that fails, release the run and stop.
+
 Phase-5 status lines are rendered from probe-record.py --read (its "rebind" map is authoritative except for the webExtract/codexReview resume re-probe rule below; only the Phase-3 refresh-failure detail comes from the conversation and is omitted after a resume); a line marked unknown prints its "state unknown (probe record unavailable)" form; CODEX_REVIEW_STATE is rebound from rebind.codex-review.reviewState; a failed read marks all lines unknown; none of this changes the verdict. After a resume, do not restore operational webExtract/codexReview availability, reason, or binary values from `rebind`. Re-run `ax-probe.sh` and `codex-probe.sh` against the current config before either consumer, bind each seam's operational availability/reason/bin from that same probe stdout, and re-record that same stdout through `probe-record.py` so the existing upsert overwrites those two seam records while preserving every other seam. If a re-probe cannot start, emits non-JSON, or cannot be parsed, do not use the old rebind values: apply the fresh Phase-0 degrade (`AX_AVAILABLE=false` with `AX_REASON=probe-error`, or `CODEX_REVIEW_AVAILABLE=false`) and continue. If any re-probe or its re-record fails, force that seam's Phase-5 display to its `state unknown` form and never display its old record as current; this remains non-blocking, while `codexReview.required:true` is handled fail-closed by the existing planner and verdict checks.
 
 Before gate invocation, any terminal path after a successful open MUST release the run with
@@ -315,7 +318,7 @@ For `installed`, first require all three generated files:
 write it to config), bind `PREFLIGHT_STATE=broken`, make pre-flight not required, skip harness
 execution, run `generic-layers.py --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"` only as a non-evidence diagnostic,
 and report `/docaudit:init --harness --refresh`. If all three exist, compare their template stamps
-with the installed plugin version. Only a stamp exactly equal to `0.19.0` may run the target repository's copied engine directly, never through a slash command:
+with the installed plugin version. Only a stamp exactly equal to `0.20.0` may run the target repository's copied engine directly, never through a slash command:
 `python3 "$CLAUDE_PROJECT_DIR/scripts/check-docs.py" --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"`.
 For every other stamp (older, future, missing, invalid, or modified), do not run the copy; run `python3 "$SD/scripts/generic-layers.py" --layer all --format json --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR"` as the evidence-producing pre-flight engine, add a harness WARN with `/docaudit:init --harness --refresh` guidance, and record the plugin engine and fallback reason in the `script-backed` command entry.
 Record this installed run as one `commands[]` entry `{layer:"all", command:"<the exact engine command run>", kind:"script-backed", ran:true, exitCode:<its exit code>, parsed:<true when its JSON parsed>, skippedReason:null}`; do not list the three configured `docAuditCommands` values for `installed`, because those are Phase-4 names rather than pre-flight commands.
@@ -377,7 +380,7 @@ Parse `{mode, baselineSha, changed[], filteredOutCount, filteredOutSample[], mac
 If `mode=full` (no or invalid anchor), tell the user this is a full run and proceed
 with the whole doc corpus as the change set context. Bind `MODE=full` and
 `EFFECTIVE_BASELINE_SHA` to current `HEAD` for Phase-2 scripts, and pass `--mode full` to every later script that
-accepts a mode; `resolve-impact.py` must therefore emit the complete `docGlobs` corpus even on a
+accepts a mode; `resolve-impact.py` must therefore emit the complete post-exclusion corpus even on a
 clean tree. In incremental mode bind both `BASELINE_SHA` and `EFFECTIVE_BASELINE_SHA` to the
 returned `baselineSha`. `.claude/state/**` paths are always excluded from the deterministic
 `changedSet`/`changeSetSha` used for dispatch, seal, cache, and gate checks. `changed[]` receives the
@@ -391,7 +394,7 @@ Build a concise `changeSummary` (per changed file: path + 1-line nature of chang
 `RUN_DIR` is the run-scoped directory returned by `open-run.py`; never reset it to the old flat
 `.claude/state/docaudit-run` path and never create it yourself. Capture impact output there:
 `printf '%s\n' "${changed[@]}" | python3 "$SD/scripts/resolve-impact.py" --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR" --changed - --mode "$MODE" --history "$CLAUDE_PROJECT_DIR/.claude/state/docaudit-history.json" > "$RUN_DIR/impact.json"`.
-Parse `$RUN_DIR/impact.json` for `{impacted[], mapGapCandidates[], ssotRecheck[], warnings[], truncated, counts{changed,impacted,mapped,heuristicOnly,regression,docCorpus,heuristicSaturation,candidatesBeforeCap}}`. If `truncated` is true, record the dropped count (the script also prints it to stderr) explicitly in the Phase 5 report — never silently discard it. If `warnings` is non-empty (e.g. an `ssotSources` entry with a URL `liveSource`, which is never fetched or verified), carry them to the Phase-5 warning lines — never silently discard them.
+Parse `$RUN_DIR/impact.json` for `{impacted[], mapGapCandidates[], ssotRecheck[], warnings[], truncated, corpusFilter, counts{changed,impacted,mapped,self,heuristicOnly,regression,docCorpus,heuristicSaturation,candidatesBeforeCap}}`. If resolve-impact exits non-zero, do not parse or supplement impact.json: for exit 7 apply the existing taint rule; otherwise release the run with `open-run.py --release --runid "$RUNID"`, report stderr, and stop. If `truncated` is true, record the dropped count explicitly in the Phase 5 report. If `warnings` is non-empty, carry them to Phase 5.
 
 When `DOC_GRAPH_AVAILABLE` or `SEMANTIC_SEARCH_AVAILABLE` is true, supplement `impact.json` with
 graphify/CocoIndex candidates before classification and dispatch (either or both — each is an independent,
@@ -410,7 +413,7 @@ when `SEMANTIC_SEARCH_AVAILABLE` is true. It rewrites `$RUN_DIR/impact.json` in 
 afterward (it may now carry updated `counts.graphifyOnly`/`counts.semanticOnly`/`truncated`/
 `warnings[]`) before proceeding. `resolve-impact.py`'s own `mapped`/`heuristic` result is never
 displaced — new candidates only ever fill the residual slots left under `maxImpactedDocs`, strictly
-`mapped` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic` (Issue #8 anti-regression). When both
+`mapped`/`full`/`self` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic` (Issue #8 anti-regression). When both
 `DOC_GRAPH_AVAILABLE` and `SEMANTIC_SEARCH_AVAILABLE` are false, skip this step entirely.
 
 Classify the run deterministically:
@@ -780,8 +783,11 @@ this suffix contract inside its lock-held report publication interval.
 - `MDQ_AVAILABLE` false → `💡 mdq: not active — docs read in full. Install mdq for Phase-0 indexed, chunked reads (~90%+ token savings on large docs): see github.com/dahatake/skills`
 - `MDQ_AVAILABLE` true and `MDQ_HEALTHY` true → `✓ mdq: active (indexed <MDQ_CHUNKS> chunks; chunked reads on)`
 - `MDQ_AVAILABLE` true and `MDQ_HEALTHY` false → `⚠ mdq: installed but NOT firing (<MDQ_STATUS>) — not getting token savings; run mdq index --root . (or check indexing.roots). [non-blocking]`
+- When `MDQ_AVAILABLE` is true and `rebind.mdq.rootsDefaulted` is true, append ` [indexing.roots unset — whole repo indexed; private Markdown is reachable via mdq search: set indexing.roots or mdq.toml [index].exclude]` immediately after the selected base line and before either suffix below.
 - `MDQ_DEGRADE` suffix: `user-approved` → append ` [user-approved degrade]`; `non-interactive` → append ` [UNCONFIRMED degrade — non-interactive session]` and lead the line with `⚠` regardless of the base glyph, so it cannot be mistaken for the routine nudge.
 - If the Phase-3 refresh failed or was unhealthy, also append ` [Phase-3 refresh failed: <detail>; grep-degrade]` and lead the line with `⚠`.
+
+Immediately after the diffGlobs status line, print one non-blocking corpus line from `corpusFilter`: `corpus: <docCorpus> docs in scope — excluded <excludedByGlobs> by excludeDocGlobs, <excludedByGitignore> by Git exclude rules`; when Git rules were not applied print `⚠ corpus: <docCorpus> docs in scope — Git exclude rules NOT applied (not a git work tree); excluded <excludedByGlobs> by excludeDocGlobs [non-blocking]`; when disabled print `corpus: <docCorpus> docs in scope — excluded <excludedByGlobs> by excludeDocGlobs (respectGitignore: false)`.
 
 **context-mode status line** — always include exactly one, immediately after the mdq line; it is **non-blocking** (never changes the verdict):
 - `rebind.context-mode.state=unknown` → `⚠ context-mode: state unknown (probe record unavailable) [non-blocking]`
@@ -885,7 +891,7 @@ present it is REQUIRED for doc reads (repo-root index + chunked `mdq search`/`ge
 used only when mdq is genuinely absent (conditional-force). The engine still runs fully without
 mdq. MCP servers are optional.
 
-After open, never use the Read tool or an ad-hoc direct JSON file read to inspect `CFG`; every plugin-engine config value must come from `sealed_config.py` using the current `CONFIG_SHA`. Project-defined `docAuditCommands` and their repository-side definitions are trusted only at repository-writer level, while sealed-config completely covers the plugin engine's decision path. A copied harness engine is defense-in-depth: only the exact current `0.19.0` stamp is executed; every older, future, missing, invalid, or modified stamp falls back to the plugin engine with a WARN and refresh guidance.
+After open, never use the Read tool or an ad-hoc direct JSON file read to inspect `CFG`; every plugin-engine config value must come from `sealed_config.py` using the current `CONFIG_SHA`. Project-defined `docAuditCommands` and their repository-side definitions are trusted only at repository-writer level, while sealed-config completely covers the plugin engine's decision path. A copied harness engine is defense-in-depth: only the exact current `0.20.0` stamp is executed; every older, future, missing, invalid, or modified stamp falls back to the plugin engine with a WARN and refresh guidance.
 
 Concurrent audits are excluded mechanically by `RUN_BASE/lock`: `open-run.py` uses exclusive
 creation, the gate holds an exclusive `flock` through its decision, state writes, and report
@@ -946,5 +952,5 @@ audit-phase codepath — only `/docaudit:init`, behind explicit user approval th
 `.gitignore` write, may run it.** graphify's `graphify-out/<date>/` backup accumulation and
 CocoIndex's machine-global embedding-provider dimension-mismatch risk are disk-/environment-hygiene
 notes, not defects this pass fixes. graphify and CocoIndex candidates only ever occupy residual cap
-slots in strict priority order `mapped` ≥ `heuristic` ≥ `graphify` ≥ `semantic` and never evict an
+slots in strict priority order `mapped`/`full`/`self` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic` and never evict an
 existing entry (Issue #8 anti-regression).

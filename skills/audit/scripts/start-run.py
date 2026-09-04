@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 
-from docaudit_paths import list_doc_files, matches_glob, validate_repo_path
+from docaudit_paths import corpus_settings, list_doc_files, matches_glob, validate_repo_path
 from sealed_config import SealedConfigMismatch, load_sealed_config
 
 
@@ -22,7 +22,7 @@ BUILTIN_EXCLUDES = [".claude/state/docaudit-run", ".claude/state/docaudit-histor
                     ".cocoindex_code"]
 VALID_PHASE3_BACKENDS = {"workflow", "codex"}
 DEFAULT_PHASE3_CODEX_TIMEOUT_SECONDS = 600
-VALID_PROVENANCE = {"mapped", "heuristic", "both", "full", "graphify",
+VALID_PROVENANCE = {"mapped", "heuristic", "both", "full", "self", "graphify",
                     "semantic", "regression"}
 HEX_SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -252,7 +252,9 @@ def main():
                            or bool(codex_review.get("required") is True))
         digest_exclude = list(dict.fromkeys(BUILTIN_EXCLUDES + list(config.get("digestExclude", []))))
         doc_globs = config.get("docGlobs", ["docs/**/*.md", "*.md"])
-        corpus = list_doc_files(repo, doc_globs)
+        exclude_globs, respect_gitignore = corpus_settings(config)
+        corpus = list_doc_files(repo, doc_globs, exclude_globs=exclude_globs,
+                                respect_gitignore=respect_gitignore)
         if config.get("auditReportsInCorpus") is not True:
             report_rx = report_pattern(config)
             corpus = [path for path in corpus
@@ -269,6 +271,8 @@ def main():
                     "contractVersion": dispatch.get("contractVersion"),
                     "digestExclude": digest_exclude, "sealed": False,
                     "emptyCorpus": not corpus, "docGlobs": doc_globs,
+                    "excludeDocGlobs": exclude_globs,
+                    "respectGitignore": respect_gitignore,
                     "reportDate": report_date, "reportCandidateRule": report_rule}
         manifest["phase3Backend"] = phase3_backend
         if phase3_backend == "codex":

@@ -20,8 +20,8 @@ MIGRATION_ALLOWLIST = {
     ("docs/ADOPTION.md", 119, "removed-command"),
     ("docs/ADOPTION.ja.md", 102, "removed-config"),
     ("docs/ADOPTION.ja.md", 102, "removed-command"),
-    ("skills/audit/references/config-schema.md", 46, "removed-config"),
-    ("skills/audit/references/config-schema.md", 47, "removed-config"),
+    ("skills/audit/references/config-schema.md", 60, "removed-config"),
+    ("skills/audit/references/config-schema.md", 61, "removed-config"),
 }
 WARNING_ALLOWLIST = {
     ("skills/audit/scripts/decide-verdict.py", 67, "removed-config"),
@@ -33,12 +33,12 @@ HISTORY_ALLOWLIST = {
     ("docs/ADOPTION.md", 296, "removed-command"),
     ("docs/ADOPTION.md", 299, "removed-config"),
     ("docs/ADOPTION.md", 299, "removed-command"),
-    ("docs/ADOPTION.md", 307, "removed-command"),
+    ("docs/ADOPTION.md", 311, "removed-command"),
     ("docs/ADOPTION.ja.md", 266, "removed-config"),
     ("docs/ADOPTION.ja.md", 266, "removed-command"),
     ("docs/ADOPTION.ja.md", 271, "removed-config"),
     ("docs/ADOPTION.ja.md", 271, "removed-command"),
-    ("docs/ADOPTION.ja.md", 277, "removed-command"),
+    ("docs/ADOPTION.ja.md", 281, "removed-command"),
     ("tests/test_v015_contracts.py", 201, "removed-command"),
     ("tests/test_v015_contracts.py", 205, "removed-command"),
 }
@@ -146,7 +146,7 @@ class TestCodeReviewRemnants(unittest.TestCase):
         self.assertEqual(migration_lines, {
             "docs/ADOPTION.md": {119},
             "docs/ADOPTION.ja.md": {102},
-            "skills/audit/references/config-schema.md": {46, 47},
+            "skills/audit/references/config-schema.md": {60, 61},
         })
 
 

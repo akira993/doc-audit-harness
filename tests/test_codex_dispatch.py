@@ -159,6 +159,7 @@ class CodexDispatchFixture:
                     "dispatch": self.docs, "cached": self.cached,
                     "impacted": self.docs + self.cached,
                     "baselineSha": "baseline", "head": "head", "mode": run_mode,
+                    "excludeDocGlobs": [], "respectGitignore": True,
                     "changedSet": changed_set if changed_set is not None else [],
                     "provenance": {path: "mapped" for path in self.docs + self.cached}}
         self.manifest_path = os.path.join(self.run_dir, "manifest.json")

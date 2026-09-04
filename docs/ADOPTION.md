@@ -186,7 +186,7 @@ fixed-format TEXT output — neither has `--json`), CocoIndex via local-embeddin
 return `limit` results, just at a visibly lower score band). Both are key-gated: their key must
 exist, not be disabled, and their tool must be installed before they merge into
 `mapGapCandidates` using ONLY the residual slots left after `resolve-impact.py`'s own cap, in strict
-priority `mapped` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic` — neither ever displaces an existing
+priority `mapped`/`full`/`self` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic` — neither ever displaces an existing
 candidate (Issue #8 anti-regression). **The one rule that matters most for CocoIndex: docaudit
 itself NEVER runs `ccc init`** — `ccc init` auto-appends `/.cocoindex_code/` to the repo's
 `.gitignore` (confirmed real side effect), a write the report-only audit phase must not trigger
@@ -195,9 +195,9 @@ from "not installed"; initialization only happens inside `/docaudit:init`, behin
 approval that discloses the `.gitignore` write. The probe compares `.gitignore` before and after
 `ccc index`; any change is reported as `gitignore-modified` and is never reverted by the audit.
 
-Impact provenance is `mapped` for `impactMap` only, `regression` for a recheck of a prior FAIL only when its current content hash matches history (not an impactMap-gap candidate), `heuristic` for heuristic only, `both` when
+Impact provenance is `mapped` for `impactMap` only, `self` for a changed document that is itself in the post-exclusion corpus (a known coupling, not an impactMap-gap candidate), `regression` for a recheck of a prior FAIL only when its current content hash matches history (not an impactMap-gap candidate), `heuristic` for heuristic only, `both` when
 both reach the same document, `graphify` or `semantic` for their optional supplement, and `full`
-for every `docGlobs` document in a no-anchor or explicit `--full` run.
+for every document in the post-exclusion corpus in a no-anchor or explicit `--full` run.
 
 A healthy configuration reaches most selected documents through `mapped`; the token `heuristic`
 should be residual coverage for couplings not yet promoted to `impactMap`. Audit cost is driven
@@ -243,7 +243,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.19.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.20.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -300,6 +300,10 @@ This release also removes the `/code-review` layer: `reviewCommands.code` and `r
 
 **v0.19.0 behavior changes:** codex-review `critical` and `high` findings are blocking only when a cited per-claim adjudication has effective state `confirmed`. If adjudication does not run or its record or evidence is missing, damaged, or invalid, the claim becomes non-blocking `unverified` and the gate emits a warning; this remains true with `codexReview.required:true`, whose fail-closed effect still applies to the codex review itself but no longer to adjudication availability. Adjudication is not monotonic across runs because carry-forward retains only file and severity: a claim may be `refuted` in one run and independently become `confirmed`, and therefore NEEDS FIX, in the next. Repository text is treated as quoted data and confirmed/refuted results require `file:line` evidence, but prompt injection remains a residual risk that can still bias an adjudicator toward `refuted`.
 
+**v0.20.0 behavior changes:** corpus exclusions (`excludeDocGlobs` and Git excludes) now apply to generic layers and the refreshed distributed harness. Generic layers no longer inspect documents with a symlink component, which can remove findings for shared-document layouts. An installed harness not refreshed after this upgrade retains its v0.19 model-driven doc-lint behavior. Incremental runs add changed corpus documents as provenance `self`, which can increase impacted count and select the standard route more often. The first incremental run after an update does not reuse verdict-cache entries for this run's impacted documents when `contractVersion` differs (`qualified=0`).
+
+Impact priority is `mapped`/`full`/`self` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic`.
+
 Configured `docAuditCommands` findings and project-side harness definitions have repository-writer trust because the same writer can change those definitions directly. Sealed-config completely covers the plugin engine decision path; it does not claim to make project-defined commands more trustworthy. Across runs, last-run, history, and anchor markers are operational fail-closed aids rather than a separate security boundary: missing state is indistinguishable from a fresh install, and the documented quarantine-marker persistence failure followed by emergency lock breaking remains a known limit.
 
 **v0.15.1 behavior changes:** the symbolGraph probe chooses `init` or `sync` from the state of `<dir>/codegraph.db`, honoring `CODEGRAPH_DIR`, so a leftover index directory without the database self-recovers on the next run; symlinked or non-regular index directories or databases are left untouched and report `index-failed`—valid symlink configurations that previously reached `sync` are intentionally unsupported because codegraph may overwrite the link target—and a renamed index directory selected by `CODEGRAPH_DIR` remains outside `tree-digest.py`'s fixed `.codegraph` known root and cannot be excluded with `digestExclude` (an existing limitation not addressed in this release).
@@ -336,7 +340,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, 0.15.1, 0.16.0, 0.17.0, or 0.18.0 templates can be updated directly to 0.19.0 with
+Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, 0.15.1, 0.16.0, 0.17.0, 0.18.0, or 0.19.0 templates can be updated directly to 0.20.0 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
@@ -363,6 +367,8 @@ This table is an excerpt of the main keys. See `skills/audit/references/config-s
 | `anchorPath` | string | yes | repo-relative path to the anchor state file (convention: `.claude/state/last-doc-audit.json`) |
 | `diffGlobs` | string[] | yes | path globs that scope the change set. `**` matches across `/`; `*` does not. |
 | `docGlobs` | string[] | no | files treated as docs for the heuristic/generic scan (default `["docs/**/*.md","*.md"]`); pre-flight fix paths use the same default. |
+| `excludeDocGlobs` | string[] | no | exclusions applied after `docGlobs` (default `[]`). |
+| `respectGitignore` | boolean | no | remove Git-excluded untracked Markdown from the corpus (default `true`). |
 | `impactMap` | object[] | yes | `{changed: path\|glob, impacts: [docPath,…], note?: string, source?: string}` — the heart (see §6). `source:"audit-scope"` is generated. May start empty `[]`. |
 | `auditScope` | object | no | `{path,sha256,importedAt,rules}` importer metadata; do not edit it by hand. |
 | `ssotSources` | object[] | no | `{name, value?, liveSource, docsThatCite: [path\|path:line,…]}` — cross-doc value consistency |
@@ -481,7 +487,7 @@ cross-cutting complementary layers. The Codex review prompt explicitly checks th
 
 - **`/docaudit:audit --full`** — whole-corpus deep audit. Use it for the first run, after big
   changes, or periodically. Always used automatically when no anchor exists. Full mode treats
-  every `docGlobs` document as impacted and disables the cache.
+  every document in the post-exclusion corpus as impacted and disables the cache.
 - **`/docaudit:audit`** — incremental: scopes to docs impacted by changes since the anchor.
 - **Run ledger + lock:** the audit first creates `.claude/state/docaudit-run/<runid>/` and
   exclusively creates the sibling `lock`. There is no TTL or automatic takeover. A stale lock
