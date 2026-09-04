@@ -79,7 +79,7 @@ class TestV0131DocsContracts(unittest.TestCase):
         keys = set(example) - {"_note"}
         table = read("skills/audit/references/config-schema.md").split("| key | type | required | meaning |", 1)[1].split("\n\n", 1)[0]
         schema = set(re.findall(r"^\| `([^`]+)` \|", table, re.M))
-        self.assertEqual(len(schema), 32, f"schema keys={len(schema)}")
+        self.assertEqual(len(schema), 34, f"schema keys={len(schema)}")
         self.assertTrue(keys, f"example keys={len(keys)}")
         self.assertTrue(keys <= schema, f"example keys={len(keys)}, schema keys={len(schema)}, extra={sorted(keys - schema)}")
         self.assertEqual(example["phase3Backend"], "workflow")
@@ -109,7 +109,7 @@ class TestV0131DocsContracts(unittest.TestCase):
             return re.findall(r"^\| `([^`]+)` \|", section, re.M)
         en_keys, ja_keys = section_keys(en), section_keys(ja)
         self.assertEqual(en_keys, ja_keys, f"section-5 keys={len(en_keys)}/{len(ja_keys)}")
-        self.assertEqual(len(en_keys), 26, f"section-5 keys={len(en_keys)}")
+        self.assertEqual(len(en_keys), 28, f"section-5 keys={len(en_keys)}")
         self.assertTrue({"layerGlobs", "frontMatterOverrides", "auditReportsInCorpus"} <= set(en_keys), f"section-5 keys={len(en_keys)}")
         en_tree = [line for block in fences(en) for line in block.splitlines() if "├" in line or "└" in line]
         ja_tree = [line for block in fences(ja) for line in block.splitlines() if "├" in line or "└" in line]

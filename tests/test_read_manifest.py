@@ -30,7 +30,7 @@ class TestReadManifest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.raw = b'{"runid":"r1","sealed":true}\n'
+        self.raw = b'{"runid":"r1","sealed":true,"excludeDocGlobs":[],"respectGitignore":true}\n'
         with open(os.path.join(self.tmp.name, "manifest.json"), "wb") as handle:
             handle.write(self.raw)
         self.evidence = {"manifest": digest(self.raw)}
@@ -52,7 +52,7 @@ class TestReadManifest(unittest.TestCase):
     def test_matching_digest_outputs_parsed_json(self):
         proc = self.run_reader()
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertEqual(json.loads(proc.stdout), {"runid": "r1", "sealed": True})
+        self.assertEqual(json.loads(proc.stdout), {"runid": "r1", "sealed": True, "excludeDocGlobs": [], "respectGitignore": True})
 
     def test_digest_mismatch_after_manifest_change_has_empty_stdout(self):
         with open(os.path.join(self.tmp.name, "manifest.json"), "ab") as handle:

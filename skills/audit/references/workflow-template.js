@@ -145,17 +145,22 @@ phase('Verify')
 
 const results = await parallel(
   impacted.map((d) => async () => {
+    const selfTask = d.provenance === 'self'
+      ? 'This document itself was added or edited after the anchor. Identify the source/configuration it describes from its own references and verify claims against the current source. Do not PASS merely by comparing CHANGED SOURCE.'
+      : 'Investigate whether the document still accurately describes the changed source above.'
+    const selfFail = d.provenance === 'self'
+      ? 'the document contradicts the current source'
+      : 'the doc now states something contradicted by the change'
     const v = await agent(
       `Repo root: ${repoRoot}. A documentation-impact check.
 
 CHANGED SOURCE (since last audit):
 ${changeSummary}
 
-TASK: Investigate whether the doc at "${d.path}" (provenance: ${d.provenance}) still
-ACCURATELY describes the changed source above. ${readInstruction(d.path)}${cmNote}${axNote}${symbolGraphNote} Report-only on the DOC — do NOT edit the doc.
+TASK: ${selfTask} Doc: "${d.path}" (provenance: ${d.provenance}). ${readInstruction(d.path)}${cmNote}${axNote}${symbolGraphNote} Report-only on the DOC — do NOT edit the doc.
 
 Decide exactly one verdict:
-- FAIL: the doc now states something contradicted by the change (must fix).
+- FAIL: ${selfFail} (must fix).
 - WARN: the doc is plausibly stale or under-specified given the change (should review).
 - PASS: the doc is unaffected or already consistent.
 Provenance "regression" means a prior FAIL with unchanged content is being rechecked; it is not an

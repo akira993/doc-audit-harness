@@ -8,6 +8,8 @@ live here; the plugin ships no project knowledge.
 | `anchorPath` | string | yes | repo-relative path to the anchor state file |
 | `diffGlobs` | string[] | yes | path globs that scope the change set (`**`=incl `/`, `*`=excl `/`) |
 | `docGlobs` | string[] | no | files treated as docs for the heuristic scan (default `["docs/**/*.md","*.md"]`); pre-flight fix-path classification uses the same default |
+| `excludeDocGlobs` | string[] | no | corpus exclusions applied after `docGlobs` (default `[]`); invalid values fail closed |
+| `respectGitignore` | boolean | no | when true (default), Git-excluded untracked documents are removed from the corpus; tracked files remain eligible |
 | `frontMatterFields` | string[] | no | generic `format` layer requires these front-matter fields on every doc (WARN if missing); omit to skip front-matter checks |
 | `layerGlobs` | object | no | per-layer generic exclusions: `{format?:{exclude:string[]},existence?:{exclude:string[]},semantic?:{exclude:string[]}}`; exclusions also apply to explicit `--paths` input |
 | `frontMatterOverrides` | object[] | no | ordered generic `format` overrides: `{globs:string[],fields:string[]}`; the first entry whose `globs` contains a match wins, `fields:[]` skips the check, and no match falls back to `frontMatterFields` |
@@ -40,6 +42,18 @@ live here; the plugin ships no project knowledge.
 
 `impacts` entries MUST be doc paths only; put commentary in `note`. `changed`
 accepts a single path or a glob.
+
+Incremental changed documents in the post-exclusion corpus are added with provenance `self`.
+`self` is a known coupling, is not an impactMap-gap candidate, and is checked against current source.
+
+## Corpus exclusions
+
+Corpus exclusions control only the documents docaudit itself selects for Phase 2, Phase 3,
+generic layers, pre-flight fixes, and the distributed harness. They are not a sandbox against
+subagents or project-defined commands, which may directly read repository files. Keep secrets
+outside the repository. mdq does not read Git exclude rules; configure `indexing.roots` or
+`mdq.toml` / `.mdq/config.toml` `[index].exclude` for mdq, and note that `mdq index --root .`
+does not prune deleted-file rows.
 
 ## reviewCommands
 
@@ -117,7 +131,7 @@ no TTL and can be removed only by the matching `--release` or an explicit
 `.claude/state/docaudit-history.json` and
 `.claude/state/docaudit-last-run.json`. Old flat run files are ignored (cold
 start). Full mode uses `HEAD` as its effective baseline, disables cache, and
-includes every `docGlobs` document without applying `maxImpactedDocs`.
+includes every document in the post-exclusion corpus without applying `maxImpactedDocs`.
 
 `phase0-probes.json` in that run directory stores display-only raw Phase-0 probe output with
 `schemaVersion:1`. It is not evidence and the gate never reads it.

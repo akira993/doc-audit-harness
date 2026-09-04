@@ -112,8 +112,14 @@ First run this deterministic semantic check and quote its output verbatim:
 
 `python3 scripts/check-docs.py --layer semantic --format text --config .claude/doc-audit.json --repo-root .`
 
-Then inspect the repository documentation for contradictions, stale claims, orphan
-pages, and missing cross-references. List every finding on one line exactly as
+Before inspecting documentation, run `python3 scripts/check-docs.py --list-docs --config
+.claude/doc-audit.json --repo-root .`. Inspect only the paths in its JSON string-array
+output and do not open any other Markdown file. If the output is not a JSON array,
+print exactly `scripts/check-docs.py:1 - FAIL - harness engine predates --list-docs; run
+/docaudit:init --harness --refresh` and then `VERDICT NEEDS FIX`.
+
+For those paths, inspect for contradictions, stale claims, orphan pages, and missing
+cross-references. List every finding on one line exactly as
 `path:line - FAIL|WARN - message`, including a proposed fix in the message. After all
 findings, print one final standalone line: `VERDICT CONSISTENT` when there are no FAIL
 findings, or `VERDICT NEEDS FIX` when there is at least one FAIL finding. This skill is

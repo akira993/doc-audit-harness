@@ -8,12 +8,12 @@ import re
 import subprocess
 import sys
 
-from docaudit_paths import list_doc_files
+from docaudit_paths import corpus_settings, list_doc_files
 
 
 QUOTE_RE = re.compile(r'"([^"\n\r]{2,200})"|`([^`\n\r]{2,80})`')
 SEMVER_RE = re.compile(r'\bv?\d+\.\d+\.\d+\b')
-STOPLIST = {"mapped", "heuristic", "both", "full", "skill", "graphify", "semantic",
+STOPLIST = {"mapped", "heuristic", "both", "full", "self", "skill", "graphify", "semantic",
             "pass", "warn", "fail", "consistent", "needs_fix", "needs fix", "true",
             "false", "null", "none"}
 
@@ -121,6 +121,7 @@ def scan(payload):
     manifest = payload.get("manifest")
     if not isinstance(repo, str) or not isinstance(manifest, dict):
         raise ValueError("payload requires repoRoot and manifest")
+    exclude, respect = corpus_settings(manifest)
     result = blank_result()
     grouped = {"findings": [], "phase4": [], "changeSet": []}
     for item in payload.get("returns", []):
@@ -153,7 +154,8 @@ def scan(payload):
         return result
     report_pattern = payload.get("reportPattern")
     docs = []
-    for path in list_doc_files(repo, manifest.get("docGlobs", []), result["sources"]["notes"]):
+    for path in list_doc_files(repo, manifest.get("docGlobs", []), None,
+                               exclude_globs=exclude, respect_gitignore=respect):
         if path.startswith(".claude/state/") or (isinstance(report_pattern, str)
                                                    and re.fullmatch(report_pattern, path)):
             continue

@@ -22,7 +22,7 @@ Reads:  --config, --repo-root, --layer {format,existence,semantic,all},
         --paths PATH|-  (optional; restrict to these docs; default = all docGlobs docs)
 Writes JSON: {"findings":[{layer,severity,path,line,message}], "counts":{docs,findings,fail,warn}}
 """
-import argparse, hashlib, json, os, re, subprocess, sys, urllib.parse
+import argparse, hashlib, json, os, re, sys, urllib.parse
 
 
 class SealedConfigMismatch(Exception):
@@ -73,91 +73,17 @@ def glob_to_regex(pattern):
     return re.compile("^" + "".join(out) + "$")
 
 
-def corpus_settings(cfg):
-    exclude = cfg.get("excludeDocGlobs", [])
-    respect = cfg.get("respectGitignore", True)
-    if not isinstance(exclude, list) or not all(isinstance(item, str) for item in exclude):
-        raise ValueError("excludeDocGlobs must be a string array")
-    if not isinstance(respect, bool):
-        raise ValueError("respectGitignore must be a boolean")
-    return exclude, respect
-
-
-def _safe_path(repo_root, rel):
-    if not isinstance(rel, str) or not rel or os.path.isabs(rel):
-        return False
-    root = os.path.realpath(repo_root)
-    current = root
-    for part in rel.replace("\\", "/").split("/"):
-        if part in ("", ".", ".."):
-            return False
-        current = os.path.join(current, part)
-        if os.path.lexists(current) and os.path.islink(current):
-            return False
-    try:
-        return (os.path.isfile(current) and os.path.commonpath(
-            [root, os.path.realpath(current)]) == root)
-    except ValueError:
-        return False
-
-
-def _gitignored(repo_root, docs, warnings):
-    try:
-        inside = subprocess.run(["git", "-C", repo_root, "rev-parse", "--is-inside-work-tree"],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
-    except OSError:
-        inside = False
-    if not inside:
-        warnings.append("respectGitignore: gitignore not applied (not a git work tree)")
-        return set(), False
-    unsafe = set()
-    encoded = []
-    for item in docs:
-        try:
-            encoded.append(item.encode("utf-8"))
-        except UnicodeEncodeError:
-            unsafe.add(item)
-            warnings.append(f"document path dropped as unsafe: {item} (not UTF-8 encodable)")
-    if not encoded:
-        return unsafe, True
-    try:
-        proc = subprocess.run(["git", "-C", repo_root, "check-ignore", "--stdin", "-z"],
-                              input=b"\0".join(encoded) + b"\0",
-                              stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except (OSError, UnicodeEncodeError) as exc:
-        raise ValueError(f"git check-ignore failed: {exc}") from exc
-    if proc.returncode not in (0, 1):
-        raise ValueError(f"git check-ignore failed (exit {proc.returncode})")
-    return unsafe | {item.decode("utf-8") for item in proc.stdout.split(b"\0") if item}, True
-
-
-def _is_excluded(repo_root, path, exclude_globs, respect_gitignore):
-    if any(glob_to_regex(pattern).match(path) for pattern in exclude_globs):
-        return True
-    if not respect_gitignore:
-        return False
-    ignored, _applied = _gitignored(repo_root, [path], [])
-    return path in ignored
-
-
-def list_doc_files(repo_root, doc_globs, report_rx=None, *, exclude_globs=(),
-                   respect_gitignore=False, warnings=None):
+def list_doc_files(repo_root, doc_globs, report_rx=None):
     skip = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"}
     regexes = [glob_to_regex(g) for g in doc_globs]
     docs = []
-    warnings = warnings if warnings is not None else []
     for dp, dirs, files in os.walk(repo_root):
-        dirs[:] = [d for d in dirs if d not in skip and not os.path.exists(os.path.join(dp, d, ".git"))]
+        dirs[:] = [d for d in dirs if d not in skip]  # prune .git/node_modules/etc
         for fn in files:
             rel = os.path.relpath(os.path.join(dp, fn), repo_root)
-            if (any(rx.match(rel) for rx in regexes) and not any(glob_to_regex(g).match(rel) for g in exclude_globs)
-                    and not (report_rx and re.fullmatch(report_rx, rel)) and _safe_path(repo_root, rel)):
+            if any(rx.match(rel) for rx in regexes) and not (report_rx and re.fullmatch(report_rx, rel)):
                 docs.append(rel)
-    docs = sorted(set(docs))
-    if respect_gitignore:
-        ignored, _applied = _gitignored(repo_root, docs, warnings)
-        docs = [doc for doc in docs if doc not in ignored]
-    return docs
+    return sorted(docs)
 
 
 # Self-contained copy of the reportPath validity contract whose canonical source is
@@ -539,8 +465,6 @@ def resolve_rel(repo_root, doc_rel, target):
 
 
 def _read(repo_root, rel):
-    if not _safe_path(repo_root, rel):
-        return ""
     try:
         with open(os.path.join(repo_root, rel), encoding="utf-8", errors="ignore") as f:
             return f.read()
@@ -627,11 +551,6 @@ def check_semantic(repo_root, docs, cfg, all_docs=None):
             findings.append({"layer": "semantic", "severity": "WARN", "path": raw_index,
                              "line": 1, "message": "indexFiles entry is outside the repository and was excluded"})
             continue
-        exclude_globs, respect_gitignore = corpus_settings(cfg)
-        if _is_excluded(repo_root, normalized, exclude_globs, respect_gitignore):
-            findings.append({"layer": "semantic", "severity": "WARN", "path": normalized,
-                             "line": 1, "message": "indexFiles entry is excluded and was excluded"})
-            continue
         full = os.path.join(repo_root, normalized)
         if not os.path.exists(full):
             findings.append({"layer": "semantic", "severity": "WARN", "path": normalized,
@@ -651,7 +570,7 @@ def check_semantic(repo_root, docs, cfg, all_docs=None):
                              "line": 1,
                              "message": "indexFiles entry resolves outside the repository and was excluded"})
             continue
-        if not _safe_path(repo_root, normalized):
+        if not os.path.isfile(full):
             findings.append({"layer": "semantic", "severity": "WARN", "path": normalized,
                              "line": 1, "message": "indexFiles entry is not a regular file and was excluded"})
             continue
@@ -697,12 +616,7 @@ def main():
     ap.add_argument("--format", choices=["json", "text"], default="json")
     ap.add_argument("--exit-code", action="store_true",
                     help="exit 1 when at least one FAIL finding exists")
-    ap.add_argument("--list-docs", action="store_true",
-                    help="print the filtered corpus as a JSON string array")
     args = ap.parse_args()
-    if args.list_docs and (args.paths or args.layer != "all" or args.format != "json" or args.exit_code):
-        print("error: --list-docs cannot be combined with --paths, --layer, --format, or --exit-code", file=sys.stderr)
-        return 2
     try:
         cfg = load_config(args.config, args.expect_config_sha)
     except SealedConfigMismatch as exc:
@@ -712,20 +626,6 @@ def main():
     repo = args.repo_root
     report_rx, config_findings = _corpus_report_filter(cfg)
     doc_globs = cfg.get("docGlobs", ["docs/**/*.md", "*.md"])
-    try:
-        exclude_globs, respect_gitignore = corpus_settings(cfg)
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    warnings = []
-    corpus = list_doc_files(repo, doc_globs, report_rx, exclude_globs=exclude_globs,
-                            respect_gitignore=respect_gitignore, warnings=warnings)
-    if args.list_docs:
-        json.dump(corpus, sys.stdout, ensure_ascii=False)
-        sys.stdout.write("\n")
-        for warning in warnings:
-            print(warning, file=sys.stderr)
-        return 0
     if args.paths:
         if args.paths == "-":
             raw = sys.stdin.read()
@@ -735,13 +635,10 @@ def main():
                     raw = f.read()
             except OSError as e:
                 print(f"error: {e}", file=sys.stderr); sys.exit(2)
-        requested = [l.strip() for l in raw.splitlines() if l.strip()]
-        unfiltered = set(list_doc_files(repo, doc_globs, None, exclude_globs=exclude_globs,
-                                        respect_gitignore=respect_gitignore, warnings=[]))
-        docs = [path for path in requested if _safe_path(repo, path) and path in unfiltered]
-        all_docs = sorted(set(corpus) | set(docs))
+        docs = [l.strip() for l in raw.splitlines() if l.strip()]
+        all_docs = sorted(set(list_doc_files(repo, doc_globs, report_rx)) | set(docs))
     else:
-        docs = corpus
+        docs = list_doc_files(repo, doc_globs, report_rx)
         all_docs = docs
     layers = list(LAYERS) if args.layer == "all" else [args.layer]
     findings = list(config_findings)
@@ -763,7 +660,7 @@ def main():
               "fail": sum(1 for f in findings if f["severity"] == "FAIL"),
               "warn": sum(1 for f in findings if f["severity"] == "WARN")}
     if args.format == "json":
-        json.dump({"findings": findings, "counts": counts, "warnings": warnings}, sys.stdout, ensure_ascii=False, indent=2)
+        json.dump({"findings": findings, "counts": counts}, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
     else:
         for finding in findings:
@@ -773,8 +670,6 @@ def main():
         passed = max(0, len(docs) - len(finding_paths))
         print(f"SUMMARY pass={passed} warn={counts['warn']} fail={counts['fail']}")
         print("VERDICT " + ("NEEDS FIX" if counts["fail"] else "CONSISTENT"))
-        for warning in warnings:
-            print(warning, file=sys.stderr)
     if args.exit_code and counts["fail"]:
         return 1
     return 0

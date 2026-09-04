@@ -251,7 +251,7 @@ class TestMdqIndex(unittest.TestCase):
             "disabled-by-config": {"mdqAvailable", "reason"},
             "invalid-config": {"mdqAvailable", "reason", "bin"},
             "not-installed": {"mdqAvailable", "reason", "bin"},
-            "indexed": {"mdqAvailable", "reason", "bin", "dbDir"},
+            "indexed": {"mdqAvailable", "reason", "bin", "dbDir", "roots", "rootsDefaulted"},
             "index-failed": {"mdqAvailable", "reason", "rc", "bin"},
         }
         self.assertEqual(len(expected), 5)

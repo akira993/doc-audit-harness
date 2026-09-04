@@ -11,6 +11,7 @@ Writes JSON to stdout:
    "ssotRecheck":[{"name","reason"}], "warnings":[str], "truncated":bool, "counts":{...}}
 
 Rules:
+  - priority: `mapped`/`full`/`self` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic`.
   - UNION: impacted = mapped ∪ heuristic. Heuristic only ADDS docs, never removes.
   - mapped: a changed path matches an impactMap entry `changed` (exact or glob);
     that entry's `impacts` are added (provenance=mapped).
@@ -30,7 +31,9 @@ Rules:
 import argparse, hashlib, json, os, re, sys
 
 from docaudit_cache import content_sha, parse_history_document
-from docaudit_paths import list_doc_files as safe_list_doc_files, matches_glob, validate_repo_path
+from docaudit_paths import (corpus_settings, is_excluded_doc,
+                            list_doc_files as safe_list_doc_files, matches_glob,
+                            validate_repo_path)
 from sealed_config import SealedConfigMismatch, load_sealed_config
 
 DEFAULT_MIN_IDENT = 5
@@ -195,7 +198,16 @@ def main():
         warnings.append("regressionRecheck.enabled invalid; using default false")
         regression_enabled = False
     doc_globs = cfg.get("docGlobs", ["docs/**/*.md", "*.md"])
+    try:
+        exclude_globs, respect_gitignore = corpus_settings(cfg)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr); sys.exit(2)
     report_rx = None if cfg.get("auditReportsInCorpus") is True else report_pattern(cfg)
+    corpus_stats = {}
+    doc_files = [doc for doc in safe_list_doc_files(
+        repo, doc_globs, warnings, exclude_globs=exclude_globs,
+        respect_gitignore=respect_gitignore, stats=corpus_stats)
+                 if not (report_rx and re.fullmatch(report_rx, doc))]
 
     def exists(rel):
         try:
@@ -205,9 +217,7 @@ def main():
             return False
 
     if args.mode == "full":
-        for doc in safe_list_doc_files(repo, doc_globs, warnings):
-            if report_rx and re.fullmatch(report_rx, doc):
-                continue
+        for doc in doc_files:
             prov.setdefault(doc, set()).add("full")
     else:
         # --- mapped ---
@@ -216,15 +226,20 @@ def main():
             if not any(matches(c, pat) for c in changed):
                 continue
             for doc in entry.get("impacts", []):
-                if exists(doc):
+                if exists(doc) and not is_excluded_doc(
+                        repo, doc, exclude_globs, respect_gitignore):
                     prov.setdefault(doc, set()).add("mapped")
+                elif exists(doc):
+                    warnings.append(f"mapped impact path dropped as excluded: {doc}")
                 else:
                     warnings.append(f"mapped impact path dropped as missing/unsafe: {doc}")
                     print(f"warn: mapped impact path missing/unsafe: {doc}", file=sys.stderr)
 
-    # --- heuristic ---
-    doc_files = [doc for doc in safe_list_doc_files(repo, doc_globs, warnings)
-                 if not (report_rx and re.fullmatch(report_rx, doc))]
+    # --- heuristic and changed corpus documents themselves ---
+    if args.mode != "full":
+        for path in changed:
+            if path in doc_files:
+                prov.setdefault(path, set()).add("self")
     all_tokens = set()
     for c in changed:
         if exclude_doc_tokens and any(matches(c, glob) for glob in doc_globs if isinstance(glob, str)):
@@ -287,11 +302,13 @@ def main():
         if reason:
             ssot.append({"name": s.get("name", "?"), "reason": reason})
 
-    # --- assemble with provenance + cap (mapped first) ---
+    # --- assemble with provenance + cap ---
     def provenance(p):
         s = prov[p]
         if "full" in s:
             return "full"
+        if "self" in s:
+            return "self"
         if "mapped" in s:
             return "both" if "heuristic" in s else "mapped"
         if "heuristic" in s:
@@ -300,11 +317,21 @@ def main():
             return "regression"
         return "heuristic"
 
-    mapped_paths = sorted(p for p in prov if "mapped" in prov[p] or "full" in prov[p])
-    regression_only = sorted(p for p in prov if "regression" in prov[p] and "mapped" not in prov[p] and "full" not in prov[p])
-    heur_only = sorted(p for p in prov if "heuristic" in prov[p] and "mapped" not in prov[p] and "regression" not in prov[p] and "full" not in prov[p])
-    ordered = mapped_paths + regression_only + heur_only
+    tier_one = sorted(p for p in prov if {"mapped", "full", "self"} & prov[p])
+    regression_only = sorted(p for p in prov if "regression" in prov[p]
+                             and not ({"mapped", "full", "self"} & prov[p]))
+    heur_only = sorted(p for p in prov if "heuristic" in prov[p]
+                       and not ({"mapped", "full", "self", "regression"} & prov[p]))
+    saturation_heuristic = sorted(p for p in prov if "heuristic" in prov[p]
+                                  and not ({"mapped", "full", "regression"} & prov[p]))
+    ordered = tier_one + regression_only + heur_only
     candidates_before_cap = len(ordered)
+    known = {path for path, sources in prov.items() if {"mapped", "self"} & sources}
+    if args.mode != "full" and len(known) > max_docs:
+        mapped_raw = sum(1 for sources in prov.values() if "mapped" in sources)
+        self_raw = sum(1 for sources in prov.values() if "self" in sources)
+        print(f"maxImpactedDocs={max_docs} is below the known-coupling set ({len(known)} docs: mapped={mapped_raw}, self={self_raw}); raise maxImpactedDocs or run --full", file=sys.stderr)
+        sys.exit(2)
     truncated = args.mode != "full" and len(ordered) > max_docs
     if truncated:
         dropped = len(ordered) - max_docs
@@ -319,13 +346,14 @@ def main():
     mapped_n = sum(1 for d in impacted if d["provenance"] in ("mapped", "both"))
     heur_n = sum(1 for d in impacted if d["provenance"] == "heuristic")
     regression_n = sum(1 for d in impacted if d["provenance"] == "regression")
+    self_n = sum(1 for d in impacted if "self" in prov[d["path"]])
     doc_corpus = len(doc_files)
-    heuristic_saturation = round(len(heur_only) / doc_corpus, 3) if doc_corpus else 0.0
-    raw_saturation = len(heur_only) / doc_corpus if doc_corpus else 0.0
-    if saturation is not None and heur_only and raw_saturation >= saturation:
+    heuristic_saturation = round(len(saturation_heuristic) / doc_corpus, 3) if doc_corpus else 0.0
+    raw_saturation = len(saturation_heuristic) / doc_corpus if doc_corpus else 0.0
+    if saturation is not None and saturation_heuristic and raw_saturation >= saturation:
         pct = round(raw_saturation * 100, 1)
         warnings.append(
-            f"heuristic saturation: {len(heur_only)}/{doc_corpus} docs ({pct}%) reached only by the token heuristic — impactMap is not carrying the selection; promote couplings from mapGapCandidates to impactMap")
+            f"heuristic saturation: {len(saturation_heuristic)}/{doc_corpus} docs ({pct}%) reached only by the token heuristic — impactMap is not carrying the selection; promote couplings from mapGapCandidates to impactMap")
 
     result = {
         "impacted": impacted,
@@ -334,9 +362,15 @@ def main():
         "warnings": list(dict.fromkeys(warnings)),
         "truncated": truncated,
         "counts": {"changed": len(changed), "impacted": len(impacted),
-                   "mapped": mapped_n, "heuristicOnly": heur_n, "regression": regression_n,
+                   "mapped": mapped_n, "self": self_n,
+                   "heuristicOnly": heur_n, "regression": regression_n,
                    "docCorpus": doc_corpus, "heuristicSaturation": heuristic_saturation,
                    "candidatesBeforeCap": candidates_before_cap},
+        "corpusFilter": {"excludeDocGlobs": exclude_globs,
+                         "respectGitignore": respect_gitignore,
+                         "gitignoreApplied": corpus_stats.get("gitignoreApplied", False),
+                         "excludedByGlobs": corpus_stats.get("excludedByGlobs", 0),
+                         "excludedByGitignore": corpus_stats.get("excludedByGitignore", 0)},
     }
     if args.mode != "full" and regression_enabled and args.history:
         result["historySha"] = history_sha

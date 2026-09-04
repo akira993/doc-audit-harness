@@ -28,7 +28,7 @@ REQUIRED_EXPECT = {"runid", "runDir", "anchor", "config", "lockIno", "preflight"
                    "dispatch", "cached", "history", "historyStatus", "manifest",
                    "digest", "returns", "attempt", "phase4"}
 VALID_VERDICTS = {"PASS", "WARN", "FAIL"}
-VALID_PROVENANCE = {"mapped", "heuristic", "both", "full", "graphify", "semantic",
+VALID_PROVENANCE = {"mapped", "heuristic", "both", "full", "self", "graphify", "semantic",
                     "regression"}
 FAIL_SEVERITIES = {"FAIL", "HIGH", "CRITICAL"}
 PHASE4_SEVERITIES = {"CRITICAL", "HIGH", "MEDIUM", "LOW"}
@@ -119,7 +119,8 @@ def run_sibling_scan(payload, repo, timeout_s=30):
 def run_sibling_step(manifest, returns, phase4, config, repo):
     try:
         scan_manifest = {key: manifest.get(key) for key in
-                         ("mode", "head", "baselineSha", "changedSet", "docGlobs")}
+                         ("mode", "head", "baselineSha", "changedSet", "docGlobs",
+                          "excludeDocGlobs", "respectGitignore")}
         payload = {"repoRoot": repo, "manifest": scan_manifest, "returns": returns,
                    "phase4": phase4, "reportPattern": report_pattern(config)}
         return run_sibling_scan(payload, repo)
@@ -1107,6 +1108,10 @@ def main():
         verify_sha(manifest_raw, expected["manifest"], "manifest")
         if manifest.get("sealed") is not True:
             raise Refused("manifest is not sealed")
+        if (not isinstance(manifest.get("excludeDocGlobs"), list)
+                or not all(isinstance(item, str) for item in manifest["excludeDocGlobs"])
+                or not isinstance(manifest.get("respectGitignore"), bool)):
+            raise Refused("manifest predates the v0.20 corpus contract; rerun the audit")
         if type(manifest.get("phase4Required")) is not bool:
             raise Refused("manifest.phase4Required must be boolean")
         identity_mismatch = (holder.get("runid") != args.runid

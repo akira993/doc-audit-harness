@@ -6,7 +6,7 @@ resolve-impact.py's own `mapped`/`regression`/`heuristic` result (already cap-ap
 UNCONDITIONALLY kept as-is — this script never displaces an existing `impacted`
 entry. New candidates from graphify and/or CocoIndex are added ONLY into the
 residual slots left under `maxImpactedDocs`, strictly in priority order
-`mapped` >= `regression` >= `heuristic` >= `graphify` >= `semantic` (Issue #8 anti-regression).
+`mapped`/`full`/`self` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic`.
 
 Reads:
   --impact-json PATH       resolve-impact.py's output (rewritten in place)
@@ -28,7 +28,7 @@ passthrough (impact.json left byte-identical).
 """
 import argparse, json, os, re, subprocess, sys
 
-from docaudit_paths import matches_glob, validate_repo_path
+from docaudit_paths import corpus_settings, is_excluded_doc, matches_glob, validate_repo_path
 from sealed_config import SealedConfigMismatch, load_sealed_config
 
 DEFAULT_DOC_GLOBS = ["docs/**/*.md", "*.md"]
@@ -235,8 +235,13 @@ def main():
         # Pure passthrough — leave impact.json byte-identical.
         sys.exit(0)
 
+    exclude_globs, respect_gitignore = [], False
     report_rx = None
     if config is not None:
+        try:
+            exclude_globs, respect_gitignore = corpus_settings(config)
+        except ValueError as exc:
+            print(f"warn: impact-supplement: corpus settings ignored ({exc})", file=sys.stderr)
         if config.get("auditReportsInCorpus") is not True:
             report_rx = report_pattern(config)
 
@@ -279,7 +284,11 @@ def main():
             if report_rx and re.fullmatch(report_rx, value):
                 continue
             try:
-                admitted.append(validate_repo_path(args.repo_root, value))
+                path = validate_repo_path(args.repo_root, value)
+                if is_excluded_doc(args.repo_root, path, exclude_globs, respect_gitignore):
+                    warnings.append(f"{source} candidate dropped as excluded: {path}")
+                else:
+                    admitted.append(path)
             except ValueError as exc:
                 warnings.append(f"{source} candidate dropped as unsafe: {value} ({exc})")
         return admitted
@@ -331,7 +340,7 @@ def main():
         for name, n in truncated_sources:
             warnings.append(
                 f"{n} {name} candidate(s) dropped by maxImpactedDocs={args.max_impacted_docs}"
-                " (residual-slots-only cap; mapped/heuristic entries untouched)"
+                " (residual-slots-only cap; existing impacted entries untouched)"
             )
         print(
             f"warn: impact-supplement: {sum(n for _, n in truncated_sources)} candidate(s) "

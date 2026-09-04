@@ -8,7 +8,7 @@ import os
 import stat
 import sys
 
-from docaudit_paths import matches_glob, validate_repo_path
+from docaudit_paths import corpus_settings, is_excluded_doc, matches_glob, validate_repo_path
 from sealed_config import SealedConfigMismatch, load_sealed_config
 
 
@@ -85,6 +85,7 @@ def main():
         if not args.config or not args.paths:
             raise ValueError("classification requires --config and --paths")
         _config_raw, config = load_sealed_config(args.config, args.expect_config_sha)
+        exclude_globs, respect_gitignore = corpus_settings(config)
         raw = sys.stdin.read() if args.paths == "-" else open(args.paths, encoding="utf-8").read()
         allowed = []
         denied = []
@@ -104,6 +105,10 @@ def main():
                 reason = "agent instruction file"
             if reason is None and not any(matches_glob(path, pattern) for pattern in doc_globs):
                 reason = "path does not match docGlobs"
+            if reason is None and is_excluded_doc(root, path, exclude_globs, respect_gitignore):
+                reason = ("path matches excludeDocGlobs" if any(
+                    matches_glob(path, pattern) for pattern in exclude_globs)
+                          else "path is gitignored")
             if reason is None and any(matches_glob(path.lower(), str(pattern).lower()) for pattern in protected):
                 reason = "path matches protectedGlobs"
             if reason is None:

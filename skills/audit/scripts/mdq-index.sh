@@ -100,6 +100,9 @@ if [[ ${#ROOTS[@]} -gt 0 ]]; then
 else
   ROOT_ARGS=(--root .)
 fi
+ROOTS_DEFAULTED=false
+if [[ ${#ROOTS[@]} -eq 0 ]]; then ROOTS_DEFAULTED=true; ROOTS=(.); fi
+ROOTS_JSON="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "${ROOTS[@]}")"
 
 # Index the corpus. No --db: mdq resolves its own default DB under .mdq/ at the repo
 # root (index-<lang>-<strategy>.sqlite; the bare index.sqlite is a legacy layout that
@@ -110,7 +113,7 @@ fi
 ERRF="$(mktemp "${TMPDIR:-/tmp}/mdq_index_err.XXXXXX")"
 trap 'rm -f "$ERRF"' EXIT
 if ( cd "$REPO_ROOT" && PYTHONUTF8=1 PYTHONIOENCODING=utf-8 "$BIN" index "${ROOT_ARGS[@]}" ) >/dev/null 2>"$ERRF"; then
-  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"mdqAvailable":True,"reason":"indexed","bin":sys.argv[1],"dbDir":".mdq"})+"\n").encode("utf-8"))' "$BIN"
+  python3 -c 'import json,sys; sys.stdout.buffer.write((json.dumps({"mdqAvailable":True,"reason":"indexed","bin":sys.argv[1],"dbDir":".mdq","roots":json.loads(sys.argv[2]),"rootsDefaulted":sys.argv[3]=="true"})+"\n").encode("utf-8"))' "$BIN" "$ROOTS_JSON" "$ROOTS_DEFAULTED"
   exit 0
 else
   rc=$?

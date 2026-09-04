@@ -110,6 +110,8 @@ harness-only update; do not rebuild or rewrite the rest of the adapter.
 
 ## Step 2 — draft the config
 
+`respectGitignore` defaults to true, so untracked Markdown matched by Git exclude rules does not enter the corpus.
+
 For a newly drafted config, propose `"regressionRecheck": {"enabled": true}` so a prior FAIL can
 be rechecked even when its document content is unchanged. This is a proposal for the new draft
 only; never add or change this key in an existing config automatically.

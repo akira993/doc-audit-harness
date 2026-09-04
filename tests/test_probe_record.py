@@ -278,7 +278,7 @@ class TestProbeRecord(unittest.TestCase):
         out = self.read()["rebind"]
         self.assertTrue(all(value["state"] == "complete" for value in out.values()))
         self.assertEqual(out["mdq"], {"state": "complete", "available": True, "reason": "indexed", "bin": "mdq",
-                                      "healthy": True, "chunks": 7, "status": "ok", "degrade": "n/a"})
+                                  "healthy": True, "chunks": 7, "status": "ok", "degrade": "n/a", "rootsDefaulted": None})
         self.assertEqual(out["codex-review"], {
             "state": "complete", "available": True, "reason": "ok", "bin": "codex",
             "reviewState": "completed", "callerCodexHomeDisplay": "/tmp/home",
