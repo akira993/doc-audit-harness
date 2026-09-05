@@ -78,5 +78,10 @@
     "check-docs": "a5c1efbcbe1bdbece74cb188228fd676d4c6c0446a42f27d6514afe40c5f1ab8",
     "doc-lint": "91168de018259e07ba51ceaf326f96623c462650fb74a1d174a41b1fbe53c5ac",
     "check-docs-engine": "aa5305f497f32857562d0ac79eaf116560d4db28cae941197582953d8a905d97"
+  },
+  "0.22.0": {
+    "check-docs": "a5c1efbcbe1bdbece74cb188228fd676d4c6c0446a42f27d6514afe40c5f1ab8",
+    "doc-lint": "91168de018259e07ba51ceaf326f96623c462650fb74a1d174a41b1fbe53c5ac",
+    "check-docs-engine": "aa5305f497f32857562d0ac79eaf116560d4db28cae941197582953d8a905d97"
   }
 }

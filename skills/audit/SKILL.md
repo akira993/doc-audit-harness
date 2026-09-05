@@ -25,7 +25,7 @@ gate holds its `flock`, including the complete gate+report interval, it MUST be 
 Before acquiring a run lock, run `AUDIT_SCOPE_CHECK="$(python3 "$SD/scripts/import-audit-scope.py" --repo-root "$CLAUDE_PROJECT_DIR" --config "$CFG" --check --json)"`.
 Bind `PRECHECK_CONFIG_SHA`, `AUDIT_SCOPE_PATH`, and `AUDIT_SCOPE_STATE` from that same JSON's `configSha`, `scopePath`, and `state` fields; do not read the config again between this check and open.
 If `AUDIT_SCOPE_STATE` is `drift` or `path-mismatch`, or `errors[]` is non-empty, stop without calling the lock-acquiring `open-run.py`; for `path-mismatch`, show both `scopePath` and `recordedScopePath`, otherwise show `diff.missing` / `diff.extra` (or `errors[]`), and tell the user to run `/docaudit:init --import-audit-scope` to restore the generated map. If it is `not-imported`, show only `💡 audit-scope.json は未導入です。` and continue. `absent` and `in-sync` are silent.
-`python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --expect-config-sha "$PRECHECK_CONFIG_SHA" --skill-version 0.21.0 [--accept-config]`,
+`python3 "$SD/scripts/open-run.py" --run-base "$RUN_BASE" --repo-root "$CLAUDE_PROJECT_DIR" --anchor-path "$ANCHOR_PATH" --expect-config-sha "$PRECHECK_CONFIG_SHA" --skill-version 0.22.0 [--accept-config]`,
 adding `--accept-config` only when the skill received it. Assign the complete stdout JSON,
 unchanged, to `EVIDENCE`; bind `RUNID` and `RUN_DIR` from its `runid` and `runDir` fields. Do not
 create `RUN_DIR` yourself. If stdout includes `previousReportStatus` with `pending`, `failed`, or
