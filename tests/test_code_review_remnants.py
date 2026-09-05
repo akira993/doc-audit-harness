@@ -24,9 +24,9 @@ MIGRATION_ALLOWLIST = {
     ("skills/audit/references/config-schema.md", 61, "removed-config"),
 }
 WARNING_ALLOWLIST = {
-    ("skills/audit/scripts/decide-verdict.py", 57, "removed-config"),
-    ("skills/audit/scripts/decide-verdict.py", 58, "removed-config"),
-    ("skills/audit/scripts/decide-verdict.py", 59, "removed-command"),
+    ("skills/audit/scripts/decide-verdict.py", 59, "removed-config"),
+    ("skills/audit/scripts/decide-verdict.py", 60, "removed-config"),
+    ("skills/audit/scripts/decide-verdict.py", 61, "removed-command"),
 }
 HISTORY_ALLOWLIST = {
     ("docs/ADOPTION.md", 296, "removed-config"),

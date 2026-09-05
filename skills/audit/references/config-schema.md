@@ -151,6 +151,7 @@ no TTL and can be removed only by the matching `--release` or an explicit
 `.claude/state/docaudit-last-run.json`. Old flat run files are ignored (cold
 start). Full mode uses `HEAD` as its effective baseline, disables cache, and
 includes every document in the post-exclusion corpus without applying `maxImpactedDocs`.
+The latest claims-refused Phase-4 record uses `.claude/state/docaudit-refused-phase4.json`.
 
 `phase0-probes.json` in that run directory stores display-only raw Phase-0 probe output with
 `schemaVersion:1`. It is not evidence and the gate never reads it.

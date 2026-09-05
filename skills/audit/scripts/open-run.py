@@ -15,6 +15,7 @@ import tempfile
 import time
 
 from docaudit_paths import validate_repo_path
+from refused_phase4 import read_bounded_regular
 
 
 RUNID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
@@ -379,9 +380,20 @@ def main():
         return 2
     finally:
         os.close(fd)
+    refused_phase4_path = os.path.join(
+        repo, ".claude", "state", "docaudit-refused-phase4.json")
+    try:
+        refused_phase4_raw = read_bounded_regular(refused_phase4_path)
+        refused_phase4_sha = sha(refused_phase4_raw)
+    except FileNotFoundError:
+        refused_phase4_sha = "none"
+    except (OSError, ValueError) as exc:
+        refused_phase4_sha = "none"
+        print(f"open-run: refusedPhase4 ignored: {exc}", file=sys.stderr)
     result = {"runid": runid, "runDir": run_dir, "anchor": anchor_sha,
               "config": config_sha, "lockIno": inode,
               "preflight": "none", "phase4": "none", "codexReviewResult": "none",
+              "refusedPhase4": refused_phase4_sha,
               "engineVersion": engine_version}
     if prior_status is not None:
         result["previousReportStatus"] = prior_status

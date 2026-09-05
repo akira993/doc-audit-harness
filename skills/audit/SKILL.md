@@ -60,7 +60,7 @@ inside `EVIDENCE`, not separate transport variables:
 
 | checkpoint | cumulative evidence represented in `RUNID` + `EVIDENCE` |
 |---|---|
-| (a) open complete | runid, runDir, anchor, config, lockIno, codexReviewResult=`none`, engineVersion |
+| (a) open complete | runid, runDir, anchor, config, lockIno, codexReviewResult=`none`, refusedPhase4 (`none` or side-record sha), engineVersion |
 | (b) harness question complete | same as (a) |
 | (c) pre-flight complete | (b) + preflight |
 | (d) start-run complete | (c) + dispatch, cached, history, historyStatus, manifest |
@@ -599,7 +599,7 @@ in the orchestrator. Apply the branch as:
    do not run `rev-parse`; bind `BASELINE_OK=false`. Then run the
    deterministic table before constructing a prompt or invoking Codex:
    Bind `HISTORY_SHA` and `WORKTREE_DIGEST` from the current `EVIDENCE.history` and sealed manifest `worktreeDigest`, then run
-   `CODEX_REVIEW_PLAN="$(python3 "$SD/scripts/codex-review-plan.py" --mode "$MODE" --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR" --available "$CODEX_REVIEW_AVAILABLE" --available-reason "$CODEX_REVIEW_REASON" --baseline-ok "$BASELINE_OK" --history "$CLAUDE_PROJECT_DIR/.claude/state/docaudit-history.json" --expect-history-sha "$HISTORY_SHA" --worktree-digest "$WORKTREE_DIGEST")"`.
+   `CODEX_REVIEW_PLAN="$(python3 "$SD/scripts/codex-review-plan.py" --mode "$MODE" --config "$CFG" --expect-config-sha "$CONFIG_SHA" --repo-root "$CLAUDE_PROJECT_DIR" --available "$CODEX_REVIEW_AVAILABLE" --available-reason "$CODEX_REVIEW_REASON" --baseline-ok "$BASELINE_OK" --history "$CLAUDE_PROJECT_DIR/.claude/state/docaudit-history.json" --expect-history-sha "$HISTORY_SHA" --worktree-digest "$WORKTREE_DIGEST" --evidence "$EVIDENCE")"`.
    Parse and bind its `action`, `state`, `promptVariant`, `carryForward`, `carryForwardSha`, and `reason`. When `action=skip` or
    `action=not-active`, bind the returned `state` to `CODEX_REVIEW_STATE`, fold no findings, and
    do not invoke `codex exec`. Do not repeat full-mode or baseline validity decisions outside this

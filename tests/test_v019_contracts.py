@@ -165,7 +165,8 @@ class TestV019Contracts(unittest.TestCase):
         self.assertIn("does not match plugin engine version", skill)
         self.assertIn("start a new session and rerun `/docaudit:audit`", skill)
         self.assertIn(
-            "runid, runDir, anchor, config, lockIno, codexReviewResult=`none`, engineVersion",
+            "runid, runDir, anchor, config, lockIno, codexReviewResult=`none`, "
+            "refusedPhase4 (`none` or side-record sha), engineVersion",
             skill,
         )
         self.assertIn("Bind `CONTRACT_VERSION` from `EVIDENCE.engineVersion`", skill)
