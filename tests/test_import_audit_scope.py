@@ -115,6 +115,66 @@ class ImportAuditScopeTests(unittest.TestCase):
         subprocess.run(["git", "update-index", "--force-remove", "--", rel],
                        cwd=root, check=True)
 
+    def test_wp_a_rule_validation_characterization_both_paths(self):
+        """WP-A: freeze the pre-refactor validation table for both entry paths."""
+        rows = (
+            ("duplicate keys", '{"src/*.py":{"impact":"none","impact":"none"}}', {}, (),
+             ["duplicate key in scope value src/*.py: impact", "invalid scope value: src/*.py"], [], []),
+            ("none", '{"src/*.py":{"impact":"none"}}', {}, (), [], [], ["src/*.py"]),
+            ("non-array", '{"src/*.py":false}', {}, (),
+             ["scope impacts must be a non-empty string array: src/*.py"], [], []),
+            ("non-string target", '{"src/*.py":[7]}', {}, (),
+             ["scope impact is not a string: src/*.py"], [], []),
+            ("CR/LF target", '{"src/*.py":["docs/a.md\\rwrong"]}', {}, (),
+             ["CR/LF in scope impact: src/*.py"], [], []),
+            ("parent path", '{"src/*.py":["../docs/a.md"]}', {}, (),
+             ["invalid scope impact src/*.py: path contains an empty, dot, or parent component"], [], []),
+            ("absolute path", '{"src/*.py":["/definitely/outside"]}', {}, (),
+             ["invalid scope impact src/*.py: path must be a non-empty repository-relative string"], [], []),
+            ("missing path", '{"src/*.py":["docs/missing.md"]}', {}, (),
+             ["invalid scope impact src/*.py: path does not exist"], [], []),
+            ("outside docGlobs", '{"src/*.py":["notes/a.txt"]}', {}, (("notes/a.txt", "n\\n"),),
+             ["scope impact outside docGlobs (notes/a.txt); extend docGlobs and rerun"], [], []),
+            ("exclude glob", '{"src/*.py":["docs/private.md"]}',
+             {"excludeDocGlobs": ["docs/private.md"]}, (("docs/private.md", "p\\n"),),
+             ["scope impact excluded from corpus (excludeDocGlobs or Git exclude rules): docs/private.md; remove it from audit-scope.json and re-import; if it is the last target, remove the whole rule"], [], []),
+            ("gitignore", '{"src/*.py":["docs/ignored.md"]}', {}, (("docs/ignored.md", "i\\n"),),
+             ["scope impact excluded from corpus (excludeDocGlobs or Git exclude rules): docs/ignored.md; remove it from audit-scope.json and re-import; if it is the last target, remove the whole rule"], [], []),
+            ("outside corpus", '{"src/*.py":["docs/absent.md"]}', {}, (),
+             ["invalid scope impact src/*.py: path does not exist"], [], []),
+            ("report path", '{"src/*.py":["docs/logs/audit_2026-08-27.md"]}',
+             {"reportPath": "docs/logs/audit_<YYYY-MM-DD>[_NN].md"}, (("docs/logs/audit_2026-08-27.md", "r\\n"),),
+             ["scope impact outside document corpus (docs/logs/audit_2026-08-27.md); extend docGlobs and rerun"], [], []),
+            ("normal", '{"src/*.py":["docs/a.md"]}', {}, (), [],
+             [{"changed": "src/**.py", "impacts": ["docs/a.md"], "from": "src/*.py"}], []),
+        )
+        for name, scope, config, files, plain_errors, plain_translated, plain_skipped in rows:
+            with self.subTest(path="check", row=name):
+                root = self.make_repo(scope=(scope or "{}"), config=dict({"docGlobs": ["docs/**/*.md"], "impactMap": []}, **config), files=files)
+                if name == "gitignore":
+                    write(os.path.join(root, ".gitignore"), "docs/ignored.md\n")
+                    self.remove_from_index(root, "docs/ignored.md")
+                out = self.output(self.invoke(root, "--json"))
+                self.assertEqual((out["state"], out["errors"], out["translated"], out["skippedNoImpact"]),
+                                 (("error" if plain_errors else "not-imported"), plain_errors, plain_translated, plain_skipped))
+            with self.subTest(path="index", row=name):
+                root = self.make_repo(scope=(scope or "{}"), config=dict({"docGlobs": ["docs/**/*.md"], "impactMap": []}, **config), files=files)
+                if name == "gitignore":
+                    write(os.path.join(root, ".gitignore"), "docs/ignored.md\n")
+                    self.remove_from_index(root, "docs/ignored.md")
+                out = self.output(self.invoke(root, "--from-index", "--json"))
+                index_errors = plain_errors
+                if name == "CR/LF target":
+                    index_errors = ["CR/LF in scope impact: src/*.py"]
+                elif name in ("missing path", "outside corpus", "gitignore"):
+                    target = {"missing path": "docs/missing.md", "outside corpus": "docs/absent.md", "gitignore": "docs/ignored.md"}[name]
+                    index_errors = [f"scope impact outside document corpus ({target}); extend docGlobs and rerun"]
+                elif name == "absolute path":
+                    index_errors = ["invalid scope impact src/*.py: absolute path is outside repo"]
+                index_translated = [] if index_errors else plain_translated
+                self.assertEqual((out["state"], out["errors"], out["translated"], out["skippedNoImpact"]),
+                                 (("error" if index_errors else "not-imported"), index_errors, index_translated, plain_skipped))
+
     # PLAN §1.6 (i)
     def test_i_glob_translation_positive_and_negative_examples(self):
         positive = {

@@ -205,15 +205,10 @@ def validate_rule_shapes(converted_rules, errors):
                 errors.append(f"CR/LF in scope impact: {changed}")
 
 
-def validate_rules(converted_rules, repo, config, doc_globs, errors):
+def _validate_rules_core(converted_rules, errors, *, doc_globs, corpus,
+                          normalize_path, is_excluded, report_rx):
     translated = []
     skipped = []
-    exclude_globs, respect_gitignore = corpus_settings(config)
-    corpus = set(list_doc_files(repo, doc_globs, exclude_globs=exclude_globs,
-                                respect_gitignore=respect_gitignore))
-    report_rx = None
-    if config.get("auditReportsInCorpus") is not True:
-        report_rx = report_regex(config)
     for changed, raw_value, converted in converted_rules:
         if isinstance(raw_value, JSONObject):
             keys = [key for key, _value in raw_value]
@@ -239,29 +234,43 @@ def validate_rules(converted_rules, repo, config, doc_globs, errors):
                 errors.append(f"CR/LF in scope impact: {changed}")
                 continue
             try:
-                normalized = validate_repo_path(repo, target)
+                normalized = normalize_path(target)
             except ValueError as exc:
                 errors.append(f"invalid scope impact {changed}: {exc}")
                 continue
+            outside_corpus = (f"scope impact outside document corpus ({normalized}); "
+                              "extend docGlobs and rerun")
             if not any(matches_glob(normalized, glob) for glob in doc_globs):
                 errors.append(f"scope impact outside docGlobs ({normalized}); extend docGlobs and rerun")
                 continue
-            if normalized not in corpus and is_excluded_doc(
-                    repo, normalized, exclude_globs, respect_gitignore):
+            if normalized not in corpus and is_excluded(normalized):
                 errors.append("scope impact excluded from corpus (excludeDocGlobs or Git exclude rules): "
                               f"{normalized}; remove it from audit-scope.json and re-import; "
                               "if it is the last target, remove the whole rule")
                 continue
             if normalized not in corpus:
-                errors.append(f"scope impact outside document corpus ({normalized}); extend docGlobs and rerun")
+                errors.append(outside_corpus)
                 continue
             if report_rx and report_rx.fullmatch(normalized):
-                errors.append(f"scope impact outside document corpus ({normalized}); extend docGlobs and rerun")
+                errors.append(outside_corpus)
                 continue
             impacts.append(normalized)
         if converted is not None and impacts:
             translated.append({"changed": converted, "impacts": impacts, "from": changed})
     return translated, skipped
+
+
+def validate_rules(converted_rules, repo, config, doc_globs, errors):
+    exclude_globs, respect_gitignore = corpus_settings(config)
+    corpus = set(list_doc_files(repo, doc_globs, exclude_globs=exclude_globs,
+                                respect_gitignore=respect_gitignore))
+    report_rx = (None if config.get("auditReportsInCorpus") is True
+                 else report_regex(config))
+    return _validate_rules_core(
+        converted_rules, errors, doc_globs=doc_globs, corpus=corpus,
+        normalize_path=lambda target: validate_repo_path(repo, target),
+        is_excluded=lambda path: is_excluded_doc(
+            repo, path, exclude_globs, respect_gitignore), report_rx=report_rx)
 
 
 def git_paths(repo, errors):
@@ -373,55 +382,16 @@ def index_corpus(paths, doc_globs, exclude_globs):
 
 def validate_rules_from_index(converted_rules, paths, config, doc_globs,
                               repo, repo_apparent, errors):
-    translated = []
-    skipped = []
     exclude_globs, _respect_gitignore = corpus_settings(config)
     corpus = index_corpus(paths, doc_globs, exclude_globs)
-    report_rx = None
-    if config.get("auditReportsInCorpus") is not True:
-        report_rx = report_regex(config)
-    for changed, raw_value, converted in converted_rules:
-        if isinstance(raw_value, JSONObject):
-            keys = [key for key, _value in raw_value]
-            duplicates = sorted({key for key in keys if keys.count(key) > 1})
-            for key in duplicates:
-                errors.append(f"duplicate key in scope value {changed}: {key}")
-            if list(raw_value) == [("impact", "none")]:
-                if converted is not None:
-                    skipped.append(changed)
-                continue
-            errors.append(f"invalid scope value: {changed}")
-            continue
-        value = normal_object(raw_value)
-        if not isinstance(value, list) or not value:
-            errors.append(f"scope impacts must be a non-empty string array: {changed}")
-            continue
-        impacts = []
-        for target in value:
-            if not isinstance(target, str):
-                errors.append(f"scope impact is not a string: {changed}")
-                continue
-            try:
-                normalized = lexical_repo_path(repo, repo_apparent, target)
-            except ValueError as exc:
-                errors.append(f"invalid scope impact {changed}: {exc}")
-                continue
-            if not any(matches_glob(normalized, glob) for glob in doc_globs):
-                errors.append(f"scope impact outside docGlobs ({normalized}); extend docGlobs and rerun")
-                continue
-            if normalized not in corpus and any(
-                    matches_glob(normalized, glob) for glob in exclude_globs):
-                errors.append("scope impact excluded from corpus (excludeDocGlobs or Git exclude rules): "
-                              f"{normalized}; remove it from audit-scope.json and re-import; "
-                              "if it is the last target, remove the whole rule")
-                continue
-            if normalized not in corpus or (report_rx and report_rx.fullmatch(normalized)):
-                errors.append(f"scope impact outside document corpus ({normalized}); extend docGlobs and rerun")
-                continue
-            impacts.append(normalized)
-        if converted is not None and impacts:
-            translated.append({"changed": converted, "impacts": impacts, "from": changed})
-    return translated, skipped
+    report_rx = (None if config.get("auditReportsInCorpus") is True
+                 else report_regex(config))
+    return _validate_rules_core(
+        converted_rules, errors, doc_globs=doc_globs, corpus=corpus,
+        normalize_path=lambda target: lexical_repo_path(
+            repo, repo_apparent, target),
+        is_excluded=lambda path: any(
+            matches_glob(path, glob) for glob in exclude_globs), report_rx=report_rx)
 
 
 def equivalence(converted_rules, paths, errors):
