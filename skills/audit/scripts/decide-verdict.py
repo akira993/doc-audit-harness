@@ -2,6 +2,7 @@
 """Deterministic sealed-run gate and sole history/lastRun/anchor writer."""
 
 import argparse
+from collections import Counter
 import datetime
 import fcntl
 import hashlib
@@ -21,6 +22,7 @@ from docaudit_paths import normalize_finding_path, validate_repo_path
 from sealed_config import SealedConfigMismatch, load_sealed_config
 from claim_record import (CLAIM_FILENAME_RE, ClaimRecordError, extract_claim_targets,
                           load_valid_claim_record)
+from codex_review_output import derive_findings, validate_result
 from report_tokens import (BIDI_CONTROLS, OPTIONAL_TOKENS, TOKEN_COUNTS, TOKEN_RE,
                            TokenCountError, validate_template_body)
 
@@ -28,7 +30,8 @@ from report_tokens import (BIDI_CONTROLS, OPTIONAL_TOKENS, TOKEN_COUNTS, TOKEN_R
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUIRED_EXPECT = {"runid", "runDir", "anchor", "config", "lockIno", "preflight",
                    "dispatch", "cached", "history", "historyStatus", "manifest",
-                   "digest", "returns", "attempt", "phase4", "engineVersion"}
+                   "digest", "returns", "attempt", "phase4", "codexReviewResult",
+                   "engineVersion"}
 VALID_VERDICTS = {"PASS", "WARN", "FAIL"}
 VALID_PROVENANCE = {"mapped", "heuristic", "both", "full", "self", "graphify", "semantic",
                     "regression"}
@@ -547,6 +550,11 @@ def validate_evidence(value):
     for key in optional_sha_fields:
         if not isinstance(value[key], str) or (value[key] != "none" and not sha_re.fullmatch(value[key])):
             raise Refused(f"EVIDENCE {key} has invalid type")
+    codex_result = value["codexReviewResult"]
+    if (not isinstance(codex_result, str)
+            or (codex_result not in {"none", "failed"}
+                and not sha_re.fullmatch(codex_result))):
+        raise Refused("EVIDENCE codexReviewResult has invalid type")
 
 
 def validate_taint_evidence(value):
@@ -598,17 +606,17 @@ def validate_report_rule(manifest, repo, runid):
     return rule
 
 
-def read_regular_bounded(path, label, maximum, missing_error):
+def read_regular_bounded(path, label, maximum, missing_error, invalid_error=TemplateInvalid):
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
     except FileNotFoundError as exc:
         raise missing_error(f"{label} is missing") from exc
     except OSError as exc:
-        raise TemplateInvalid(f"{label} cannot be safely opened: {exc}") from exc
+        raise invalid_error(f"{label} cannot be safely opened: {exc}") from exc
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
-            raise TemplateInvalid(f"{label} is not a regular file")
+            raise invalid_error(f"{label} is not a regular file")
         chunks = []
         remaining = maximum + 1
         while remaining:
@@ -619,10 +627,51 @@ def read_regular_bounded(path, label, maximum, missing_error):
             remaining -= len(chunk)
         raw = b"".join(chunks)
         if len(raw) > maximum:
-            raise TemplateInvalid(f"{label} exceeds its size limit")
+            raise invalid_error(f"{label} exceeds its size limit")
         return raw
     finally:
         os.close(fd)
+
+
+def validate_codex_review_result(run_dir, phase4, state, seal):
+    is_sha = isinstance(seal, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", seal)
+    if ((state == "completed" and not is_sha)
+            or (state != "completed" and is_sha)
+            or (state == "execution-failed" and seal != "failed")
+            or (state != "execution-failed" and seal == "failed")
+            or (state not in {"completed", "execution-failed"} and seal != "none")
+            or (state in {"completed", "execution-failed"} and seal == "none")):
+        raise Refused("codexReviewResult does not match codexReview.state")
+    codex_findings = [] if phase4 is None else [
+        item for item in phase4.get("findings", [])
+        if isinstance(item, dict) and item.get("source") == "codex-review"
+    ]
+    if state != "completed":
+        if codex_findings:
+            raise Refused("codex-review findings require state=completed")
+        return
+    raw = read_regular_bounded(
+        os.path.join(run_dir, "codex-review-result.json"), "codex-review result",
+        2 * 1024 * 1024, Refused, Refused)
+    if "sha256:" + hashlib.sha256(raw).hexdigest() != seal:
+        raise Refused("codexReviewResult sha mismatch")
+    try:
+        result = json.loads(raw.decode("utf-8"))
+        validate_result(result)
+        derived = derive_findings(result)
+    except (UnicodeError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        raise Refused("codexReviewResult invalid") from exc
+    finding_tuple = lambda item: (
+        item.get("source"), item.get("file"), item.get("severity"), item.get("title"))
+    if any(not all(isinstance(value, str) for value in finding_tuple(item))
+           for item in codex_findings):
+        raise Refused("codexReviewFindingsMismatch: +0 -1")
+    expected = Counter(finding_tuple(item) for item in derived)
+    observed = Counter(finding_tuple(item) for item in codex_findings)
+    if expected != observed:
+        added = sum((expected - observed).values())
+        removed = sum((observed - expected).values())
+        raise Refused(f"codexReviewFindingsMismatch: +{added} -{removed}")
 
 
 def load_report_template(run_dir):
@@ -1293,6 +1342,8 @@ def main():
         codex_review_state = (codex_review_evidence.get("state")
                               if codex_review_evidence is not None else None)
         codex_review_status["state"] = codex_review_state
+        validate_codex_review_result(
+            run_dir, phase4, codex_review_state, expected["codexReviewResult"])
         if codex_review_required and codex_review_state != "completed":
             raise Refused(f"codex-review required but state={codex_review_state or 'missing'}")
 

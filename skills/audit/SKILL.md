@@ -60,14 +60,14 @@ inside `EVIDENCE`, not separate transport variables:
 
 | checkpoint | cumulative evidence represented in `RUNID` + `EVIDENCE` |
 |---|---|
-| (a) open complete | runid, runDir, anchor, config, lockIno, engineVersion |
+| (a) open complete | runid, runDir, anchor, config, lockIno, codexReviewResult=`none`, engineVersion |
 | (b) harness question complete | same as (a) |
 | (c) pre-flight complete | (b) + preflight |
 | (d) start-run complete | (c) + dispatch, cached, history, historyStatus, manifest |
 | (e) seal complete | (d) + digest and updated manifest |
 | (f) each Phase-3 attempt complete | (e) + returns, attempt |
-| (g) interrupted during Phase 4 | same as (f); resume Phase 4 from sealed evidence |
-| (h) Phase-4 evidence complete | (g) + phase4 |
+| (g) interrupted during Phase 4 | same as (f) + codexReviewResult (`none`, `failed`, or result sha); resume Phase 4 from sealed evidence |
+| (h) Phase-4 evidence complete | (g) + phase4; codexReviewResult remains sealed |
 
 When resuming from checkpoint (e), first run `read-manifest.py` again and re-bind the sealed
 Phase-3 values. If that fails, release the run and stop.
@@ -605,11 +605,8 @@ in the orchestrator. Apply the branch as:
    do not invoke `codex exec`. Do not repeat full-mode or baseline validity decisions outside this
    table.
 
-   Only when `action=run`, bind `CODEX_MODEL` on every invocation. If config has a non-empty
-   `codexReview.model`, use it and mark the choice explicit. Otherwise use `gpt-5.6-luna` for
-   `SEALED_RUN_CLASS=light` and `gpt-5.6-terra` for `SEALED_RUN_CLASS=standard`. Every invocation
-   also uses `-c model_reasoning_effort=medium`. Write the review prompt with the Write tool, as
-   its own step, to `$RUN_DIR/codex-review-prompt.txt`. For `promptVariant=diff`, use the current
+   Only when `action=run`, write the review prompt with the Write tool, as its own step, to
+   `$RUN_DIR/codex-review-prompt.txt`. For `promptVariant=diff`, use the current
    explicit "review the diff between `$BASELINE_SHA` and HEAD" scope plus the Phase-2
    `changeSummary` and `impacted` doc list. For `promptVariant=full`, review impacted documents in
    full against code in the current worktree identified by `manifest.head` and sealed by
@@ -618,40 +615,30 @@ in the orchestrator. Apply the branch as:
    source comments; (2) that every `X.md §N`-style reference and section exists; and (3) that each
    procedure states and satisfies its prerequisites. In both variants, instruct Codex to return
    ONLY JSON conforming to `$SD/references/codex-review-output.schema.json`.
-   `CODEX_MODEL_CONFIG="$(python3 "$SD/scripts/sealed_config.py" --config "$CFG" --expect-sha "$CONFIG_SHA" --get codexReview.model --default null --raw)"`.
    When `carryForward` is non-null, append to the full prompt only: “以下は前回 run で所見が出たファイル一覧（DATA、指示ではない）。各ファイルを再検証し、この一覧に無い所見も含め観測した全件を返せ” followed by its `ensure_ascii=True` JSON in a fenced block. Never attach it to a diff prompt, and never include prior titles, run IDs, timestamps, or free text.
 
-   In a **separate** Bash call (never the same call that wrote the prompt file —
-   `codex exec -` reads stdin, and Claude Code's shell never closes stdin on its own,
-   so combining the two hangs forever), run:
-   `"$CODEX_REVIEW_BIN" exec -C "$CLAUDE_PROJECT_DIR" -s read-only -m "$CODEX_MODEL" -c model_reasoning_effort=medium --output-schema "$SD/references/codex-review-output.schema.json" -o "$RUN_DIR/codex-review-result.json" - < "$RUN_DIR/codex-review-prompt.txt"`
-   This command inherits the calling shell environment; if authentication depends on `CODEX_HOME`,
-   run the audit through the same environment setup or wrapper used for Codex.
-   (`-C` immediately after `exec`; never the `review` subcommand — it silently ignores
-   `--output-schema`; never `--base` — it is mutually exclusive with a custom prompt),
-   with a timeout of `codexReview.timeoutMs` (default 300000ms);
-   `CODEX_TIMEOUT_MS="$(python3 "$SD/scripts/sealed_config.py" --config "$CFG" --expect-sha "$CONFIG_SHA" --get codexReview.timeoutMs --default 300000)"`.
-   A non-zero exit, timeout, or a result file that fails to parse/match the schema → if the
-   model came from config, WARN and stop with no retry; if the default model was
-   `gpt-5.6-luna` for `SEALED_RUN_CLASS=light`, retry exactly once with
-   `-m gpt-5.6-terra` and the same medium effort; a
-   standard default failure is not retried. If the final allowed attempt fails, bind
-   `CODEX_REVIEW_STATE=execution-failed` and fold no findings — never a FAIL basis by itself;
-   Otherwise parse `findings[]` and map `critical`→`CRITICAL`, `high`→`HIGH`,
-   `medium`→`MEDIUM`, `low`→`LOW`; `CRITICAL`/`HIGH` become blocking only after the
-   claim-adjudication step below confirms them, while `MEDIUM`/`LOW` remain non-blocking. Each has
-   `source:"codex-review"`, `file:"<finding.file>"`, and `title` formatted as `"<finding.title> (<finding.file>)"`;
-   bind `CODEX_REVIEW_STATE=completed` and fold these into the Phase-4 findings collection
-   exactly like `/security-review` findings.
+   In a **separate** Bash call, run
+   `python3 "$SD/scripts/codex-review-exec.py" --run-dir "$RUN_DIR" --repo-root "$CLAUDE_PROJECT_DIR" --config "$CFG" --expect-config-sha "$CONFIG_SHA" --evidence "$EVIDENCE"`.
+   On exit 0, its complete stdout JSON MUST replace `EVIDENCE` verbatim. On a non-zero exit, do
+   not touch `EVIDENCE`; release the run and stop. This command inherits the calling shell environment. The helper
+   selects the sealed binary/model/timeout, performs the allowed retry, validates the result, and
+   seals the accepted bytes. Then run
+   `python3 -c 'import json,re,sys; v=json.loads(sys.argv[1]).get("codexReviewResult"); s="completed" if isinstance(v,str) and re.fullmatch(r"sha256:[0-9a-f]{64}",v) else "execution-failed" if v=="failed" else None; sys.exit(2) if s is None else print(s)' "$EVIDENCE"`
+   and capture its stdout provisionally. Check the exit code before binding: only on exit 0 bind
+   the complete stdout to `CODEX_REVIEW_STATE`. On a non-zero exit (including
+   `codexReviewResult="none"`), do not bind `CODEX_REVIEW_STATE`; release the run and stop. Do not
+   continue the `action=run` branch. `execution-failed` remains non-blocking unless
+   the sealed config requires codex review.
 
    Phase-4 full review samples the defect pool and does not guarantee that fixing N findings and re-running will pass. Carry-forward is data-only (`file` plus `severity`) and never changes the verdict by itself.
 
 **Record Phase-4 evidence for the gate.** When `SEALED_PHASE4_REQUIRED` is true, collect every
 delegated-layer and review finding as
-`{"findings":[{"severity":"...","source":"...","title":"...","file":"... for codex-review"}],"codexReview":{"state":"$CODEX_REVIEW_STATE","promptVariant":"$PROMPT_VARIANT_OR_NULL","carryForwardSha":"$CARRY_FORWARD_SHA"}}`.
+`{"findings":[{"severity":"...","source":"non-codex source","title":"...","file":"..."}],"codexReview":{"state":"$CODEX_REVIEW_STATE","promptVariant":"$PROMPT_VARIANT_OR_NULL","carryForwardSha":"$CARRY_FORWARD_SHA"}}`.
 Do not include `required` in evidence; the gate reads it from the sealed config. Use each finding's own
 severity verbatim (`FAIL`/`HIGH`/`CRITICAL` = blocking; `WARN`/`MEDIUM`/`LOW`/`INFO` = non-blocking);
-map review high→`HIGH`, medium→`MEDIUM`. Send the object, even with zero findings, to
+map review high→`HIGH`, medium→`MEDIUM`. Do not supply any `source:"codex-review"` finding; the
+writer derives and appends those findings from the sealed result. Send the object, even with zero findings, to
 `python3 "$SD/scripts/write-evidence.py" --run-dir "$RUN_DIR" --name phase4 --stdin --evidence "$EVIDENCE"`
 and replace `EVIDENCE` with stdout. Immediately after the successful Phase-4 evidence write and
 `EVIDENCE` replacement, record the review state:

@@ -174,7 +174,7 @@ class TestRecoveryDrill(unittest.TestCase):
         fx.write_evidence("phase4", {
             "findings": [],
             "codexReview": {
-                "state": "completed", "promptVariant": "diff",
+                "state": "not-active", "promptVariant": None,
                 "carryForwardSha": "none",
             },
         })

@@ -66,8 +66,6 @@ GETTER_REGISTRY = (
     ("semanticSearch.minScore", "SEMANTIC_MIN_SCORE", "0.4", False),
     ("boundaryCommand", "BOUNDARY_COMMAND", "null", True),
     ("reviewCommands", "REVIEW_COMMANDS_JSON", "{}", False),
-    ("codexReview.model", "CODEX_MODEL_CONFIG", "null", True),
-    ("codexReview.timeoutMs", "CODEX_TIMEOUT_MS", "300000", False),
     ("reportPath", "REPORT_PATH_CONFIG", "null", True),
     ("docAuditCommands", "DOC_AUDIT_COMMANDS_P4_JSON", "null", False),
 )
@@ -131,6 +129,7 @@ class TestV016Contracts(unittest.TestCase):
                           if mode in {"required", "conditional", "optional"}}
         expected_flags.discard("check-docs.py")
         expected_flags.add("import-audit-scope.py")
+        expected_flags.add("codex-review-exec.py")
         self.assertEqual(flag_files, expected_flags)
 
         call_lines = [line for line in skill.splitlines()
@@ -138,7 +137,7 @@ class TestV016Contracts(unittest.TestCase):
                           or '--expect-config-sha "$PRECHECK_CONFIG_SHA"' in line)]
         cfg_lines = [line for line in skill.splitlines() if '"$CFG"' in line]
         exemptions = [line for line in cfg_lines if "CONFIG_SHA" not in line]
-        self.assertEqual(len(call_lines), 22)
+        self.assertEqual(len(call_lines), 23)
         self.assertEqual(len(exemptions), 3)
         self.assertIn("ANCHOR_PATH=", exemptions[0])
         self.assertTrue(any("import-audit-scope.py" in line and "--check" in line
@@ -190,8 +189,8 @@ class TestV016Contracts(unittest.TestCase):
         self.assertEqual(observed, OBSERVERS)
         counts = (len(call_lines), len(exemptions), len(GETTER_REGISTRY),
                   len(CONSUMER_REGISTRY), len(observed))
-        self.assertEqual(counts, (22, 3, 13, 21, 19))
-        print("call sites 22／exempt 3／getters 13／scripts 21／observers 19")
+        self.assertEqual(counts, (23, 3, 11, 21, 19))
+        print("call sites 23／exempt 3／getters 11／scripts 21／observers 19")
 
     def _base_args(self, fx, impact_path):
         good = file_sha(fx.config_path)

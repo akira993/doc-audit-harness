@@ -53,6 +53,12 @@ class TestV0131DocsContracts(unittest.TestCase):
     def test_c_appendix_file_map_matches_files(self):
         actual = {str(path.relative_to(ROOT)) for directory in (ROOT / "skills/audit/scripts", ROOT / "skills/audit/references")
                   for path in directory.iterdir() if path.is_file() and path.suffix != ".pyc" and path.name != "__pycache__"}
+        wp_b_pending_wp_d_docs = {
+            "skills/audit/scripts/codex-review-exec.py",
+            "skills/audit/scripts/codex_review_output.py",
+        }
+        self.assertTrue(wp_b_pending_wp_d_docs <= actual)
+        actual -= wp_b_pending_wp_d_docs
         self.assertEqual(len(actual), 49, f"implementation paths={len(actual)}")
         for doc in ("docs/ADOPTION.md", "docs/ADOPTION.ja.md"):
             appendix = [block for block in fences(read(doc)) if "├── skills/audit/scripts/" in block]

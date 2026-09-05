@@ -970,6 +970,7 @@ class TestAttacks(GateBase):
                   "codexReview": {"state": "completed", "promptVariant": "diff",
                                   "carryForwardSha": "none"}}
         self.assertEqual(fx.complete(phase4=phase4).returncode, 0)
+        fx.seal_phase4(phase4)
         self.assertEqual(fx.write_template().returncode, 0)
         bad = (fx.report_template() + "duplicate: {{GATE_VERDICT}}\n").encode("utf-8")
         TestGateWritesReport.replace_template_artifacts(fx, bad)

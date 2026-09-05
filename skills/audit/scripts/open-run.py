@@ -381,7 +381,8 @@ def main():
         os.close(fd)
     result = {"runid": runid, "runDir": run_dir, "anchor": anchor_sha,
               "config": config_sha, "lockIno": inode,
-              "preflight": "none", "phase4": "none", "engineVersion": engine_version}
+              "preflight": "none", "phase4": "none", "codexReviewResult": "none",
+              "engineVersion": engine_version}
     if prior_status is not None:
         result["previousReportStatus"] = prior_status
     return emit(result)

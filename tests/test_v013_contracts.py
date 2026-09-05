@@ -80,8 +80,10 @@ class TestV013Contracts(unittest.TestCase):
         self.assertIn('--available "$CODEX_REVIEW_AVAILABLE" '
                       '--available-reason "$CODEX_REVIEW_REASON"', lines[plan])
         codex_exec = next(i for i in range(phase4, phase5)
-                          if '"$CODEX_REVIEW_BIN" exec ' in lines[i])
+                          if "codex-review-exec.py" in lines[i])
         self.assertLess(plan, codex_exec)
+        self.assertFalse(any('"$CODEX_REVIEW_BIN" exec ' in lines[i]
+                             for i in range(phase4, phase5)))
 
         evidence = "".join(lines[phase4:phase5])
         self.assertIn('"codexReview":{"state":"$CODEX_REVIEW_STATE",'
@@ -156,9 +158,13 @@ class TestV013Contracts(unittest.TestCase):
         phase4_model_lines = [lines[i] for i in range(phase4, phase5)
                               if "gpt-5.6-" in lines[i]
                               and "RUN_CLASS" in lines[i]]
-        self.assertEqual(len(phase4_model_lines), 2)
-        self.assertTrue(all("SEALED_RUN_CLASS" in line
-                            for line in phase4_model_lines))
+        self.assertEqual(phase4_model_lines, [])
+        with open(os.path.join(ROOT, "skills", "audit", "scripts",
+                               "codex-review-exec.py"), encoding="utf-8") as handle:
+            phase4_exec = handle.read()
+        self.assertIn('run_class = manifest.get("runClass")', phase4_exec)
+        self.assertIn('"light": "gpt-5.6-luna"', phase4_exec)
+        self.assertIn('"standard": "gpt-5.6-terra"', phase4_exec)
 
         run_class_status = next(lines[i] for i in range(phase5, len(lines))
                                 if lines[i].startswith("`✓ run class:"))
