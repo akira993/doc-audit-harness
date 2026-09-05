@@ -53,7 +53,7 @@ class TestV0131DocsContracts(unittest.TestCase):
     def test_c_appendix_file_map_matches_files(self):
         actual = {str(path.relative_to(ROOT)) for directory in (ROOT / "skills/audit/scripts", ROOT / "skills/audit/references")
                   for path in directory.iterdir() if path.is_file() and path.suffix != ".pyc" and path.name != "__pycache__"}
-        self.assertEqual(len(actual), 49, f"implementation paths={len(actual)}")
+        self.assertEqual(len(actual), 52, f"implementation paths={len(actual)}")
         for doc in ("docs/ADOPTION.md", "docs/ADOPTION.ja.md"):
             appendix = [block for block in fences(read(doc)) if "├── skills/audit/scripts/" in block]
             self.assertEqual(len(appendix), 1, f"{doc}: appendix fences={len(appendix)}")
@@ -114,7 +114,7 @@ class TestV0131DocsContracts(unittest.TestCase):
         en_tree = [line for block in fences(en) for line in block.splitlines() if "├" in line or "└" in line]
         ja_tree = [line for block in fences(ja) for line in block.splitlines() if "├" in line or "└" in line]
         self.assertEqual(en_tree, ja_tree, f"tree lines={len(en_tree)}/{len(ja_tree)}")
-        self.assertEqual(len(en_tree), 59, f"tree lines={len(en_tree)}")
+        self.assertEqual(len(en_tree), 62, f"tree lines={len(en_tree)}")
 
     def test_i_severity_documentation_matches_python(self):
         tree = ast.parse(read("skills/audit/scripts/decide-verdict.py"))

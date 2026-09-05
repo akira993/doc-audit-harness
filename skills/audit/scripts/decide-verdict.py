@@ -2,6 +2,7 @@
 """Deterministic sealed-run gate and sole history/lastRun/anchor writer."""
 
 import argparse
+from collections import Counter
 import datetime
 import fcntl
 import hashlib
@@ -21,14 +22,17 @@ from docaudit_paths import normalize_finding_path, validate_repo_path
 from sealed_config import SealedConfigMismatch, load_sealed_config
 from claim_record import (CLAIM_FILENAME_RE, ClaimRecordError, extract_claim_targets,
                           load_valid_claim_record)
+from codex_review_output import derive_findings, validate_result
 from report_tokens import (BIDI_CONTROLS, OPTIONAL_TOKENS, TOKEN_COUNTS, TOKEN_RE,
                            TokenCountError, validate_template_body)
+from refused_phase4 import load_usable_record
 
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUIRED_EXPECT = {"runid", "runDir", "anchor", "config", "lockIno", "preflight",
                    "dispatch", "cached", "history", "historyStatus", "manifest",
-                   "digest", "returns", "attempt", "phase4", "engineVersion"}
+                   "digest", "returns", "attempt", "phase4", "codexReviewResult",
+                   "refusedPhase4", "engineVersion"}
 VALID_VERDICTS = {"PASS", "WARN", "FAIL"}
 VALID_PROVENANCE = {"mapped", "heuristic", "both", "full", "self", "graphify", "semantic",
                     "regression"}
@@ -48,6 +52,7 @@ MAX_RECEIPT_BYTES = 64 * 1024
 REPORT_WARNING_CODES = frozenset({
     "reportWriteError", "reportTemplateMissing", "reportTemplateInvalid",
     "reportDurabilityUnknown", "reportStatusUpdateFailed", "lockReleaseFailed",
+    "refusedPhase4WriteFailed", "refusedPhase4ClearFailed",
 })
 REVIEW_COMMANDS_CODE_REMOVED = "reviewCommandsCodeRemoved"
 REVIEW_COMMANDS_CODE_REMOVED_WARNING = (
@@ -539,7 +544,8 @@ def validate_evidence(value):
     if value["historyStatus"] not in {"absent", "ok", "corrupt"}:
         raise Refused("EVIDENCE historyStatus is invalid")
     sha_fields = {"config", "dispatch", "manifest", "digest", "returns"}
-    optional_sha_fields = {"anchor", "preflight", "cached", "history", "phase4"}
+    optional_sha_fields = {"anchor", "preflight", "cached", "history", "phase4",
+                           "refusedPhase4"}
     sha_re = re.compile(r"^sha256:[0-9a-f]{64}$")
     for key in sha_fields:
         if not isinstance(value[key], str) or not sha_re.fullmatch(value[key]):
@@ -547,6 +553,11 @@ def validate_evidence(value):
     for key in optional_sha_fields:
         if not isinstance(value[key], str) or (value[key] != "none" and not sha_re.fullmatch(value[key])):
             raise Refused(f"EVIDENCE {key} has invalid type")
+    codex_result = value["codexReviewResult"]
+    if (not isinstance(codex_result, str)
+            or (codex_result not in {"none", "failed"}
+                and not sha_re.fullmatch(codex_result))):
+        raise Refused("EVIDENCE codexReviewResult has invalid type")
 
 
 def validate_taint_evidence(value):
@@ -598,17 +609,17 @@ def validate_report_rule(manifest, repo, runid):
     return rule
 
 
-def read_regular_bounded(path, label, maximum, missing_error):
+def read_regular_bounded(path, label, maximum, missing_error, invalid_error=TemplateInvalid):
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
     except FileNotFoundError as exc:
         raise missing_error(f"{label} is missing") from exc
     except OSError as exc:
-        raise TemplateInvalid(f"{label} cannot be safely opened: {exc}") from exc
+        raise invalid_error(f"{label} cannot be safely opened: {exc}") from exc
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode):
-            raise TemplateInvalid(f"{label} is not a regular file")
+            raise invalid_error(f"{label} is not a regular file")
         chunks = []
         remaining = maximum + 1
         while remaining:
@@ -619,10 +630,51 @@ def read_regular_bounded(path, label, maximum, missing_error):
             remaining -= len(chunk)
         raw = b"".join(chunks)
         if len(raw) > maximum:
-            raise TemplateInvalid(f"{label} exceeds its size limit")
+            raise invalid_error(f"{label} exceeds its size limit")
         return raw
     finally:
         os.close(fd)
+
+
+def validate_codex_review_result(run_dir, phase4, state, seal):
+    is_sha = isinstance(seal, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", seal)
+    if ((state == "completed" and not is_sha)
+            or (state != "completed" and is_sha)
+            or (state == "execution-failed" and seal != "failed")
+            or (state != "execution-failed" and seal == "failed")
+            or (state not in {"completed", "execution-failed"} and seal != "none")
+            or (state in {"completed", "execution-failed"} and seal == "none")):
+        raise Refused("codexReviewResult does not match codexReview.state")
+    codex_findings = [] if phase4 is None else [
+        item for item in phase4.get("findings", [])
+        if isinstance(item, dict) and item.get("source") == "codex-review"
+    ]
+    if state != "completed":
+        if codex_findings:
+            raise Refused("codex-review findings require state=completed")
+        return
+    raw = read_regular_bounded(
+        os.path.join(run_dir, "codex-review-result.json"), "codex-review result",
+        2 * 1024 * 1024, Refused, Refused)
+    if "sha256:" + hashlib.sha256(raw).hexdigest() != seal:
+        raise Refused("codexReviewResult sha mismatch")
+    try:
+        result = json.loads(raw.decode("utf-8"))
+        validate_result(result)
+        derived = derive_findings(result)
+    except (UnicodeError, json.JSONDecodeError, ValueError, TypeError) as exc:
+        raise Refused("codexReviewResult invalid") from exc
+    finding_tuple = lambda item: (
+        item.get("source"), item.get("file"), item.get("severity"), item.get("title"))
+    if any(not all(isinstance(value, str) for value in finding_tuple(item))
+           for item in codex_findings):
+        raise Refused("codexReviewFindingsMismatch: +0 -1")
+    expected = Counter(finding_tuple(item) for item in derived)
+    observed = Counter(finding_tuple(item) for item in codex_findings)
+    if expected != observed:
+        added = sum((expected - observed).values())
+        removed = sum((observed - expected).values())
+        raise Refused(f"codexReviewFindingsMismatch: +{added} -{removed}")
 
 
 def load_report_template(run_dir):
@@ -1080,6 +1132,7 @@ def main():
     lock_path = os.path.join(run_base, "lock")
     state_dir = os.path.join(repo, ".claude", "state")
     history_path = os.path.join(state_dir, "docaudit-history.json")
+    refused_phase4_path = os.path.join(state_dir, "docaudit-refused-phase4.json")
     last_run_path = os.path.join(state_dir, "docaudit-last-run.json")
     config_path = os.path.abspath(args.config)
     anchor_absolute = (args.anchor_path if os.path.isabs(args.anchor_path)
@@ -1130,6 +1183,14 @@ def main():
     warnings = []
     claim_target_count = None
     claim_items = []
+    barrier_passed = False
+    phase4_eligible = False
+    unadjudicated_count = 0
+    current_phase4 = None
+    truncated = False
+    history_quarantined = False
+    claims_refused = None
+    refused_record = None
     try:
         expected = json.loads(args.expect_json)
         validate_evidence(expected)
@@ -1245,6 +1306,17 @@ def main():
             else:
                 raise Refused("historyStatus is invalid")
 
+        refused_record, refused_reason = load_usable_record(refused_phase4_path, expected)
+        if refused_reason is not None:
+            add_warning(warnings, "refusedPhase4Ignored: " + refused_reason)
+        elif refused_record is not None:
+            counts_value = refused_record["claimCounts"]
+            add_warning(
+                warnings,
+                f"previousRunRefused: {refused_record['runid']} "
+                "(codexClaimsUnadjudicated "
+                f"{counts_value['unadjudicated']} of {counts_value['targets']})")
+
         if expected["anchor"] == "none":
             if os.path.exists(anchor_path):
                 anchor_taint = True
@@ -1293,6 +1365,8 @@ def main():
         codex_review_state = (codex_review_evidence.get("state")
                               if codex_review_evidence is not None else None)
         codex_review_status["state"] = codex_review_state
+        validate_codex_review_result(
+            run_dir, phase4, codex_review_state, expected["codexReviewResult"])
         if codex_review_required and codex_review_state != "completed":
             raise Refused(f"codex-review required but state={codex_review_state or 'missing'}")
 
@@ -1302,7 +1376,7 @@ def main():
             claim_items, claim_target_count, unadjudicated_count = adjudicate_codex_claims(
                 repo, run_dir, args.runid, phase4, codex_review_state, warnings)
             if unadjudicated_count > 0:
-                raise Refused(
+                claims_refused = (
                     "codexClaimsUnadjudicated: "
                     f"{unadjudicated_count} of {claim_target_count} codex-review "
                     "CRITICAL/HIGH findings have no valid claim record")
@@ -1435,12 +1509,29 @@ def main():
             config_taint = True
             raise Refused("config changed before state write")
         verify_audit_scope_at_barrier(repo, config, manifest.get("auditScopeSha"))
+        barrier_passed = True
         if history_taint and os.path.exists(history_path):
             quarantine_history(history_path, args.runid)
             history_entries = []
             phase4_runs = []
+            history_quarantined = True
             history_taint = False
         now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if phase4_eligible:
+            truncated = len(phase4_findings) > 500
+            current_phase4 = {
+                "runid": args.runid,
+                "ts": now,
+                "worktreeDigest": manifest["worktreeDigest"],
+                "contractVersion": manifest["contractVersion"],
+                "configSha": expected["config"],
+                "carryForwardSha": codex_review_evidence["carryForwardSha"],
+                "unresolvedFileCount": phase4_unresolved,
+                "truncated": truncated,
+                "findings": phase4_findings[:500],
+            }
+        if claims_refused is not None:
+            raise Refused(claims_refused)
         existing_keys = {(item["runid"], item["path"]) for item in history_entries}
         additions = []
         for path in impacted:
@@ -1464,24 +1555,14 @@ def main():
         phase4_flips = 0
         next_phase4_runs = list(phase4_runs)
         if phase4_eligible:
-            truncated = len(phase4_findings) > 500
-            current_phase4 = {
-                "runid": args.runid,
-                "ts": now,
-                "worktreeDigest": manifest["worktreeDigest"],
-                "contractVersion": manifest["contractVersion"],
-                "configSha": expected["config"],
-                "carryForwardSha": codex_review_evidence["carryForwardSha"],
-                "unresolvedFileCount": phase4_unresolved,
-                "truncated": truncated,
-                "findings": phase4_findings[:500],
-            }
             if phase4_unresolved:
                 add_warning(warnings, f"Phase-4 unresolved finding paths: {phase4_unresolved}")
             if truncated:
                 add_warning(warnings, "Phase-4 findings were truncated; flip comparison skipped")
             else:
-                phase4_flips = phase4_flip_count(phase4_runs, current_phase4)
+                flip_records = (phase4_runs + [refused_record]
+                                if refused_record is not None else phase4_runs)
+                phase4_flips = phase4_flip_count(flip_records, current_phase4)
             if phase4_flips:
                 add_warning(
                     warnings,
@@ -1519,6 +1600,12 @@ def main():
             claim_target_count=claim_target_count)
         atomic(history_path, {"entries": trim_history(history_entries + additions),
                               "phase4Runs": next_phase4_runs})
+        try:
+            os.unlink(refused_phase4_path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            add_warning(warnings, "refusedPhase4ClearFailed")
         report_status = "pending" if report_rule is not None else "not-requested"
         last_state = {"runid": args.runid, "verdict": verdict, "ts": now,
                       "reportStatus": report_status}
@@ -1606,6 +1693,25 @@ def main():
                         last_state, warnings, "REFUSED", reason=reason,
                         anchor_written=False, claim_items=claim_items,
                         claim_target_count=claim_target_count)
+                if (owned and identity_ok and barrier_passed and not config_taint
+                        and not quarantine_failed and claims_refused is not None
+                        and reason == claims_refused and phase4_eligible
+                        and current_phase4 is not None):
+                    refused_value = dict(current_phase4)
+                    refused_value.update({
+                        "gateVerdict": "REFUSED",
+                        "reason": "codexClaimsUnadjudicated",
+                        "claimCounts": {
+                            "targets": claim_target_count,
+                            "unadjudicated": unadjudicated_count,
+                        },
+                        "historySha": ("none" if history_quarantined
+                                       else expected["history"]),
+                    })
+                    try:
+                        atomic(refused_phase4_path, refused_value)
+                    except OSError:
+                        add_warning(warnings, "refusedPhase4WriteFailed")
             if lock_fd is not None and not quarantine_failed:
                 try:
                     release_lock(lock_path, lock_inode)

@@ -191,7 +191,7 @@ class TestV016Phase4Contracts(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
         self._write_nonblocking_claims(fx, {
             "findings": [{"source": "codex-review", "file": "docs/a.md",
-                          "severity": "HIGH", "title": "sample"}]})
+                          "severity": "HIGH", "title": "sample (docs/a.md)"}]})
 
         module = load_decide_verdict()
         argv = [

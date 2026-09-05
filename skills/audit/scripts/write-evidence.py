@@ -5,11 +5,17 @@ import argparse
 import hashlib
 import json
 import os
+import re
+import stat
 import sys
 import tempfile
 
+from codex_review_output import derive_findings, validate_result
+
 
 VALID_VERDICTS = {"PASS", "WARN", "FAIL"}
+MAX_CODEX_RESULT_BYTES = 2 * 1024 * 1024
+SHA_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def validate_returns(value):
@@ -51,6 +57,63 @@ def validate(name, value):
             raise ValueError("phase4.findings must be an array")
 
 
+def read_regular_bounded(path, maximum):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("codex-review result is not a regular file")
+        chunks = []
+        remaining = maximum + 1
+        while remaining:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        raw = b"".join(chunks)
+        if len(raw) > maximum:
+            raise ValueError("codex-review result exceeds 2 MiB")
+        return raw
+    finally:
+        os.close(fd)
+
+
+def merge_codex_findings(run_dir, evidence, value):
+    findings = value.setdefault("findings", [])
+    if any(isinstance(item, dict) and item.get("source") == "codex-review"
+           for item in findings):
+        raise ValueError("codex-review findings are derived, not supplied")
+    seal = evidence.get("codexReviewResult")
+    if not isinstance(seal, str) or (seal not in {"none", "failed"}
+                                     and not SHA_RE.fullmatch(seal)):
+        raise ValueError("codexReviewResult missing or invalid")
+    codex = value.get("codexReview")
+    state = codex.get("state") if isinstance(codex, dict) else None
+    if SHA_RE.fullmatch(seal):
+        if state != "completed":
+            raise ValueError("codexReviewResult does not match codexReview.state")
+        try:
+            raw = read_regular_bounded(
+                os.path.join(run_dir, "codex-review-result.json"),
+                MAX_CODEX_RESULT_BYTES,
+            )
+        except OSError as exc:
+            raise ValueError(f"codex-review result cannot be read: {exc}") from exc
+        if "sha256:" + hashlib.sha256(raw).hexdigest() != seal:
+            raise ValueError("codexReviewResult sha mismatch")
+        try:
+            result = json.loads(raw.decode("utf-8"))
+            validate_result(result)
+        except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+            raise ValueError("codexReviewResult invalid") from exc
+        findings.extend(derive_findings(result))
+    elif seal == "failed":
+        if state != "execution-failed":
+            raise ValueError("codexReviewResult does not match codexReview.state")
+    elif state in {"completed", "execution-failed"}:
+        raise ValueError("codexReviewResult does not match codexReview.state")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-dir", required=True)
@@ -68,6 +131,8 @@ def main():
             raise ValueError("EVIDENCE runDir mismatch")
         value = json.load(sys.stdin)
         validate(args.name, value)
+        if args.name == "phase4":
+            merge_codex_findings(args.run_dir, evidence, value)
         raw = (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
         os.makedirs(args.run_dir, exist_ok=True)
         fd, temporary = tempfile.mkstemp(prefix=f".{args.name}.", dir=args.run_dir)

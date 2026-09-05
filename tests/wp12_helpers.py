@@ -136,6 +136,41 @@ class RunFixture:
             self.evidence = json.loads(proc.stdout)
         return proc
 
+    def seal_phase4(self, raw_bytes):
+        if not isinstance(raw_bytes, bytes):
+            raw_bytes = (json.dumps(raw_bytes, ensure_ascii=False, sort_keys=True, indent=2)
+                         + "\n").encode("utf-8")
+        write(os.path.join(self.run_dir, "phase4.json"), raw_bytes)
+        self.evidence["phase4"] = "sha256:" + hashlib.sha256(raw_bytes).hexdigest()
+
+    def complete_codex(self, raw_result, non_codex_findings, state, extras=None):
+        codex = (dict(state) if isinstance(state, dict) else {
+            "state": state,
+            "promptVariant": None,
+            "carryForwardSha": "none",
+        })
+        seal_state = codex.get("state")
+        if seal_state == "completed":
+            if isinstance(raw_result, bytes):
+                raw = raw_result
+            else:
+                raw = (json.dumps(raw_result, ensure_ascii=False, sort_keys=True, indent=2)
+                       + "\n").encode("utf-8")
+            write(os.path.join(self.run_dir, "codex-review-result.json"), raw)
+            self.evidence["codexReviewResult"] = (
+                "sha256:" + hashlib.sha256(raw).hexdigest())
+        elif seal_state == "execution-failed":
+            self.evidence["codexReviewResult"] = "failed"
+        else:
+            self.evidence["codexReviewResult"] = "none"
+        payload = {
+            "findings": list(non_codex_findings),
+            "codexReview": codex,
+        }
+        if extras:
+            payload.update(extras)
+        return self.write_evidence("phase4", payload)
+
     def complete(self, verdicts=None, returns_override=None, phase4=None):
         if verdicts is None:
             verdicts = {path: "PASS" for path in self.docs}
@@ -159,7 +194,41 @@ class RunFixture:
                 "codexReview": {"state": "not-active", "promptVariant": None,
                                 "carryForwardSha": "none"},
             })
-            proc = self.write_evidence("phase4", phase4_value)
+            codex = phase4_value.get("codexReview")
+            state = codex.get("state") if isinstance(codex, dict) else None
+            if state in {"completed", "execution-failed"}:
+                codex_findings = [
+                    item for item in phase4_value.get("findings", [])
+                    if isinstance(item, dict) and item.get("source") == "codex-review"
+                ]
+                non_codex = [
+                    item for item in phase4_value.get("findings", [])
+                    if not (isinstance(item, dict) and item.get("source") == "codex-review")
+                ]
+                raw_findings = []
+                for item in codex_findings:
+                    file_name = item.get("file")
+                    title = item.get("title")
+                    suffix = f" ({file_name})"
+                    if isinstance(title, str) and title.endswith(suffix) and title != suffix:
+                        raw_title = title[:-len(suffix)]
+                    else:
+                        raw_title = title
+                        if (isinstance(title, str) and title.strip()
+                                and isinstance(file_name, str) and file_name):
+                            item["title"] = title + suffix
+                    severity = item.get("severity")
+                    raw_findings.append({
+                        "severity": severity.strip().lower() if isinstance(severity, str) else severity,
+                        "title": raw_title,
+                        "file": file_name,
+                    })
+                proc = self.complete_codex(
+                    {"findings": raw_findings}, non_codex, codex,
+                    {key: value for key, value in phase4_value.items()
+                     if key not in {"findings", "codexReview"}})
+            else:
+                proc = self.write_evidence("phase4", phase4_value)
             if proc.returncode:
                 return proc
         return proc

@@ -647,7 +647,8 @@ sibling: {{GATE_SIBLING_SCAN}}
         module = self.module()
         self.assertEqual(module.REPORT_WARNING_CODES, {
             "reportWriteError", "reportTemplateMissing", "reportTemplateInvalid",
-            "reportDurabilityUnknown", "reportStatusUpdateFailed", "lockReleaseFailed"})
+            "reportDurabilityUnknown", "reportStatusUpdateFailed", "lockReleaseFailed",
+            "refusedPhase4WriteFailed", "refusedPhase4ClearFailed"})
         self.assertEqual(module.TOKEN_COUNTS["{{GATE_REPORT_DATE}}"], 2)
         self.assertTrue(all(count == 1 for token, count in module.TOKEN_COUNTS.items()
                             if token != "{{GATE_REPORT_DATE}}"))
@@ -970,6 +971,7 @@ class TestAttacks(GateBase):
                   "codexReview": {"state": "completed", "promptVariant": "diff",
                                   "carryForwardSha": "none"}}
         self.assertEqual(fx.complete(phase4=phase4).returncode, 0)
+        fx.seal_phase4(phase4)
         self.assertEqual(fx.write_template().returncode, 0)
         bad = (fx.report_template() + "duplicate: {{GATE_VERDICT}}\n").encode("utf-8")
         TestGateWritesReport.replace_template_artifacts(fx, bad)

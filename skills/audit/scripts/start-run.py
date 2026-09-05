@@ -17,7 +17,9 @@ from sealed_config import SealedConfigMismatch, load_sealed_config
 
 RUNID_RE = re.compile(r"^\d{8}T\d{6}Z-[0-9a-f]{8}$")
 BUILTIN_EXCLUDES = [".claude/state/docaudit-run", ".claude/state/docaudit-history.json",
-                    ".claude/state/docaudit-last-run.json", ".claude/state/last-doc-audit.json",
+                    ".claude/state/docaudit-last-run.json",
+                    ".claude/state/docaudit-refused-phase4.json",
+                    ".claude/state/last-doc-audit.json",
                     ".claude/worktrees", ".mdq", ".codegraph", "graphify-out",
                     ".cocoindex_code"]
 VALID_PHASE3_BACKENDS = {"workflow", "codex"}

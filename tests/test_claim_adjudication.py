@@ -50,6 +50,10 @@ def phase(findings, state="completed"):
 
 
 def finding(title="Claim A", severity="HIGH", file="docs/a.md", source="codex-review"):
+    suffix = f" ({file})"
+    if (source == "codex-review" and isinstance(title, str) and title.strip()
+            and isinstance(file, str) and file and not title.endswith(suffix)):
+        title += suffix
     return {"source": source, "severity": severity, "title": title, "file": file}
 
 
@@ -427,13 +431,14 @@ class TestGateOutcomes(unittest.TestCase):
             "reportPath": "docs/logs/doc_audit_<YYYY-MM-DD>[_NN].md",
         })
         fx.open(); fx.plan_start_seal()
-        self.assertEqual(fx.complete(phase4=phase([finding(title=" ")])).returncode, 0)
+        invalid_phase4 = phase([finding(title=" ")])
+        self.assertEqual(fx.complete(phase4=invalid_phase4).returncode, 0)
+        fx.seal_phase4(invalid_phase4)
         self.assertEqual(fx.write_template().returncode, 0)
         proc = fx.gate()
         self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
         result = json.loads(proc.stdout)
-        self.assertEqual(result["reason"], "codexClaimTitleMissing")
-        self.assertIn("codexFindingTitleMissing", result["warnings"])
+        self.assertTrue(result["reason"].startswith("codexReviewFindingsMismatch"))
         self.assertIn("reportPath", result)
         self.assertFalse(os.path.exists(fx.anchor))
 
@@ -455,7 +460,7 @@ class TestGateOutcomes(unittest.TestCase):
         self.assertIn("reportPath", result)
 
     def test_claim_and_template_error_reason_priority(self):
-        cases = (([finding(title=" ")], "codexClaimTitleMissing"),
+        cases = (([finding(title=" ")], "codexReviewFindingsMismatch"),
                  ([finding()], "codexClaimsUnadjudicated"))
         for findings, expected_reason in cases:
             with self.subTest(reason=expected_reason):
@@ -465,9 +470,11 @@ class TestGateOutcomes(unittest.TestCase):
                 })
                 fx.open(); fx.plan_start_seal()
                 self.assertEqual(fx.complete(phase4=phase(findings)).returncode, 0)
+                if expected_reason == "codexReviewFindingsMismatch":
+                    fx.seal_phase4(phase(findings))
                 template = (fx.report_template() +
                             ("codexClaims: {{GATE_CODEX_CLAIMS}}\n"
-                             if expected_reason != "codexClaimTitleMissing" else ""))
+                             if expected_reason != "codexReviewFindingsMismatch" else ""))
                 self.assertEqual(fx.write_template(body=template).returncode, 0)
                 raw = (template + "duplicate: {{GATE_VERDICT}}\n").encode("utf-8")
                 write(os.path.join(fx.run_dir, "report-template.md"), raw)
@@ -636,7 +643,10 @@ class TestClaimReportEndToEnd(unittest.TestCase):
         self.assertEqual(rendered_payload["items"][0]["effectiveState"], "refuted")
 
     def test_truncated_claim_payload_is_identical_in_stdout_and_report(self):
-        findings = [finding("x" * 60000 + str(index)) for index in range(80)]
+        findings = [
+            finding(str(index), file="docs/" + "x" * 430 + f"{index:04d}.md")
+            for index in range(1400)
+        ]
         phase4 = phase(findings)
         fx = RunFixture(self, config_extra=self.REPORT_CONFIG)
         self.assertEqual(fx.open().returncode, 0)
@@ -644,7 +654,7 @@ class TestClaimReportEndToEnd(unittest.TestCase):
         self.assertEqual(fx.complete(phase4=phase4).returncode, 0)
         for target in claim_record.extract_claim_targets(phase4)[0]:
             record = {"runid": fx.runid, "findingId": target["findingId"],
-                      "state": "refuted", "rationale": "checked",
+                      "state": "refuted", "rationale": "r" * 2048,
                       "evidenceFile": "docs/a.md", "evidenceLine": 1}
             write(os.path.join(fx.run_dir, "claims", target["findingId"] + ".json"),
                   claim_record.encode_claim_record(record))
@@ -734,7 +744,7 @@ class TestPlannerWriterAndContract(ClaimWorkspace):
         first = claim_record.extract_claim_targets(phase([findings[0]]))[0][0]
         self.put_record(first, "refuted")
         partial = json.loads(self.run_planner(value).stdout)
-        self.assertEqual([item["title"] for item in partial], ["Claim B"])
+        self.assertEqual([item["title"] for item in partial], ["Claim B (docs/b.md)"])
 
         second = claim_record.extract_claim_targets(phase([findings[1]]))[0][0]
         self.put_record(second, "unverified")
@@ -781,7 +791,8 @@ class TestPlannerWriterAndContract(ClaimWorkspace):
             self.assertEqual(planner.main(), 0)
 
         pending = json.loads(stdout.getvalue())
-        self.assertEqual([item["title"] for item in pending], ["available claim"])
+        self.assertEqual([item["title"] for item in pending],
+                         ["available claim (docs/a.md)"])
         target = claim_record.extract_claim_targets(phase([missing]))[0][0]
         claims_dir = os.path.join(self.run_dir, "claims")
         record_path = os.path.join(claims_dir, target["findingId"] + ".json")
@@ -893,7 +904,7 @@ class TestPlannerWriterAndContract(ClaimWorkspace):
             if expected is None:
                 expected = titles
             self.assertEqual(titles, expected)
-        self.assertEqual(expected, ["first", "second"])
+        self.assertEqual(expected, ["first (docs/a.md)", "second (docs/b.md)"])
 
     def test_claim_payload_budget_omits_tail_below_four_mib(self):
         items = [{"findingId": f"{index:064x}", "title": "claim", "file": "docs/a.md",

@@ -38,6 +38,8 @@ class TestOpenRun(unittest.TestCase):
         evidence = json.loads(proc.stdout)
         self.assertEqual(evidence["preflight"], "none")
         self.assertEqual(evidence["phase4"], "none")
+        self.assertEqual(evidence["codexReviewResult"], "none")
+        self.assertEqual(evidence["refusedPhase4"], "none")
         self.assertEqual(evidence["engineVersion"], plugin_version())
 
     def test_normal_open_requires_matching_skill_version_before_lock(self):

@@ -217,7 +217,7 @@ rm -rf ~/.claude/skills/docaudit/.git ~/.claude/skills/docaudit/tests
 
 **確認:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.21.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.22.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # コンポーネント一覧 + token コスト
 ```
 既に起動中のセッションでは **`/reload-plugins`** を実行すると slash コマンドが今すぐ登録される
@@ -276,6 +276,8 @@ indexing と contextMode は従来どおり既定有効（トークン消費を�
 
 **v0.21.0 の挙動変更:** 通常の run open は手順書の版を `--skill-version` で渡し、一致した plugin 版を `engineVersion` として記録する。run 中にその版が変われば gate は REFUSED にする。レポートを設定している場合、gate は正常系の history・last-run・anchor を確定する前に最終 bytes を完全に描画して検証するため、不正な template では anchor を進めず REFUSED になる。codex-review の `critical` / `high` 所見で title が欠落すると `codexClaimTitleMissing`、有効な claim record が無い対象があると `codexClaimsUnadjudicated` で、`codexReview.required` の値に関係なく REFUSED になる。有効な `refuted`・`unverified`・`not-adjudicable` record は引き続き非 blocking である。history が正常または存在せず、run identity を所有し、`reportPath` が設定されている場合、この REFUSED 経路はレポートを描画し、anchor を変えず、lock を解放する。history が壊れている場合は従来の隔離経路が先に走り、隔離に失敗するとレポートは発行されず lock は保持される。REFUSED run の所見は history に入らず carry-forward されないが、anchor が進まないため、次の run で同じ変更集合が再 review される。裁定 Workflow を実行できない環境での唯一の回避策は `codexReview.enabled:false` とし、codex-review 自体を無効にすることである。`import-audit-scope.py --check --from-index` は作業ツリーから独立した 1 回の Git index snapshot を検査し、stage 0 の通常 blob のみを採用する。内容が一致しても記録された scope path だけが異なる場合は `path-mismatch` として exit 4 を返す。harness の事前確認は `--check-stamps` を使い、canonical 位置に唯一ある各 stamp と正規化本文を shipped template の SHA に照合する。本文が現版と同一の `--refresh` は、stamp を書き換えず `up-to-date` と報告する。既存の harness decision の `engineVersion` は template を 1 本以上書いた場合のみ更新し、初回 decision では導入時の engine 版を常に記録する。
 
+**v0.22.0 の挙動変更:** `codex-review-exec.py` が Codex を実行し、schema を検証し、`codex-review-result.json` を byte-for-byte で公開する。EVIDENCE はその SHA、`failed`、または `none` を封印し、`write-evidence.py` は封印済み result だけから Codex 所見を導出し、orchestrator は転記しない。gate は state と封印値の双方向一致、および result 由来所見と Phase-4 所見の多重集合完全一致を要求し、違反を `codexReviewFindingsMismatch` などの REFUSED にする。脅威モデルの前提は honest-but-fallible であり、採用 result の部分欠落、severity/title/file の転記ずれ、散文に依存する schema 判定、実行していないのに `completed` とすること、再試行時の古い出力、EVIDENCE 反映忘れを閉じるが、script を経由せず result/phase4.json と SHA を自作すること、Codex 実行後に state を非 completed にして層ごと落とすこと、adjudicator を装って write-claim.py を実行することは閉じない（nonce は orchestrator 経由でしか渡せず区別不能）。`codexClaimsUnadjudicated` は barrier 後に判定されるため複合不正では別の理由が先に出ることがあり、corrupt history では退避が先に起き、sibling scan も走る。side file `.claude/state/docaudit-refused-phase4.json` は full・eligible の claims REFUSED run が見た Phase-4 所見（file＋severity）、裁定件数、`historySha` を記録し、次の run は `refusedPhase4` として封印する。`historySha == EVIDENCE.history` かつ意味検証を通る場合だけ flip 比較相手と full prompt の carry-forward 候補にし `previousRunRefused` を警告し、異常は `refusedPhase4Ignored` の警告だけで REFUSED にはしない。history 書込み時に削除し digest から除外するが、削除失敗は history を書いた run のたびに `refusedPhase4ClearFailed` で可視になる既知の限界である。`import-audit-scope.py --check --from-index` の CR/LF `errors[]` 文言は通常経路と同じになり、終了値と JSON 構造は変わらない。
+
 Impact の優先順位は `mapped`/`full`/`self` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic`。
 
 **v0.15.1 の挙動変更:** symbolGraph probe は `CODEGRAPH_DIR` を尊重し、`<dir>/codegraph.db` の状態から `init` または `sync` を選ぶため、database を失った索引ディレクトリだけが残っても次回 run で自己回復し、symlink または通常ファイル以外の索引ディレクトリ／database は触らず `index-failed` として、従来 `sync` まで進んだ有効な symlink 構成も codegraph が link 先を上書きし得るため本版から意図的に非対応とし、なお `CODEGRAPH_DIR` で改名した索引ディレクトリは `tree-digest.py` の `.codegraph` 固定の既知 root に含まれず、`digestExclude` でも除外できない（既存の制限であり、本版では未対応）。
@@ -310,7 +312,7 @@ cd ~/code/my-project
 コミットする: `.claude/commands/check-docs.md`、`.claude/skills/doc-lint/SKILL.md`、
 `scripts/check-docs.py`。
 
-変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、0.15.0、0.15.1、0.16.0、0.17.0、0.18.0、0.19.0、または 0.20.0 テンプレートは、`/docaudit:init --harness --refresh` で 0.21.0 へ直接更新できる。利用者が変更したテンプレートは
+変更されていない stamp 付きの 0.10.0、0.10.1、0.11.0、0.12.0、0.13.0、0.13.1、0.13.2、0.14.0、0.15.0、0.15.1、0.16.0、0.17.0、0.18.0、0.19.0、0.20.0、または 0.21.0 テンプレートは、`/docaudit:init --harness --refresh` で 0.22.0 へ直接更新できる。利用者が変更したテンプレートは
 そのまま残る。
 
 > inventory は **実際に**ドキュメントが存在するディレクトリから `docGlobs` を導出するので、
@@ -466,6 +468,7 @@ gate の sibling scan は横断的な補完層である。codex review のプロ
   `seal-run.py` が HEAD、変更集合全体の hash、worktree digest、解決済み Phase-3 backend を固定する。`decide-verdict.py` は
   evidence を各 1 回だけ読み、verifier の返却と割当パスを突き合わせ、history、last-run、anchor を
   書く唯一の処理になる。旧式の flat な `docaudit-run/` ファイルは無視する。
+  claims-refused の Phase-4 side file は `.claude/state/docaudit-refused-phase4.json` に別置きされる。
 - **決定論的 cache:** `plan-dispatch.py` は、同じ文書内容・`changeSetSha`・契約版で、設定数
   （既定 2）の連続 PASS があり、backend も一致する文書だけ Phase 3 を省略する。backend 欄の無い
   旧 history は `workflow` とみなす。history が無い／壊れている場合は cold start。`--full` は
@@ -647,6 +650,8 @@ doc-audit-harness/
 ├── skills/audit/scripts/codex-dispatch.py
 ├── skills/audit/scripts/codex-probe.sh
 ├── skills/audit/scripts/codex-review-plan.py
+├── skills/audit/scripts/codex-review-exec.py
+├── skills/audit/scripts/codex_review_output.py
 ├── skills/audit/scripts/claim_record.py
 ├── skills/audit/scripts/compute-baseline.sh
 ├── skills/audit/scripts/decide-verdict.py
@@ -668,6 +673,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/read-manifest.py
 ├── skills/audit/scripts/report_tokens.py
 ├── skills/audit/scripts/resolve-impact.py
+├── skills/audit/scripts/refused_phase4.py
 ├── skills/audit/scripts/scaffold.py
 ├── skills/audit/scripts/seal-run.py
 ├── skills/audit/scripts/sealed_config.py

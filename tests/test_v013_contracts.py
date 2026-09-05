@@ -80,8 +80,10 @@ class TestV013Contracts(unittest.TestCase):
         self.assertIn('--available "$CODEX_REVIEW_AVAILABLE" '
                       '--available-reason "$CODEX_REVIEW_REASON"', lines[plan])
         codex_exec = next(i for i in range(phase4, phase5)
-                          if '"$CODEX_REVIEW_BIN" exec ' in lines[i])
+                          if "codex-review-exec.py" in lines[i])
         self.assertLess(plan, codex_exec)
+        self.assertFalse(any('"$CODEX_REVIEW_BIN" exec ' in lines[i]
+                             for i in range(phase4, phase5)))
 
         evidence = "".join(lines[phase4:phase5])
         self.assertIn('"codexReview":{"state":"$CODEX_REVIEW_STATE",'
@@ -156,9 +158,13 @@ class TestV013Contracts(unittest.TestCase):
         phase4_model_lines = [lines[i] for i in range(phase4, phase5)
                               if "gpt-5.6-" in lines[i]
                               and "RUN_CLASS" in lines[i]]
-        self.assertEqual(len(phase4_model_lines), 2)
-        self.assertTrue(all("SEALED_RUN_CLASS" in line
-                            for line in phase4_model_lines))
+        self.assertEqual(phase4_model_lines, [])
+        with open(os.path.join(ROOT, "skills", "audit", "scripts",
+                               "codex-review-exec.py"), encoding="utf-8") as handle:
+            phase4_exec = handle.read()
+        self.assertIn('run_class = manifest.get("runClass")', phase4_exec)
+        self.assertIn('"light": "gpt-5.6-luna"', phase4_exec)
+        self.assertIn('"standard": "gpt-5.6-terra"', phase4_exec)
 
         run_class_status = next(lines[i] for i in range(phase5, len(lines))
                                 if lines[i].startswith("`✓ run class:"))
@@ -213,7 +219,7 @@ class TestV013Contracts(unittest.TestCase):
         self.assertEqual(
             {plugin_version, latest_sha_version, adoption_version,
              adoption_ja_version, stamp_version, skill_version},
-            {"0.21.0"})
+            {"0.22.0"})
 
     def test_j_only_allowlisted_0_12_0_references_remain(self):
         old_version = "0." "12.0"
@@ -222,12 +228,12 @@ class TestV013Contracts(unittest.TestCase):
             "docs/ADOPTION.md": [
                 rf"Separately, v{old} can opt Phase 3 into .*",
                 rf"\*\*v{old} behavior changes:\*\*.*",
-                rf"Existing unmodified stamped 0\.10\.0, 0\.10\.1, 0\.11\.0, 0\.12\.0, 0\.13\.0, 0\.13\.1, 0\.13\.2, 0\.14\.0, 0\.15\.0, 0\.15\.1, 0\.16\.0, 0\.17\.0, 0\.18\.0, 0\.19\.0, or 0\.20\.0 templates can be updated directly to 0\.21\.0 with",
+                rf"Existing unmodified stamped 0\.10\.0, 0\.10\.1, 0\.11\.0, 0\.12\.0, 0\.13\.0, 0\.13\.1, 0\.13\.2, 0\.14\.0, 0\.15\.0, 0\.15\.1, 0\.16\.0, 0\.17\.0, 0\.18\.0, 0\.19\.0, 0\.20\.0, or 0\.21\.0 templates can be updated directly to 0\.22\.0 with",
             ],
             "docs/ADOPTION.ja.md": [
                 rf"これとは別に、v{old} では Phase 3 を .*",
                 rf"\*\*v{old} の挙動変更:\*\*.*",
-                rf"変更されていない stamp 付きの 0\.10\.0、0\.10\.1、0\.11\.0、0\.12\.0、0\.13\.0、0\.13\.1、0\.13\.2、0\.14\.0、0\.15\.0、0\.15\.1、0\.16\.0、0\.17\.0、0\.18\.0、0\.19\.0、または 0\.20\.0 テンプレートは、`/docaudit:init --harness --refresh` で 0\.21\.0 へ直接更新できる。利用者が変更したテンプレートは",
+                rf"変更されていない stamp 付きの 0\.10\.0、0\.10\.1、0\.11\.0、0\.12\.0、0\.13\.0、0\.13\.1、0\.13\.2、0\.14\.0、0\.15\.0、0\.15\.1、0\.16\.0、0\.17\.0、0\.18\.0、0\.19\.0、0\.20\.0、または 0\.21\.0 テンプレートは、`/docaudit:init --harness --refresh` で 0\.22\.0 へ直接更新できる。利用者が変更したテンプレートは",
             ],
             "skills/audit/references/engine-shas.json": [
                 rf'\s*"{old}": \{{',

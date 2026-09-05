@@ -125,6 +125,56 @@ class TestV019Contracts(unittest.TestCase):
             for statement in old_statements:
                 self.assertNotIn(statement, text, f"{path}: {statement}")
 
+    def test_v022_adoption_guides_fix_behavior_changes_verbatim(self):
+        expected = {
+            "docs/ADOPTION.md": (
+                "**v0.22.0 behavior changes:** `codex-review-exec.py` runs Codex, validates its schema, "
+                "and publishes `codex-review-result.json` byte-for-byte; EVIDENCE seals its SHA, `failed`, "
+                "or `none`, and `write-evidence.py` derives Codex findings only from that sealed result "
+                "while the orchestrator does not transcribe them. The gate requires bidirectional agreement "
+                "between state and sealed values and exact multiset agreement between result-derived findings "
+                "and Phase-4 findings, refusing with `codexReviewFindingsMismatch` or the applicable refusal "
+                "code on violation. The threat model assumes an honest-but-fallible operator and closes "
+                "partial omission of adopted results, severity/title/file transcription drift, prose-dependent "
+                "schema decisions, claiming `completed` without execution, stale output on retry, and forgotten "
+                "EVIDENCE updates; it does not close a hand-made result or phase4 file and SHA, a run that "
+                "deliberately leaves state non-completed after executing Codex, or the orchestrator itself running "
+                "write-claim.py in the adjudicator's place (a nonce would only travel through the orchestrator and "
+                "cannot tell the two apart). "
+                "`codexClaimsUnadjudicated` is decided after the barrier, so another refusal reason may appear "
+                "first in a compound failure; corrupt history is quarantined first and sibling scan still runs. "
+                "The side file `.claude/state/docaudit-refused-phase4.json` records Phase-4 file/severity findings, "
+                "claim counts, and `historySha` only for full eligible claims-refused runs; the next run seals it "
+                "in EVIDENCE and may use it for flip comparison and full-prompt carry-forward only when the history "
+                "SHA and meaning validate, emitting `previousRunRefused`, while anomalies emit only `refusedPhase4Ignored` "
+                "and never REFUSED. It is deleted when history is written and excluded from the digest; if deletion "
+                "fails, the run reports `refusedPhase4ClearFailed` visibly each time history is written, a known limitation. "
+                "`import-audit-scope.py --check --from-index` now uses the same CR/LF `errors[]` wording as the normal "
+                "path without changing exit values or JSON structure."
+            ),
+            "docs/ADOPTION.ja.md": (
+                "**v0.22.0 の挙動変更:** `codex-review-exec.py` が Codex を実行し、schema を検証し、"
+                "`codex-review-result.json` を byte-for-byte で公開する。EVIDENCE はその SHA、`failed`、"
+                "または `none` を封印し、`write-evidence.py` は封印済み result だけから Codex 所見を導出し、"
+                "orchestrator は転記しない。gate は state と封印値の双方向一致、および result 由来所見と Phase-4 所見の"
+                "多重集合完全一致を要求し、違反を `codexReviewFindingsMismatch` などの REFUSED にする。脅威モデルの前提は "
+                "honest-but-fallible であり、採用 result の部分欠落、severity/title/file の転記ずれ、散文に依存する schema 判定、"
+                "実行していないのに `completed` とすること、再試行時の古い出力、EVIDENCE 反映忘れを閉じるが、script を経由せず "
+                "result/phase4.json と SHA を自作すること、Codex 実行後に state を非 completed にして層ごと落とすこと、adjudicator を装って "
+                "write-claim.py を実行することは閉じない（nonce は orchestrator 経由でしか渡せず区別不能）。`codexClaimsUnadjudicated` は barrier 後に判定されるため"
+                "複合不正では別の理由が先に出ることがあり、corrupt history では退避が先に起き、sibling scan も走る。side file "
+                "`.claude/state/docaudit-refused-phase4.json` は full・eligible の claims REFUSED run が見た Phase-4 所見（file＋severity）、裁定件数、`historySha` を記録し、次の run は `refusedPhase4` として封印する。"
+                "`historySha == EVIDENCE.history` かつ意味検証を通る場合だけ flip 比較相手と full prompt の carry-forward 候補にし `previousRunRefused` を警告し、異常は `refusedPhase4Ignored` の警告だけで REFUSED にはしない。"
+                "history 書込み時に削除し digest から除外するが、削除失敗は history を書いた run のたびに `refusedPhase4ClearFailed` で可視になる既知の限界である。"
+                "`import-audit-scope.py --check --from-index` の CR/LF `errors[]` 文言は通常経路と同じになり、終了値と JSON 構造は変わらない。"
+            ),
+        }
+        for path, heading in (("docs/ADOPTION.md", "**v0.22.0 behavior changes:**"),
+                              ("docs/ADOPTION.ja.md", "**v0.22.0 の挙動変更:**")):
+            matches = [part for part in re.split(r"\n\s*\n", read(path)) if heading in part]
+            self.assertEqual(len(matches), 1, f"{path}: behavior paragraphs={len(matches)}")
+            self.assertEqual(" ".join(matches[0].split()), expected[path], path)
+
     def test_v021_adoption_guides_document_refused_scope_and_carry_forward_limit(self):
         contracts = {
             "docs/ADOPTION.md": (
@@ -164,7 +214,11 @@ class TestV019Contracts(unittest.TestCase):
         self.assertIn("unrecognized arguments: --skill-version", skill)
         self.assertIn("does not match plugin engine version", skill)
         self.assertIn("start a new session and rerun `/docaudit:audit`", skill)
-        self.assertIn("runid, runDir, anchor, config, lockIno, engineVersion", skill)
+        self.assertIn(
+            "runid, runDir, anchor, config, lockIno, codexReviewResult=`none`, "
+            "refusedPhase4 (`none` or side-record sha), engineVersion",
+            skill,
+        )
         self.assertIn("Bind `CONTRACT_VERSION` from `EVIDENCE.engineVersion`", skill)
         self.assertNotIn("Bind `CONTRACT_VERSION` from the installed plugin's version", skill)
         for statement in (

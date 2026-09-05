@@ -24,21 +24,21 @@ MIGRATION_ALLOWLIST = {
     ("skills/audit/references/config-schema.md", 61, "removed-config"),
 }
 WARNING_ALLOWLIST = {
-    ("skills/audit/scripts/decide-verdict.py", 54, "removed-config"),
-    ("skills/audit/scripts/decide-verdict.py", 55, "removed-config"),
-    ("skills/audit/scripts/decide-verdict.py", 56, "removed-command"),
+    ("skills/audit/scripts/decide-verdict.py", 59, "removed-config"),
+    ("skills/audit/scripts/decide-verdict.py", 60, "removed-config"),
+    ("skills/audit/scripts/decide-verdict.py", 61, "removed-command"),
 }
 HISTORY_ALLOWLIST = {
     ("docs/ADOPTION.md", 296, "removed-config"),
     ("docs/ADOPTION.md", 296, "removed-command"),
     ("docs/ADOPTION.md", 299, "removed-config"),
     ("docs/ADOPTION.md", 299, "removed-command"),
-    ("docs/ADOPTION.md", 313, "removed-command"),
+    ("docs/ADOPTION.md", 315, "removed-command"),
     ("docs/ADOPTION.ja.md", 266, "removed-config"),
     ("docs/ADOPTION.ja.md", 266, "removed-command"),
     ("docs/ADOPTION.ja.md", 271, "removed-config"),
     ("docs/ADOPTION.ja.md", 271, "removed-command"),
-    ("docs/ADOPTION.ja.md", 283, "removed-command"),
+    ("docs/ADOPTION.ja.md", 285, "removed-command"),
     ("tests/test_v015_contracts.py", 201, "removed-command"),
     ("tests/test_v015_contracts.py", 205, "removed-command"),
 }

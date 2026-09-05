@@ -11,6 +11,7 @@ from docaudit_cache import (CODEX_REVIEW_STATES, parse_history_document,
                             sha256_bytes)
 from docaudit_paths import validate_repo_path
 from sealed_config import SealedConfigMismatch, load_sealed_config
+from refused_phase4 import load_usable_record
 
 
 SEVERITY_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
@@ -87,6 +88,7 @@ def main():
     parser.add_argument("--history", required=True)
     parser.add_argument("--expect-history-sha", required=True)
     parser.add_argument("--worktree-digest", required=True)
+    parser.add_argument("--evidence")
     args = parser.parse_args()
 
     try:
@@ -94,6 +96,18 @@ def main():
             args.config, args.expect_config_sha)
         phase4_runs, history_warnings = load_history(
             args.history, args.expect_history_sha)
+        refused_record = None
+        refused_warning = None
+        if args.evidence is not None:
+            evidence = json.loads(args.evidence)
+            if not isinstance(evidence, dict) or evidence.get("history") != args.expect_history_sha:
+                raise RuntimeError("sealed-history-mismatch: EVIDENCE.history differs")
+            refused_record, refused_reason = load_usable_record(
+                os.path.join(args.repo_root, ".claude", "state",
+                             "docaudit-refused-phase4.json"),
+                evidence)
+            if refused_reason is not None:
+                refused_warning = "refusedPhase4Ignored: " + refused_reason
     except SealedConfigMismatch as exc:
         print(str(exc), file=sys.stderr)
         return 7
@@ -136,12 +150,17 @@ def main():
         raise AssertionError("codex-review plan emitted an unknown state")
     carry_value, carry_sha = None, "none"
     if result["action"] == "run" and result["promptVariant"] == "full":
+        carry_records = (phase4_runs + [refused_record]
+                         if refused_record is not None else phase4_runs)
         carry_value, carry_sha = carry_forward(
-            args.repo_root, phase4_runs, args.worktree_digest)
+            args.repo_root, carry_records, args.worktree_digest)
     result["carryForward"] = carry_value
     result["carryForwardSha"] = carry_sha
-    if history_warnings:
-        result["warnings"] = history_warnings
+    plan_warnings = list(history_warnings)
+    if refused_warning is not None:
+        plan_warnings.append(refused_warning)
+    if plan_warnings:
+        result["warnings"] = plan_warnings
     print(json.dumps(result, ensure_ascii=False, sort_keys=True))
     return 0
 

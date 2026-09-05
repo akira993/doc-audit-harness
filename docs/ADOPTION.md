@@ -243,7 +243,7 @@ project.
 
 **Verify:**
 ```bash
-claude plugin list                 # → docaudit@skills-dir  Version 0.21.0  Scope: user  ✔ loaded
+claude plugin list                 # → docaudit@skills-dir  Version 0.22.0  Scope: user  ✔ loaded
 claude plugin details docaudit     # component inventory + token cost
 ```
 In an already-running session, run **`/reload-plugins`** so the slash commands register now
@@ -304,6 +304,8 @@ This release also removes the `/code-review` layer: `reviewCommands.code` and `r
 
 **v0.21.0 behavior changes:** the normal run open carries the skill version in `--skill-version`, records the matching plugin version as `engineVersion`, and the gate refuses if that version changes during the run. When a report is configured, the gate fully renders and validates its final bytes before committing normal history, last-run, or anchor state; an invalid template therefore produces REFUSED without advancing the anchor. A codex-review `critical` or `high` finding with a missing title now produces `codexClaimTitleMissing`, and any such target without a valid claim record produces `codexClaimsUnadjudicated`, regardless of `codexReview.required`; valid `refuted`, `unverified`, and `not-adjudicable` records remain non-blocking. With normal or absent history, an owned run identity, and `reportPath` configured, this REFUSED path renders a report, leaves the anchor unchanged, and releases the lock. Corrupt history still takes the existing quarantine path first; if quarantine fails, no report is published and the lock remains held. Findings from a REFUSED run are not written to history and therefore are not carried forward, but the unchanged anchor causes the same change set to be reviewed again on the next run. In an environment that cannot run the adjudication Workflow, the only opt-out is to set `codexReview.enabled:false`, disabling codex-review itself. `import-audit-scope.py --check --from-index` now checks one Git index snapshot independently of the working tree, accepting only stage-0 regular blobs; matching content recorded at a different scope path reports `path-mismatch` and exits 4. Harness pre-flight now uses `--check-stamps` to compare each uniquely and canonically placed stamp and normalized body with the shipped template SHA. A `--refresh` whose bodies already match reports them `up-to-date` without rewriting their stamps; an existing harness decision updates `engineVersion` only when at least one template is written, while the initial decision always records the installing engine version.
 
+**v0.22.0 behavior changes:** `codex-review-exec.py` runs Codex, validates its schema, and publishes `codex-review-result.json` byte-for-byte; EVIDENCE seals its SHA, `failed`, or `none`, and `write-evidence.py` derives Codex findings only from that sealed result while the orchestrator does not transcribe them. The gate requires bidirectional agreement between state and sealed values and exact multiset agreement between result-derived findings and Phase-4 findings, refusing with `codexReviewFindingsMismatch` or the applicable refusal code on violation. The threat model assumes an honest-but-fallible operator and closes partial omission of adopted results, severity/title/file transcription drift, prose-dependent schema decisions, claiming `completed` without execution, stale output on retry, and forgotten EVIDENCE updates; it does not close a hand-made result or phase4 file and SHA, a run that deliberately leaves state non-completed after executing Codex, or the orchestrator itself running write-claim.py in the adjudicator's place (a nonce would only travel through the orchestrator and cannot tell the two apart). `codexClaimsUnadjudicated` is decided after the barrier, so another refusal reason may appear first in a compound failure; corrupt history is quarantined first and sibling scan still runs. The side file `.claude/state/docaudit-refused-phase4.json` records Phase-4 file/severity findings, claim counts, and `historySha` only for full eligible claims-refused runs; the next run seals it in EVIDENCE and may use it for flip comparison and full-prompt carry-forward only when the history SHA and meaning validate, emitting `previousRunRefused`, while anomalies emit only `refusedPhase4Ignored` and never REFUSED. It is deleted when history is written and excluded from the digest; if deletion fails, the run reports `refusedPhase4ClearFailed` visibly each time history is written, a known limitation. `import-audit-scope.py --check --from-index` now uses the same CR/LF `errors[]` wording as the normal path without changing exit values or JSON structure.
+
 Impact priority is `mapped`/`full`/`self` ≥ `regression` ≥ `heuristic` ≥ `graphify` ≥ `semantic`.
 
 Configured `docAuditCommands` findings and project-side harness definitions have repository-writer trust because the same writer can change those definitions directly. Sealed-config completely covers the plugin engine decision path; it does not claim to make project-defined commands more trustworthy. Across runs, last-run, history, and anchor markers are operational fail-closed aids rather than a separate security boundary: missing state is indistinguishable from a fresh install, and the documented quarantine-marker persistence failure followed by emergency lock breaking remains a known limit.
@@ -342,7 +344,7 @@ When `installed` is selected, commit the config and all three generated files to
 `.claude/commands/check-docs.md`, `.claude/skills/doc-lint/SKILL.md`, and
 `scripts/check-docs.py`.
 
-Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, 0.15.1, 0.16.0, 0.17.0, 0.18.0, 0.19.0, or 0.20.0 templates can be updated directly to 0.21.0 with
+Existing unmodified stamped 0.10.0, 0.10.1, 0.11.0, 0.12.0, 0.13.0, 0.13.1, 0.13.2, 0.14.0, 0.15.0, 0.15.1, 0.16.0, 0.17.0, 0.18.0, 0.19.0, 0.20.0, or 0.21.0 templates can be updated directly to 0.22.0 with
 `/docaudit:init --harness --refresh`; user-modified templates remain untouched.
 
 > The inventory derives `docGlobs` from the directories that **actually** contain docs, so
@@ -505,6 +507,7 @@ cross-cutting complementary layers. The Codex review prompt explicitly checks th
   digest, including the resolved Phase-3 backend. `decide-verdict.py` reads each evidence file once, checks verifier returns against
   assigned paths, and is the sole writer of history, last-run state, and the anchor. Old flat
   files under `docaudit-run/` are ignored.
+  The claims-refused Phase-4 side record is stored separately at `.claude/state/docaudit-refused-phase4.json`.
 - **Deterministic cache:** `plan-dispatch.py` skips Phase 3 only when a doc has the configured
   number (default 2) of consecutive PASS records with identical doc content, `changeSetSha`,
   contract version, and backend. Old history without a backend means `workflow`.
@@ -699,6 +702,8 @@ doc-audit-harness/
 ├── skills/audit/scripts/codex-dispatch.py
 ├── skills/audit/scripts/codex-probe.sh
 ├── skills/audit/scripts/codex-review-plan.py
+├── skills/audit/scripts/codex-review-exec.py
+├── skills/audit/scripts/codex_review_output.py
 ├── skills/audit/scripts/claim_record.py
 ├── skills/audit/scripts/compute-baseline.sh
 ├── skills/audit/scripts/decide-verdict.py
@@ -720,6 +725,7 @@ doc-audit-harness/
 ├── skills/audit/scripts/read-manifest.py
 ├── skills/audit/scripts/report_tokens.py
 ├── skills/audit/scripts/resolve-impact.py
+├── skills/audit/scripts/refused_phase4.py
 ├── skills/audit/scripts/scaffold.py
 ├── skills/audit/scripts/seal-run.py
 ├── skills/audit/scripts/sealed_config.py

@@ -80,7 +80,9 @@ class TestPlanDispatchImpactBinding(unittest.TestCase):
         self.assertRegex(dispatch["impactSha"], r"^sha256:[0-9a-f]{64}$")
         self.assertEqual(set(evidence), {"runid", "runDir", "anchor", "config", "lockIno",
                                         "engineVersion",
-                                        "preflight", "phase4", "dispatch", "cached", "history",
+                                        "preflight", "phase4", "codexReviewResult",
+                                        "refusedPhase4", "dispatch",
+                                        "cached", "history",
                                         "historyStatus", "counts"})
         self.assertNotIn("impactSha", evidence)
 
