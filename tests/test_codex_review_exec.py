@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import os
+import signal
 import stat
 import subprocess
 import sys
@@ -47,6 +48,8 @@ record = {
     "args": args,
     "model": model,
     "output": output,
+    "pgid": os.getpgrp(),
+    "pid": os.getpid(),
     "stdinB64": base64.b64encode(prompt).decode("ascii"),
 }
 with open(os.environ["FAKE_LOG"], "a", encoding="utf-8") as handle:
@@ -82,7 +85,7 @@ elif mode == "symlink":
     os.symlink(os.environ["FAKE_SYMLINK_TARGET"], output)
 elif mode == "fifo":
     os.mkfifo(output)
-elif mode == "timeout_then_success":
+elif mode in {"timeout_then_success", "timeout_parent_exits_then_success"}:
     if model == "gpt-5.6-luna":
         child = r"""
 import os
@@ -90,7 +93,9 @@ import signal
 import sys
 import time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
-time.sleep(1.5)
+with open(sys.argv[3], "w", encoding="ascii") as handle:
+    handle.write(f"{os.getpid()} {os.getpgrp()}\n")
+time.sleep(float(sys.argv[4]))
 with open(sys.argv[2], "rb") as source:
     raw = source.read()
 fd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -99,9 +104,11 @@ try:
 finally:
     os.close(fd)
 """
+        if mode == "timeout_then_success":
+            signal.signal(signal.SIGTERM, signal.SIG_IGN)
         subprocess.Popen([sys.executable, "-c", child, output,
-                          os.environ["FAKE_PAYLOAD"]])
-        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                          os.environ["FAKE_PAYLOAD"], os.environ["FAKE_CHILD_PID"],
+                          "1.5" if mode == "timeout_then_success" else "30"])
         time.sleep(10)
     else:
         emit()
@@ -151,6 +158,7 @@ class CodexReviewExecFixture:
         self.log = os.path.join(self.control, "calls.jsonl")
         self.payload_path = os.path.join(self.control, "payload.bin")
         self.symlink_target = os.path.join(self.control, "symlink-target.json")
+        self.child_pid_path = os.path.join(self.control, "child.pid")
         self.config_path = os.path.join(self.control, "doc-audit.json")
         self.manifest_path = os.path.join(self.run_dir, "manifest.json")
         self.prompt_path = os.path.join(self.run_dir, "codex-review-prompt.txt")
@@ -219,6 +227,7 @@ class CodexReviewExecFixture:
             "FAKE_LOG": self.log,
             "FAKE_PAYLOAD": self.payload_path,
             "FAKE_SYMLINK_TARGET": self.symlink_target,
+            "FAKE_CHILD_PID": self.child_pid_path,
         })
         command = [
             sys.executable, EXEC,
@@ -246,6 +255,30 @@ class CodexReviewExecFixture:
 
 class TestCodexReviewExec(unittest.TestCase):
     maxDiff = None
+
+    def assert_pid_gone(self, pid):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.02)
+        self.fail(f"pid {pid} remains alive after timeout cleanup")
+
+    @staticmethod
+    def kill_group_if_child_matches(pid, pgid):
+        try:
+            if os.getpgid(pid) == pgid:
+                os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+    def read_child_identity(self, fixture):
+        with open(fixture.child_pid_path, encoding="ascii") as handle:
+            pid, pgid = (int(value) for value in handle.read().split())
+        self.addCleanup(self.kill_group_if_child_matches, pid, pgid)
+        return pid, pgid
 
     def assert_call_contract(self, fixture, call, model):
         args = call["args"]
@@ -341,11 +374,30 @@ class TestCodexReviewExec(unittest.TestCase):
         calls = fixture.calls()
         self.assertEqual([item["model"] for item in calls],
                          ["gpt-5.6-luna", "gpt-5.6-terra"])
+        child_pid, child_pgid = self.read_child_identity(fixture)
+        self.assertEqual(calls[0]["pid"], calls[0]["pgid"])
+        self.assertEqual(child_pgid, calls[0]["pgid"])
+        self.assert_pid_gone(calls[0]["pid"])
+        self.assert_pid_gone(child_pid)
         time.sleep(1.8)
         self.assertFalse(os.path.exists(calls[0]["output"]))
         self.assertTrue(os.path.isfile(calls[1]["output"]))
         with open(fixture.result_path, "rb") as handle:
             self.assertEqual(handle.read(), fixture.payload)
+
+    def test_timeout_kills_term_ignoring_grandchild_after_parent_exits(self):
+        fixture = CodexReviewExecFixture(self, timeout_ms=500)
+        proc = fixture.run(mode="timeout_parent_exits_then_success")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        diagnostic = fixture.diagnostic(proc)
+        self.assertEqual(diagnostic["state"], "completed")
+        self.assertTrue(diagnostic["attempts"][0]["timedOut"])
+        calls = fixture.calls()
+        child_pid, child_pgid = self.read_child_identity(fixture)
+        self.assertEqual(calls[0]["pid"], calls[0]["pgid"])
+        self.assertEqual(child_pgid, calls[0]["pgid"])
+        self.assert_pid_gone(calls[0]["pid"])
+        self.assert_pid_gone(child_pid)
 
     def test_invalid_utf8_and_json_degrade_without_publication(self):
         cases = (b"\xff", b'{"findings":[')

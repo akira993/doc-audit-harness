@@ -95,7 +95,6 @@ def terminate_group(process):
         pass
     try:
         process.communicate(timeout=KILL_GRACE_SECONDS)
-        return
     except subprocess.TimeoutExpired:
         pass
     try:
